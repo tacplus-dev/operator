@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cavalier-operator
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "cavalier-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  selector:
+    matchLabels:
+      app: cavalier-operator
+  template:
+    metadata:
+      labels:
+        app: cavalier-operator
+        {{- include "cavalier-operator.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: cavalier-operator
+      {{- include "cavalier-operator.imagePullSecrets" . | nindent 6 }}
+      {{- if .Values.config.bundle }}
+      initContainers:
+      - name: extract-config
+        image: busybox:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "Extracting config bundle..."
+          base64 -d /bundle/config-bundle.tar.gz.b64 | tar -xz -C /config
+          chmod -R a+rX /config
+          echo "Extracted:"
+          find /config/services /config/creds -type f 2>/dev/null | sort
+        volumeMounts:
+        - name: config-mutable
+          mountPath: /config
+        - name: config-bundle
+          mountPath: /bundle
+          readOnly: true
+      {{- end }}
+      containers:
+      - name: cavalier-operator
+        image: {{ .Values.operator.image }}
+        imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
+        args:
+        - "--dir=/config"
+        env:
+        - name: CAVALIER_OPERATOR_DIR
+          value: /config
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 8080
+          name: metrics
+        resources:
+          {{- toYaml .Values.operator.resources | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.config.bundle }}
+        - name: config-mutable
+          mountPath: /config
+        {{- else }}
+        - name: config
+          mountPath: /config/operator.yaml
+          subPath: operator.yaml
+          readOnly: true
+        - name: crypto
+          mountPath: /config/crypto.yaml
+          subPath: crypto.yaml
+          readOnly: true
+        {{- end }}
+        {{- if .Values.config.bundle }}
+        # operator.yaml and crypto.yaml overlaid on top of the extracted bundle
+        - name: config
+          mountPath: /config/operator.yaml
+          subPath: operator.yaml
+        - name: crypto
+          mountPath: /config/crypto.yaml
+          subPath: crypto.yaml
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: cavalier-operator-config
+      - name: crypto
+        secret:
+          secretName: cavalier-operator-crypto
+      {{- if .Values.config.bundle }}
+      - name: config-mutable
+        emptyDir: {}
+      - name: config-bundle
+        secret:
+          secretName: cavalier-operator-bundle
+      {{- end }}

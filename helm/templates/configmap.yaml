@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cavalier-operator-config
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "cavalier-operator.labels" . | nindent 4 }}
+data:
+  operator.yaml: {{ .Values.config.settings | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cavalier-operator-crypto
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "cavalier-operator.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  crypto.yaml: {{ .Values.config.crypto | quote }}
+{{- if .Values.config.bundle }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cavalier-operator-bundle
+  namespace: {{ .Values.operator.namespace }}
+  labels:
+    {{- include "cavalier-operator.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  config-bundle.tar.gz.b64: {{ .Values.config.bundle | quote }}
+{{- end }}

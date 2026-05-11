@@ -1,0 +1,40 @@
+# ============================================================
+# cavalier-operator Helm values
+# ============================================================
+
+operator:
+  image: registry.gitlab.com/secondstarcavalier/schematic/platform/cavalier/cavalier-operator:v1.2.27-main.1
+  imagePullPolicy: IfNotPresent
+  imagePullSecret: gitlab-registry
+
+  # Kubernetes namespace for the operator itself.
+  namespace: cavalier-operator
+
+  # Namespace where cavalier services are deployed (passed to the operator via config).
+  targetNamespace: cavalier
+
+  # Mode: "in-cluster" (default) or "generate-only".
+  # Overrides operator.yaml if set here.
+  mode: in-cluster
+
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 2Gi
+
+# operator.yaml content — topology, FQDN, mode, optional services.
+# Populate via: helm install ... --set-file config.settings=./build/operator.yaml
+config:
+  settings: ""
+  # crypto.yaml content (PKI material). Stored as a Secret.
+  # Populate via: helm install ... --set-file config.crypto=./build/crypto.yaml
+  crypto: ""
+  # Base64-encoded tar.gz of the services/ and creds/ directories.
+  # Populate via: just pack  (outputs build/config-bundle.tar.gz.b64)
+  # Then: helm install ... --set-string config.bundle=$(cat build/config-bundle.tar.gz.b64)
+  bundle: ""

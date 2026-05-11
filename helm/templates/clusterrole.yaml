@@ -1,0 +1,33 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cavalier-operator
+  labels:
+    {{- include "cavalier-operator.labels" . | nindent 4 }}
+rules:
+  # Read nodes to determine gateway replica count.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list", "watch"]
+
+  # Manage all cavalier resources in the target namespace.
+  - apiGroups: ["", "apps", "batch"]
+    resources:
+      - namespaces
+      - deployments
+      - statefulsets
+      - services
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Leader election.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Events.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]

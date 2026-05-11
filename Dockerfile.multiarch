@@ -1,0 +1,4 @@
+FROM gcr.io/distroless/static:nonroot
+ARG TARGETARCH
+COPY cavalier-operator-linux-${TARGETARCH} /cavalier-operator
+ENTRYPOINT ["/cavalier-operator"]

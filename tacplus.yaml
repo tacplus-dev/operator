@@ -1,0 +1,3 @@
+language: go
+pkg: com.gitlab.secondstarcavalier.controlplane.cavalier.cavalier.operator
+output-dir: .
