@@ -576,6 +576,13 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.OperatorConfig
 	// ConfigMap
 	for i := range int(svc.Replicas) {
 		name := fmt.Sprintf("%s%d", svc.Name, i)
+		// Kernel uses per-replica value keys (kernel0, kernel1, …) because each
+		// replica has a distinct TLS certificate. All other services share one
+		// config across replicas and use the service name as the value key.
+		configValueKey := svc.Name
+		if svc.Name == "kernel" {
+			configValueKey = name
+		}
 		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -583,7 +590,7 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 data:
   config.yaml: {{ .Values.%s.config | quote }}
-`, name, name))
+`, name, configValueKey))
 
 		// PVC if needed
 		if svc.HasPVC {
