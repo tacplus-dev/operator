@@ -770,7 +770,7 @@ const exampleMsggatewayYAML = `# Msggateway service configuration.
 {}
 `
 
-const exampleOpaYAML = `# UncleOPA service configuration.
+const exampleOpaYAML = `# OPA service configuration.
 # OPA entitlements policy is loaded from services/opa/ directory.
 # Run 'cavalier-operator init-opa' to generate default policy.
 # Edit these, then run: cavalier-operator generate
