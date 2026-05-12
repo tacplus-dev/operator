@@ -414,9 +414,9 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 	vals := map[string]interface{}{}
 
-	// kernel — use the first node's bootstrap config (one pod per node)
-	if len(dc.BootstrapYAMLs) > 0 {
-		vals["kernel"] = map[string]interface{}{"config": string(dc.BootstrapYAMLs[0])}
+	// kernel — one config per replica (each has its own TLS cert and node index)
+	for i, bsYAML := range dc.BootstrapYAMLs {
+		vals[fmt.Sprintf("kernel%d", i)] = map[string]interface{}{"config": string(bsYAML)}
 	}
 
 	for _, pair := range []struct {

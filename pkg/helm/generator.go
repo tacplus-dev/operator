@@ -583,7 +583,7 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 data:
   config.yaml: {{ .Values.%s.config | quote }}
-`, name, svc.Name))
+`, name, name))
 
 		// PVC if needed
 		if svc.HasPVC {

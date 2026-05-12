@@ -20,6 +20,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -217,6 +219,12 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	}
 	r.log.Info("reconciling", zap.Int("schedulable_nodes", nodeCount))
 
+	if token := r.cfg.GetGitlabRegistryToken(); token != "" {
+		if err := r.ensureRegistrySecret(ctx, token); err != nil {
+			r.log.Warn("failed to ensure gitlab-registry secret in operator namespace", zap.Error(err))
+		}
+	}
+
 	charts, err := r.generator.Generate(r.cfg, nodeCount)
 	if err != nil {
 		return fmt.Errorf("generating charts: %w", err)
@@ -238,6 +246,46 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 
 	r.log.Info("reconcile complete", zap.Int("files", len(charts.Files)))
 	return nil
+}
+
+// ensureRegistrySecret creates or updates the "gitlab-registry" dockerconfigjson
+// Secret in the operator's own namespace, derived from the gitlab_registry_token
+// in the operator config. This allows the auto-upgrade checker and the operator
+// pod itself to pull images from registry.gitlab.com without external bootstrapping.
+func (r *Reconciler) ensureRegistrySecret(ctx context.Context, token string) error {
+	auth := base64.StdEncoding.EncodeToString([]byte("oauth2:" + token))
+	dockerConfig := fmt.Sprintf(
+		`{"auths":{"registry.gitlab.com":{"username":"oauth2","password":%q,"auth":%q}}}`,
+		token, auth,
+	)
+
+	secret := &corev1.Secret{}
+	key := types.NamespacedName{Namespace: r.operatorNS, Name: "gitlab-registry"}
+	err := r.client.Get(ctx, key, secret)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("getting gitlab-registry secret: %w", err)
+	}
+
+	if apierrors.IsNotFound(err) {
+		secret = &corev1.Secret{
+			Type: corev1.SecretTypeDockerConfigJson,
+		}
+		secret.Name = "gitlab-registry"
+		secret.Namespace = r.operatorNS
+		secret.Data = map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerConfig),
+		}
+		return r.client.Create(ctx, secret)
+	}
+
+	// Already exists — update only if content changed.
+	if string(secret.Data[corev1.DockerConfigJsonKey]) == dockerConfig {
+		return nil
+	}
+	secret.Data = map[string][]byte{
+		corev1.DockerConfigJsonKey: []byte(dockerConfig),
+	}
+	return r.client.Update(ctx, secret)
 }
 
 // schedulableNodeCount returns the number of Ready, non-tainted worker nodes.
