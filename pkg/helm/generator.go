@@ -21,6 +21,8 @@ package helm
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +81,9 @@ func (g *Generator) Generate(cfg *protoOperator.OperatorConfig, nodeCount int) (
 		return nil, err
 	}
 	if err := g.addNamespace(charts, cfg); err != nil {
+		return nil, err
+	}
+	if err := g.addRegistrySecret(charts, cfg); err != nil {
 		return nil, err
 	}
 
@@ -444,6 +449,39 @@ imagePullSecrets:
 {{- end }}
 {{- end }}
 `)
+	return nil
+}
+
+// addRegistrySecret emits templates/registry-secret.yaml when gitlab_registry_token is set.
+// The secret provides pull credentials for registry.gitlab.com in the cavalier namespace.
+func (g *Generator) addRegistrySecret(charts *Charts, cfg *protoOperator.OperatorConfig) error {
+	token := cfg.GetGitlabRegistryToken()
+	if token == "" {
+		return nil
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte("oauth2:" + token))
+	dockerConfig, err := json.Marshal(map[string]any{
+		"auths": map[string]any{
+			"registry.gitlab.com": map[string]any{
+				"username": "oauth2",
+				"password": token,
+				"auth":     auth,
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("building dockerconfigjson: %w", err)
+	}
+	configB64 := base64.StdEncoding.EncodeToString(dockerConfig)
+	charts.Files["templates/registry-secret.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-registry
+  namespace: {{ .Values.global.namespace }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: %s
+`, configB64))
 	return nil
 }
 
