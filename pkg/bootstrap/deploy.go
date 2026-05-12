@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/host"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/common/opalib"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/opalib"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/x509"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/kernel"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
