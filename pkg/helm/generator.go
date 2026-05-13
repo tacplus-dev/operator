@@ -246,7 +246,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443},
 		{Name:"opa", Replicas:topo.OpaNodes, Image:g.imageRef("opa"), HasGRPC:true, ListenPort:8443},
 		{Name:"argus", Replicas:topo.ArgusNodes, Image:g.imageRef("argus"), HasGRPC:true, ListenPort:8443},
-		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "clickhouse"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes)},
+		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "timedb"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes)},
 		{Name:"graphdb", Replicas:topo.GraphdbNodes, Image:g.imageRef("graphdb"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes)},
 		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443},
 	}
