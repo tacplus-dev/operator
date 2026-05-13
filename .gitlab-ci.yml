@@ -131,6 +131,9 @@ package-release:
     - br.aarch64
   services:
     - docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
   needs: [build-linux-arm64]
   before_script:
     - unset DOCKER_AUTH_CONFIG
