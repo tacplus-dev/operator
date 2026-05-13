@@ -143,6 +143,7 @@ package-release:
       BASE="${CI_REGISTRY_IMAGE}/cavalier-operator"
       cp cavalier-operator-linux-arm64 cavalier-operator
       docker build \
+        --platform linux/arm64 \
         -f Dockerfile \
         -t "${BASE}:${CI_COMMIT_TAG}" \
         .
