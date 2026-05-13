@@ -1,9 +1,9 @@
 # cavalier/operator — standalone CI
 #
 # Triggered on:
-#   - version tags: v<major>.<minor>.<patch>-dev.<patch> or v<major>.<minor>.<patch>
-#     e.g. v1.2.36-dev.36 (dev, fan-out from proto) or v1.2.36 (prod release)
-#     The trailing .<patch> in dev tags always equals the patch, e.g. v1.2.36-dev.36.
+#   - version tags: v<major>.<minor>.<patch>-main.<patch> or v<major>.<minor>.<patch>
+#     e.g. v1.2.36-main.36 (dev, fan-out from proto) or v1.2.36 (prod release)
+#     The trailing .<patch> in dev tags always equals the patch, e.g. v1.2.36-main.36.
 #   - PROTO_VALIDATE=true (fan-out from cavalier/proto on every proto tag)
 #     → runs proto-validate job to confirm operator still compiles with new proto
 #
@@ -44,7 +44,7 @@ compute-image:
     reports:
       dotenv: ci.env
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-dev\.\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
     - if: $PROTO_VALIDATE == "true"
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ proto-validate:
     - git clone --quiet https://gitlab.com/secondstarcavalier/schematic/platform/proto.git proto
     # Strip the trailing .<patch> suffix from the operator tag to get the proto tag.
     # e.g. v1.2.36-dev.36 → v1.2.36-dev; v1.2.36 → v1.2.36 (no change for prod)
-    - PROTO_TAG="$(echo "${CI_COMMIT_TAG}" | sed 's/-dev\.[0-9]*$/-dev/')"
+    - PROTO_TAG="$(echo "${CI_COMMIT_TAG}" | sed 's/\(-[a-zA-Z][a-zA-Z0-9_-]*\)\.[0-9]*$/\1/')"
     - git -C proto checkout --quiet "${PROTO_TAG}"
     - tacplus build --skip-post --src proto
     - go mod download
@@ -91,7 +91,7 @@ proto-validate:
         -o "cavalier-operator-${GOOS}-${GOARCH}" \
         ./cmd/cavalier-operator
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-dev\.\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
 
 build-linux-arm64:
   extends: .build-binary
@@ -135,7 +135,7 @@ package-release:
         .
       docker push "${BASE}:${CI_COMMIT_TAG}"
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-dev\.\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
 
 # ---------------------------------------------------------------------------
 # Chart: package and push the operator Helm chart to the GitLab registry.
@@ -156,7 +156,7 @@ chart:
       helm registry login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
       helm push cavalier-operator-${V}.tgz oci://${CI_REGISTRY_IMAGE}/charts
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-dev\.\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
 
 # ---------------------------------------------------------------------------
 # Release: upload binaries to the GitLab generic package registry and
@@ -192,4 +192,4 @@ release:
           url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cavalier-operator/${CI_COMMIT_TAG}/cavalier-operator-darwin-arm64"
           link_type: package
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-dev\.\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
