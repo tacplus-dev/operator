@@ -1,10 +1,9 @@
 # cavalier/operator — standalone CI
 #
 # Triggered on:
-#   - version tags: v<major>.<minor>.<patch>-main.<patch> or v<major>.<minor>.<patch>
-#     e.g. v1.2.36-main.36 (prerelease) or v1.2.36 (prod release)
-#     Both numbers match: patch in v1.2.36 equals suffix .36.
-#     Proto and operator share the SAME tag.
+#   - version tags: v<major>.<minor>.<patch>-main.<local> or v<major>.<minor>.<patch>
+#     e.g. v1.2.36-main.1 (prerelease, fan-out from proto) or v1.2.36 (prod)
+#     Proto tag is v1.2.36-main.36 (suffix = patch); operator/services start at .1.
 #   - PROTO_VALIDATE=true (fan-out from cavalier/proto on every proto tag)
 #     → runs proto-validate job to confirm operator still compiles with new proto
 #
@@ -78,8 +77,12 @@ proto-validate:
     - printf "machine gitlab.com\nlogin gitlab-ci-token\npassword %s\n" "$CI_JOB_TOKEN" > ~/.netrc
   script:
     - git clone --quiet https://gitlab.com/secondstarcavalier/schematic/platform/proto.git proto
-    # Proto and operator share the same tag (e.g. v1.2.36-main.36).
-    - git -C proto checkout --quiet "${CI_COMMIT_TAG}"
+    # Operator tag is v1.2.36-main.1; proto tag is v1.2.36-main.36 (suffix = patch).
+    # Strip local suffix and append the patch number to recover the proto tag.
+    # e.g. v1.2.36-main.1 → base v1.2.36-main → patch 36 → proto tag v1.2.36-main.36
+    - BASE="${CI_COMMIT_TAG%.[0-9]*}"
+    - PATCH="$(echo "${BASE#v}" | cut -d. -f3 | cut -d- -f1)"
+    - git -C proto checkout --quiet "${BASE}.${PATCH}"
     - tacplus build --skip-post --src proto
     - go mod download
     - VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
