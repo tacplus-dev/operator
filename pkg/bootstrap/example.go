@@ -548,16 +548,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 				cfg.EntitlementsPolicy = BuildOpaPolicy("data.entitlements.eval", opaBundle)
 			}
 
-			// Load OPA backend token policy from services/opa-backend-token/ if present.
-			btDir := BackendTokenPolicyDir(cfgDir)
-			if _, err := os.Stat(btDir); err == nil {
-				btPolicy, err := LoadOPAPolicy(btDir, "data.backend_token.eval")
-				if err != nil {
-					return fmt.Errorf("loading OPA backend token policy: %w", err)
-				}
-				cfg.BackendTokenPolicy = btPolicy
-			}
-
 			holder.OpaConfig = cfg
 			hasHolder = true
 			return nil
