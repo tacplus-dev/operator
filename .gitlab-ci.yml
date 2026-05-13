@@ -177,7 +177,7 @@ release:
         cavalier-operator-linux-arm64 \
         cavalier-operator-darwin-arm64; do
         echo "Uploading ${FILE}..."
-        curl --fail --silent --show-error \
+        curl --fail --silent --show-error --http1.1 \
           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
           --upload-file "$FILE" \
           "${BASE}/${FILE}"
