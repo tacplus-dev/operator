@@ -11,7 +11,7 @@ func AllServices() []ServiceRef {
 		{Proj: "gateway", Svc: "gateway"},
 		{Proj: "opa", Svc: "opa"},
 		{Proj: "argus", Svc: "argus"},
-		{Proj: "timedb", Svc: "clickhouse"},
+		{Proj: "timedb", Svc: "timedb"},
 		{Proj: "graphdb", Svc: "graphdb"},
 		{Proj: "stratum", Svc: "stratum"},
 		{Proj: "oauth", Svc: "oauth"},
