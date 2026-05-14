@@ -111,7 +111,12 @@ func (c *Checker) Resolve(ctx context.Context) (map[string]int32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getting registry creds: %w", err)
 	}
-	return c.resolveAll(ctx, creds)
+	resolved, err := c.resolveAll(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	c.updateCache(resolved)
+	return resolved, nil
 }
 
 // LatestLocalPatch returns the cached latest LOCAL_PATCH for a service.
