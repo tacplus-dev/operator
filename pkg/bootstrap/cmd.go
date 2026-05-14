@@ -26,9 +26,14 @@ Modes:
 Bootstrap workflow:
   cavalier-operator init ca                Initialize root CA → crypto.yaml
   cavalier-operator init cluster           Initialize cluster PKI + operator.yaml
+  cavalier-operator init keycloak          Enable Keycloak IDP (dev/POC)
   cavalier-operator init-opa               Generate OPA entitlements policy
-  cavalier-operator generate               Generate Helm charts to disk (GENERATE_ONLY)
-  cavalier-operator apply                  Generate + apply charts (one-shot, no loop)
+  cavalier-operator build                  Build self-contained deployment bundle
+  cavalier-operator bundle expand <file>   Unpack bundle to directory
+  cavalier-operator bundle pack <dir>      Pack directory back to bundle
+  cavalier-operator generate               Generate Helm charts to disk
+  cavalier-operator apply                  Apply charts to Kubernetes (one-shot)
+  cavalier-operator apply --bundle <file>  Apply from pre-built bundle
 
 Management:
   cavalier-operator set-image-tag <tag>    Update container image tag
@@ -52,9 +57,14 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.AddCommand(initCACmd)
 	initCmd.AddCommand(initClusterCmd)
+	initCmd.AddCommand(initKeycloakCmd)
 
 	rootCmd.AddCommand(generateCmd)
+	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(applyCmd)
+	rootCmd.AddCommand(bundleCmd)
+	bundleCmd.AddCommand(bundleExpandCmd)
+	bundleCmd.AddCommand(bundlePackCmd)
 	rootCmd.AddCommand(setVersionCmd)
 	rootCmd.AddCommand(setModeCmd)
 	rootCmd.AddCommand(initOPACmd)

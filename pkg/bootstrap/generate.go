@@ -95,8 +95,9 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 // --- apply ---
 
 var (
-	applyGateways int
-	applyDryRun   bool
+	applyGateways  int
+	applyDryRun    bool
+	applyBundleFile string
 )
 
 var applyCmd = &cobra.Command{
@@ -105,8 +106,12 @@ var applyCmd = &cobra.Command{
 	Long: `Generate the cavalier Helm chart and apply it to the current Kubernetes cluster.
 Unlike the in-cluster reconciler, this runs once and exits.
 
+With --bundle, reads a pre-built bundle file instead of the config directory.
+The bundle embeds all rendered service configs — no config directory needed.
+
 Examples:
   cavalier-operator apply
+  cavalier-operator apply --bundle cavalier-bundle.yaml
   cavalier-operator apply --gateways 3
   cavalier-operator apply --dry-run`,
 	RunE: runApply,
@@ -115,17 +120,33 @@ Examples:
 func init() {
 	applyCmd.Flags().IntVar(&applyGateways, "gateways", 0, "override gateway replica count")
 	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "print manifests without applying")
+	applyCmd.Flags().StringVar(&applyBundleFile, "bundle", "", "deploy from a pre-built bundle file")
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
-	dir := resolveConfigDir()
+	var cfg *protoOperator.OperatorConfig
+	var svcValues map[string]interface{}
 
-	cfg, err := LoadConfig(dir)
-	if err != nil {
-		return err
-	}
-	if err := ValidateConfig(cfg); err != nil {
-		return err
+	if applyBundleFile != "" {
+		b, err := LoadBundle(applyBundleFile)
+		if err != nil {
+			return err
+		}
+		cfg, err = BundleConfig(b)
+		if err != nil {
+			return err
+		}
+		svcValues = BundleServiceValues(b)
+	} else {
+		dir := resolveConfigDir()
+		var err error
+		cfg, err = LoadConfig(dir)
+		if err != nil {
+			return err
+		}
+		if err := ValidateConfig(cfg); err != nil {
+			return err
+		}
 	}
 
 	if applyGateways > 0 {
@@ -186,7 +207,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	switch {
 	case histErr == helmdriver.ErrReleaseNotFound:
-		relName, err := cliHelmInstall(actionCfg, ch, ns)
+		relName, err := cliHelmInstall(actionCfg, ch, ns, svcValues)
 		if err != nil {
 			return err
 		}
@@ -194,7 +215,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	case histErr != nil:
 		return fmt.Errorf("querying helm release history: %w", histErr)
 	default:
-		relName, err := cliHelmUpgrade(actionCfg, ch)
+		relName, err := cliHelmUpgrade(actionCfg, ch, svcValues)
 		if err != nil {
 			return err
 		}
@@ -241,25 +262,31 @@ func (g *cliGetter) ToRESTConfig() (*rest.Config, error) {
 	return rest.CopyConfig(g.cfg), nil
 }
 
-func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string) (string, error) {
+func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, vals map[string]interface{}) (string, error) {
 	install := action.NewInstall(cfg)
 	install.ReleaseName = "cavalier"
 	install.Namespace = ns
 	install.CreateNamespace = true
 	install.Wait = false
 
-	rel, err := install.Run(ch, map[string]interface{}{})
+	if vals == nil {
+		vals = map[string]interface{}{}
+	}
+	rel, err := install.Run(ch, vals)
 	if err != nil {
 		return "", fmt.Errorf("helm install: %w", err)
 	}
 	return rel.Name, nil
 }
 
-func cliHelmUpgrade(cfg *action.Configuration, ch *helmchart.Chart) (string, error) {
+func cliHelmUpgrade(cfg *action.Configuration, ch *helmchart.Chart, vals map[string]interface{}) (string, error) {
 	upgrade := action.NewUpgrade(cfg)
 	upgrade.Wait = false
 
-	rel, err := upgrade.Run("cavalier", ch, map[string]interface{}{})
+	if vals == nil {
+		vals = map[string]interface{}{}
+	}
+	rel, err := upgrade.Run("cavalier", ch, vals)
 	if err != nil {
 		return "", fmt.Errorf("helm upgrade: %w", err)
 	}
