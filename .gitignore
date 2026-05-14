@@ -22,3 +22,8 @@ charts/
 
 # Build output
 target/
+
+# Local built binaries
+cavalier-operator
+cavalier-operator-linux-arm64
+cavalier-operator-darwin-arm64
