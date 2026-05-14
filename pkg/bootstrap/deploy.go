@@ -215,6 +215,24 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		opaFields["backend_token_policy"] = btMap
 	}
 
+	// Load OPA entitlements policy from services/opa/ if present.
+	epDir := OPAPolicyDir(cfgDir)
+	if _, err := os.Stat(epDir); err == nil {
+		epPolicy, err := LoadOPAPolicy(epDir, "data.entitlements.eval")
+		if err != nil {
+			return nil, fmt.Errorf("loading OPA entitlements policy: %w", err)
+		}
+		epYAML, err := protoOpa.OpaPolicyToYAML(epPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling entitlements policy: %w", err)
+		}
+		var epMap map[string]any
+		if err := yaml.Unmarshal(epYAML, &epMap); err != nil {
+			return nil, fmt.Errorf("converting entitlements policy: %w", err)
+		}
+		opaFields["entitlements_policy"] = epMap
+	}
+
 	// Load OPA proxy policy from services/opa-proxy-policy/ if present.
 	ppDir := ProxyPolicyDir(cfgDir)
 	if _, err := os.Stat(ppDir); err == nil {
