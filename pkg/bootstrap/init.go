@@ -82,14 +82,14 @@ func runInCluster(dir string, cfg *protoOperator.OperatorConfig, log *zap.Logger
 	)
 	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor())
 
-	ctx := context.Background()
-	go func() {
-		if err := rec.Run(ctx); err != nil {
-			log.Error("reconciler error", zap.Error(err))
-		}
-	}()
+	// Register as a managed runnable so the manager starts it AFTER the k8s
+	// cache is ready. This prevents the "cache is not started" error when
+	// Resolve() tries to read the gitlab-registry secret on startup.
+	if err := mgr.Add(rec); err != nil {
+		return fmt.Errorf("registering reconciler: %w", err)
+	}
 
-	return mgr.Start(ctx)
+	return mgr.Start(context.Background())
 }
 
 func runGenerate(cfg *protoOperator.OperatorConfig, log *zap.Logger) error {

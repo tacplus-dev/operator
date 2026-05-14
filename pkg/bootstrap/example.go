@@ -603,8 +603,17 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			if holder.OauthConfig == nil {
 				holder.OauthConfig = &protoOauth.Config{}
 			}
-			// Append keycloak provider (after any manually-configured providers).
-			holder.OauthConfig.Providers = append(holder.OauthConfig.Providers, keycloakProvider)
+			// Append keycloak provider only if not already present (avoid duplicates from services/oauth.yaml).
+			alreadyPresent := false
+			for _, p := range holder.OauthConfig.Providers {
+				if p.Issuer == keycloakIssuer {
+					alreadyPresent = true
+					break
+				}
+			}
+			if !alreadyPresent {
+				holder.OauthConfig.Providers = append(holder.OauthConfig.Providers, keycloakProvider)
+			}
 			hasHolder = true
 		}
 		// Populate keycloak service config so kernel can serve it via GetConfig.

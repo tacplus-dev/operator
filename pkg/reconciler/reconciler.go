@@ -95,6 +95,14 @@ func New(cfg *protoOperator.OperatorConfig, configProvider ServiceConfigProvider
 	}
 }
 
+// Start implements manager.Runnable so the reconciler can be registered with
+// the controller-runtime manager via mgr.Add(). The manager calls Start only
+// after the k8s cache is ready, guaranteeing that the initial Resolve() can
+// read secrets from the API server.
+func (r *Reconciler) Start(ctx context.Context) error {
+	return r.Run(ctx)
+}
+
 // Run starts the reconciliation loop. It blocks until ctx is cancelled.
 // The checker resolves image tags and polls for upgrades.
 func (r *Reconciler) Run(ctx context.Context) error {
