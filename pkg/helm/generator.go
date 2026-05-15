@@ -336,7 +336,7 @@ appVersion: %q
 
 var valuesTmpl = template.Must(template.New("values").Parse(`global:
   namespace: {{ .Namespace }}
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: {{ if .Dev }}Always{{ else }}IfNotPresent{{ end }}
   imagePullSecret: "gitlab-registry"
 
 {{- range .Services }}
@@ -380,6 +380,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.OperatorCon
 	if err := valuesTmpl.Execute(&buf, map[string]any{
 		"Namespace": ns,
 		"Services":  svcs,
+		"Dev":       cfg.Dev,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
 	}

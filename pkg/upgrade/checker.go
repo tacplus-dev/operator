@@ -38,7 +38,8 @@ const (
 	operatorBase   = "secondstarcavalier/schematic/platform/cavalier"
 	gitlabTokenURL = "https://gitlab.com/jwt/auth"
 
-	pollInterval = 60 * time.Second
+	PollInterval    = 60 * time.Second
+	DevPollInterval = 10 * time.Second
 )
 
 // ServiceRef identifies a service image in the registry.
@@ -55,16 +56,17 @@ type ServiceRef struct {
 // It resolves the latest LOCAL_PATCH for each registered service at a given
 // (PROTO_PATCH, BRANCH) and signals via Notify() when anything changes.
 type Checker struct {
-	versionLock string // "MAJOR.MINOR", e.g. "1.2"
-	series      string // "MAJOR-MINOR", e.g. "1-2"
-	protoPatch  int    // pinned PROTO_PATCH; 0 = any (use highest found)
-	branch      string // e.g. "main"
-	localPatch  int    // pinned LOCAL_PATCH; 0 = auto (use latest)
-	fallbackTag string // operator's own version tag, used when resolution fails
-	services    []ServiceRef
-	k8sClient   client.Client
-	operatorNS  string
-	log         *zap.Logger
+	versionLock  string // "MAJOR.MINOR", e.g. "1.2"
+	series       string // "MAJOR-MINOR", e.g. "1-2"
+	protoPatch   int    // pinned PROTO_PATCH; 0 = any (use highest found)
+	branch       string // e.g. "main"
+	localPatch   int    // pinned LOCAL_PATCH; 0 = auto (use latest)
+	fallbackTag  string // operator's own version tag, used when resolution fails
+	services     []ServiceRef
+	k8sClient    client.Client
+	operatorNS   string
+	log          *zap.Logger
+	pollInterval time.Duration
 
 	mu     sync.RWMutex
 	cache  map[string]int32 // "proj/svc" → latest LOCAL_PATCH
@@ -80,20 +82,22 @@ type Checker struct {
 //   - localPatch: if > 0, all services are pinned to this LOCAL_PATCH and no polling runs
 //   - fallbackTag: operator's own version tag (e.g. "v1.2.27-main.1"), used as fallback when resolution fails
 //   - services: list of service images to monitor
-func New(versionLock, series string, protoPatch int, branch string, localPatch int, fallbackTag string, services []ServiceRef, k8sClient client.Client, operatorNS string, log *zap.Logger) *Checker {
+//   - interval: how often to poll the registry (use DevPollInterval in dev mode)
+func New(versionLock, series string, protoPatch int, branch string, localPatch int, fallbackTag string, services []ServiceRef, k8sClient client.Client, operatorNS string, log *zap.Logger, interval time.Duration) *Checker {
 	return &Checker{
-		versionLock: versionLock,
-		series:      series,
-		protoPatch:  protoPatch,
-		branch:      branch,
-		localPatch:  localPatch,
-		fallbackTag: fallbackTag,
-		services:    services,
-		k8sClient:   k8sClient,
-		operatorNS:  operatorNS,
-		log:         log,
-		cache:       make(map[string]int32),
-		notify:      make(chan struct{}, 1),
+		versionLock:  versionLock,
+		series:       series,
+		protoPatch:   protoPatch,
+		branch:       branch,
+		localPatch:   localPatch,
+		fallbackTag:  fallbackTag,
+		services:     services,
+		k8sClient:    k8sClient,
+		operatorNS:   operatorNS,
+		log:          log,
+		pollInterval: interval,
+		cache:        make(map[string]int32),
+		notify:       make(chan struct{}, 1),
 	}
 }
 
@@ -155,10 +159,10 @@ func (c *Checker) Run(ctx context.Context) {
 	c.log.Info("starting auto-upgrade checker",
 		zap.String("branch", c.branch),
 		zap.Int("proto_patch", c.protoPatch),
-		zap.Duration("interval", pollInterval),
+		zap.Duration("interval", c.pollInterval),
 	)
 
-	ticker := time.NewTicker(pollInterval)
+	ticker := time.NewTicker(c.pollInterval)
 	defer ticker.Stop()
 
 	for {

@@ -199,6 +199,10 @@ func runInCluster(dir string, cfg *protoOperator.OperatorConfig, log *zap.Logger
 	}
 
 	provider := NewServiceConfigProvider(dir)
+	pollInterval := upgrade.PollInterval
+	if cfg.Dev {
+		pollInterval = upgrade.DevPollInterval
+	}
 	checker := upgrade.New(
 		CurrentMajorMinor(),
 		CurrentSeries(),
@@ -210,6 +214,7 @@ func runInCluster(dir string, cfg *protoOperator.OperatorConfig, log *zap.Logger
 		mgr.GetClient(),
 		operatorNS,
 		log,
+		pollInterval,
 	)
 	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor())
 
@@ -318,6 +323,7 @@ var (
 	initClusterCA   string
 	initClusterType string
 	initClusterGW   int
+	initClusterDev  bool
 )
 
 var initClusterCmd = &cobra.Command{
@@ -346,6 +352,7 @@ func init() {
 	initClusterCmd.Flags().StringVar(&initClusterCA, "ca", "", "path to root CA crypto.yaml")
 	initClusterCmd.Flags().StringVar(&initClusterType, "type", "small", "topology preset: small, medium, large")
 	initClusterCmd.Flags().IntVar(&initClusterGW, "gateways", 0, "gateway replicas (0 = auto from node count)")
+	initClusterCmd.Flags().BoolVar(&initClusterDev, "dev", false, "enable dev mode (imagePullPolicy: Always, faster polling)")
 }
 
 func runInitCluster(cmd *cobra.Command, args []string) error {
@@ -390,6 +397,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 
 	cfg.Fqdn = initClusterFQDN
 	cfg.Port = int32(initClusterPort)
+	cfg.Dev = initClusterDev
 	ApplyTopologyPreset(cfg, initClusterType)
 	if initClusterGW > 0 {
 		cfg.Topology.GatewayNodes = int32(initClusterGW)

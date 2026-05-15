@@ -20,7 +20,6 @@ func AllServices() []ServiceRef {
 		{Proj: "letsencrypt", Svc: "letsencrypt"},
 		{Proj: "anthropic-proxy", Svc: "anthropic"},
 		{Proj: "openai-proxy", Svc: "openai"},
-		{Proj: "mcp", Svc: "mcp"},
 		{Proj: "colddb", Svc: "colddb"},
 		{Proj: "msggateway", Svc: "msggateway"},
 	}

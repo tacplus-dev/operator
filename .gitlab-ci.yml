@@ -56,7 +56,7 @@ proto-validate:
   retry: 2
   image: $TACPLUS_IMAGE
   tags:
-    - br.aarch64
+    - schematic-aarch64
   needs: [compute-image]
   before_script:
     - printf "machine gitlab.com\nlogin gitlab-ci-token\npassword %s\n" "$CI_JOB_TOKEN" > ~/.netrc
@@ -104,7 +104,7 @@ proto-validate:
 build-linux-arm64:
   extends: .build-binary
   tags:
-    - br.aarch64
+    - schematic-aarch64
   variables:
     GOOS: linux
     GOARCH: arm64
@@ -116,7 +116,7 @@ build-linux-arm64:
 build-linux-amd64:
   extends: .build-binary
   tags:
-    - br.aarch64
+    - schematic-aarch64
   variables:
     GOOS: linux
     GOARCH: amd64
@@ -128,7 +128,7 @@ build-linux-amd64:
 build-darwin-arm64:
   extends: .build-binary
   tags:
-    - br.aarch64
+    - schematic-aarch64
   variables:
     GOOS: darwin
     GOARCH: arm64
@@ -140,7 +140,7 @@ build-darwin-arm64:
 # build-windows-amd64:
 #   extends: .build-binary
 #   tags:
-#     - br.aarch64
+#     - schematic-aarch64
 #   variables:
 #     GOOS: windows
 #     GOARCH: amd64
@@ -153,7 +153,7 @@ build-darwin-arm64:
 # build-windows-arm64:
 #   extends: .build-binary
 #   tags:
-#     - br.aarch64
+#     - schematic-aarch64
 #   variables:
 #     GOOS: windows
 #     GOARCH: arm64
@@ -171,7 +171,7 @@ package-release:
   retry: 2
   image: docker:latest
   tags:
-    - br.aarch64
+    - schematic-aarch64
   services:
     - docker:dind
   variables:
