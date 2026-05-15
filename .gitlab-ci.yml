@@ -171,7 +171,7 @@ package-release:
   retry: 2
   image: docker:latest
   tags:
-    - cavalier-arm64
+    - br.aarch64
   services:
     - docker:dind
   variables:
