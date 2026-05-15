@@ -53,6 +53,7 @@ compute-image:
 # ---------------------------------------------------------------------------
 proto-validate:
   stage: build
+  retry: 2
   image: $TACPLUS_IMAGE
   tags:
     - br.aarch64
@@ -75,6 +76,7 @@ proto-validate:
 # ---------------------------------------------------------------------------
 .build-binary:
   stage: build
+  retry: 2
   image: $TACPLUS_IMAGE
   needs: [compute-image]
   before_script:
@@ -166,6 +168,7 @@ build-darwin-arm64:
 # ---------------------------------------------------------------------------
 package-release:
   stage: package
+  retry: 2
   image: docker:latest
   tags:
     - cavalier-arm64
@@ -196,6 +199,7 @@ package-release:
 # ---------------------------------------------------------------------------
 chart:
   stage: chart
+  retry: 2
   image:
     name: alpine/helm:latest
     entrypoint: [""]
@@ -218,6 +222,7 @@ chart:
 # ---------------------------------------------------------------------------
 release:
   stage: release
+  retry: 2
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs: [build-linux-arm64, build-linux-amd64, build-darwin-arm64]
   before_script:
