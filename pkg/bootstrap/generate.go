@@ -266,7 +266,7 @@ func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, v
 	install := action.NewInstall(cfg)
 	install.ReleaseName = "cavalier"
 	install.Namespace = ns
-	install.CreateNamespace = false
+	install.CreateNamespace = true
 	install.Wait = false
 
 	if vals == nil {

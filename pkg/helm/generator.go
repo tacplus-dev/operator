@@ -80,9 +80,6 @@ func (g *Generator) Generate(cfg *protoOperator.OperatorConfig, nodeCount int) (
 	if err := g.addHelpers(charts); err != nil {
 		return nil, err
 	}
-	if err := g.addNamespace(charts, cfg); err != nil {
-		return nil, err
-	}
 	if err := g.addRegistrySecret(charts, cfg); err != nil {
 		return nil, err
 	}
