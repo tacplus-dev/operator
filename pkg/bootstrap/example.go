@@ -584,13 +584,18 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		issuer = Issuer(opCfg)
 	}
 
-	// 5a. When dev=true, inject keycloak as an oauth provider and populate keycloak config.
-	if opCfg != nil && opCfg.Dev {
+	// 5a. When keycloak is enabled (dev mode or optional_services.keycloak=true):
+	//   - In dev mode: also inject keycloak as an oauth provider.
+	//   - Always: populate keycloak service config in kernel so it can serve it via GetConfig.
+	//     Without this, kernel returns empty config when the keycloak pod polls GetConfig,
+	//     causing handleKeycloakConfigStateConfig to overwrite the valid bootstrap config.
+	keycloakEnabled := opCfg != nil && (opCfg.Dev || opCfg.GetOptionalServices().GetKeycloak())
+	if keycloakEnabled {
 		kcSecrets, err := LoadKeycloakSecrets(cfgDir)
 		if err != nil {
 			return nil, fmt.Errorf("loading keycloak secrets for oauth injection: %w", err)
 		}
-		if kcSecrets.OauthClientSecret != "" {
+		if opCfg.Dev && kcSecrets.OauthClientSecret != "" {
 			realm := "cavalier"
 			keycloakIssuer := fmt.Sprintf("https://%s/realms/%s", opCfg.Fqdn, realm)
 			keycloakProvider := &protoOauth.ProviderConfig{
