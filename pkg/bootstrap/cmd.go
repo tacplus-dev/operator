@@ -28,6 +28,7 @@ Bootstrap workflow:
   cavalier-operator init cluster           Initialize cluster PKI + operator.yaml
   cavalier-operator init keycloak          Enable Keycloak IDP (dev/POC)
   cavalier-operator init-opa               Generate OPA entitlements policy
+  cavalier-operator init config <name>     Apply named template from cavalier/config repo
   cavalier-operator build                  Build self-contained deployment bundle
   cavalier-operator bundle expand <file>   Unpack bundle to directory
   cavalier-operator bundle pack <dir>      Pack directory back to bundle
@@ -58,6 +59,7 @@ func init() {
 	initCmd.AddCommand(initCACmd)
 	initCmd.AddCommand(initClusterCmd)
 	initCmd.AddCommand(initKeycloakCmd)
+	initCmd.AddCommand(initConfigCmd)
 
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(buildCmd)

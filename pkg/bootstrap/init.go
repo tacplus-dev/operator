@@ -405,19 +405,14 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generating cluster PKI: %w", err)
 	}
 
-	// Write services/ and creds/ if not already present.
-	if _, err := os.Stat(filepath.Join(dir, "services")); os.IsNotExist(err) {
-		fmt.Println("Creating services/...")
-		if err := WriteServices(dir); err != nil {
-			return err
-		}
+	// Write services/ and creds/ — idempotent per file (skips existing files).
+	fmt.Println("Writing services/...")
+	if err := WriteServices(dir); err != nil {
+		return err
 	}
-
-	if _, err := os.Stat(filepath.Join(dir, "creds")); os.IsNotExist(err) {
-		fmt.Println("Creating creds/...")
-		if err := WriteCreds(dir); err != nil {
-			return err
-		}
+	fmt.Println("Writing creds/...")
+	if err := WriteCreds(dir); err != nil {
+		return err
 	}
 
 	if err := SaveSettings(dir, cfg); err != nil {
