@@ -218,7 +218,7 @@ func InitOPA(cfgDir string) error {
 	for _, iss := range issuers {
 		fmt.Printf("  trusted issuer: %s\n", iss)
 	}
-	fmt.Printf("\nEdit services/opa/abac/attributes.rego to customize access rules.\n")
+	fmt.Printf("\nEdit services/opa/idp/claims.rego to customize IDP claim → role mapping.\n")
 	fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
 	return nil
 }

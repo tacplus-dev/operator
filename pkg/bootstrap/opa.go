@@ -52,7 +52,7 @@ func DefaultOPABundle(idpIssuers []string) *protoFilesystem.Directory {
 	for _, iss := range idpIssuers {
 		fmt.Fprintf(&rules, "trusted_issuer if {\n\tinput.claims.origin_iss == %q\n}\n", iss)
 	}
-	abacRego := fmt.Sprintf(defaultAbacRegoTemplate, rules.String())
+	abacRego := fmt.Sprintf(defaultIdpRegoTemplate, rules.String())
 	perm755 := &protoFilesystem.Permission{Owner: 7, Group: 5, Other: 5}
 	perm644 := &protoFilesystem.Permission{Owner: 6, Group: 4, Other: 4}
 
@@ -64,17 +64,21 @@ func DefaultOPABundle(idpIssuers []string) *protoFilesystem.Directory {
 		},
 		Directories: []*protoFilesystem.Directory{
 			{
-				Name:       "abac",
+				// idp/claims.rego — maps incoming IDP token claims to cavalier roles.
+				// Seeded with trusted_issuer rules for each configured IDP issuer URL.
+				Name:       "idp",
 				Permission: perm755,
 				Files: []*protoFilesystem.File{
-					{Name: "attributes.rego", Permission: perm644, Content: []byte(abacRego)},
+					{Name: "claims.rego", Permission: perm644, Content: []byte(abacRego)},
 				},
 			},
 			{
-				Name:       "rbac",
+				// grants/static.rego — static role grants not derived from IDP claims.
+				// Empty by default; add rules here for service accounts or fixed roles.
+				Name:       "grants",
 				Permission: perm755,
 				Files: []*protoFilesystem.File{
-					{Name: "roles.rego", Permission: perm644, Content: []byte(defaultRbacRego)},
+					{Name: "static.rego", Permission: perm644, Content: []byte(defaultGrantsRego)},
 				},
 			},
 		},
@@ -103,14 +107,16 @@ func LoadOPAPolicy(regoDir, entryPoint string) (*protoOpa.OpaPolicy, error) {
 }
 
 const defaultMainRego = `# Entry point for the entitlements policy.
+# Combines roles from idp/ (IDP claim-derived) and grants/ (static), then
+# maps the resulting role set to service entitlements in the cavalier token.
 package entitlements
 
-import data.entitlements.abac
-import data.entitlements.rbac
+import data.entitlements.idp
+import data.entitlements.grants
 
 default roles := set()
 roles := merged if {
-	merged := abac.roles | rbac.roles
+	merged := idp.roles | grants.roles
 	count(merged) > 0
 }
 
@@ -135,8 +141,13 @@ eval := {"token_entitlements": {
 }
 `
 
-const defaultAbacRegoTemplate = `# Attribute-based access control rules.
-package entitlements.abac
+// defaultIdpRegoTemplate is the generated IDP claims → roles policy.
+// %s is replaced with trusted_issuer rules derived from configured IDP issuers.
+const defaultIdpRegoTemplate = `# IDP claims → cavalier roles.
+# Validates the incoming external IDP token and maps its claim attributes
+# (groups, sub) to the internal role set used by the entitlements policy.
+# trusted_issuer rules below are seeded from services/oauth.yaml providers.
+package entitlements.idp
 
 default roles := set()
 
@@ -156,8 +167,10 @@ roles := {"admin"} if {
 }
 `
 
-const defaultRbacRego = `# Role-based access control rules.
-package entitlements.rbac
+const defaultGrantsRego = `# Static role grants — not derived from IDP claims.
+# Add rules here for service accounts, fixed role assignments, or
+# any access that should be granted independently of IDP group membership.
+package entitlements.grants
 
 default roles := set()
 `

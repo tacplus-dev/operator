@@ -111,8 +111,8 @@ the configured IDP providers from services/oauth.yaml.
 
 Each provider's issuer URL becomes a trusted_issuer rule in the ABAC policy.
 
-Edit services/opa/abac/attributes.rego after generation to customize
-which users get which profiles.
+Edit services/opa/idp/claims.rego after generation to customize
+which IDP claims map to which cavalier roles.
 
 Example:
   cavalier-operator init-opa`,
