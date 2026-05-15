@@ -168,7 +168,7 @@ package-release:
   stage: package
   image: docker:latest
   tags:
-    - br.aarch64
+    - cavalier-arm64
   services:
     - docker:dind
   variables:
