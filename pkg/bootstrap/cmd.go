@@ -29,6 +29,7 @@ Bootstrap workflow:
   cavalier-operator init keycloak          Enable Keycloak IDP (dev/POC)
   cavalier-operator init-opa               Generate OPA entitlements policy
   cavalier-operator init config <name>     Apply named template from cavalier/config repo
+  cavalier-operator export config <name>   Pack config dir back into a template file
   cavalier-operator build                  Build self-contained deployment bundle
   cavalier-operator bundle expand <file>   Unpack bundle to directory
   cavalier-operator bundle pack <dir>      Pack directory back to bundle
@@ -79,6 +80,7 @@ func init() {
 	rootCmd.AddCommand(mergeCmd)
 	rootCmd.AddCommand(genBackendTokensCmd)
 	rootCmd.AddCommand(addCredsCmd)
+	rootCmd.AddCommand(exportCmd)
 
 	addProfileCmd.Flags().StringArrayVar(&profileGrants, "grant", nil, "per-service RPC grant as service=RPC1,RPC2 (repeatable)")
 	addProfileCmd.Flags().BoolVar(&profileAll, "all", false, "grant _ANY on all well-known services")

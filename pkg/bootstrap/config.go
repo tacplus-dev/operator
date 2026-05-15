@@ -1,8 +1,6 @@
 package bootstrap
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,12 +11,31 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
 )
 
 const (
 	configProjectID = "secondstarcavalier%2Fcontrolplane%2Fcavalier%2Fconfig"
 	configAPIBase   = "https://gitlab.com/api/v4"
 )
+
+// ConfigTemplate is the single-file format used in the cavalier/config repo.
+// Each named template (e.g. dev1.yaml) captures operator settings and OPA
+// policy source in one file that the operator can expand into a config dir
+// or pack from a config dir.
+type ConfigTemplate struct {
+	// Operator holds operator.yaml settings (no secrets, no FQDN, no PKI).
+	// Merged into the config dir's operator.yaml using defaults semantics:
+	// template values fill in missing keys; existing cluster settings win.
+	Operator map[string]any `yaml:"operator,omitempty"`
+
+	// OPA maps rego file paths (relative to services/opa/) to rego source.
+	// Files are written/overwritten in services/opa/ when expanded.
+	OPA map[string]string `yaml:"opa,omitempty"`
+}
+
+// --- init config ---
 
 var initConfigTag string
 
@@ -27,11 +44,11 @@ var initConfigCmd = &cobra.Command{
 	Short: "Apply a named config template from the cavalier/config repo",
 	Long: `Download and apply a named configuration template from the cavalier/config repo.
 
-Files from the template are extracted into the config directory:
-  - operator.yaml is deep-merged (template fills in missing keys; existing values win)
-  - All other files (OPA rego, service configs) are written/overwritten
+The template is a single YAML file (<name>.yaml) containing:
+  operator:  settings merged into operator.yaml (template fills missing keys)
+  opa:       rego files written to services/opa/ (overwrites generated files)
 
-Run after 'cavalier-operator init-opa' to apply the custom OPA entitlements policy.
+Run after 'cavalier-operator init-opa' to apply the custom OPA policy.
 
 Examples:
   cavalier-operator init config dev1
@@ -67,37 +84,16 @@ func runInitConfig(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Config template: %s @ %s\n", name, tag)
 
-	archiveURL := fmt.Sprintf("%s/projects/%s/repository/archive.tar.gz?sha=%s&path=%s",
-		configAPIBase, configProjectID, tag, name)
-
-	req, err := http.NewRequest(http.MethodGet, archiveURL, nil)
+	tmpl, err := downloadConfigTemplate(name, tag, token)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("downloading config archive: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("downloading config archive: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
-	count, err := extractConfigTemplate(resp.Body, name, dir)
-	if err != nil {
-		return fmt.Errorf("extracting config template: %w", err)
-	}
-
-	fmt.Printf("Config template '%s' applied to %s/ (%d files)\n", name, dir, count)
-	return nil
+	return applyConfigTemplate(tmpl, dir)
 }
 
 // fetchConfigReleases returns release tag names from the config repo, newest first.
@@ -134,125 +130,87 @@ func fetchConfigReleases(token string) ([]string, error) {
 	return tags, nil
 }
 
-// extractConfigTemplate reads a tar.gz archive and extracts files from the named
-// config path into destDir. The archive root and config name prefix are stripped.
-// operator.yaml is deep-merged (template fills missing keys); all other files
-// are overwritten. Returns the number of regular files extracted.
-func extractConfigTemplate(r io.Reader, name, destDir string) (int, error) {
-	gz, err := gzip.NewReader(r)
+// downloadConfigTemplate fetches <name>.yaml from the config repo at the given tag.
+func downloadConfigTemplate(name, tag, token string) (*ConfigTemplate, error) {
+	// URL-encode the file path for the GitLab raw file API.
+	filePath := name + ".yaml"
+	url := fmt.Sprintf("%s/projects/%s/repository/files/%s/raw?ref=%s",
+		configAPIBase, configProjectID, filePath, tag)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return 0, fmt.Errorf("decompressing archive: %w", err)
+		return nil, err
 	}
-	defer gz.Close()
+	req.Header.Set("PRIVATE-TOKEN", token)
 
-	tr := tar.NewReader(gz)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading config template: %w", err)
+	}
+	defer resp.Body.Close()
 
-	// The archive root is "{repo}-{ref}-{sha}/". We detect it from the first entry
-	// and build the strip prefix as "{root}/{name}/".
-	var stripPrefix string
-	count := 0
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("downloading config template: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading config template: %w", err)
+	}
+
+	var tmpl ConfigTemplate
+	if err := yaml.Unmarshal(data, &tmpl); err != nil {
+		return nil, fmt.Errorf("parsing config template %s.yaml: %w", name, err)
+	}
+	return &tmpl, nil
+}
+
+// applyConfigTemplate applies a ConfigTemplate to a config directory:
+//   - operator.yaml: deep-merged (template fills missing keys; existing wins)
+//   - services/opa/*.rego: written/overwritten
+func applyConfigTemplate(tmpl *ConfigTemplate, dir string) error {
+	if len(tmpl.Operator) > 0 {
+		dest := filepath.Join(dir, "operator.yaml")
+		dstMap := map[string]any{}
+		if data, err := os.ReadFile(dest); err == nil {
+			if err := yaml.Unmarshal(data, &dstMap); err != nil {
+				return fmt.Errorf("parsing existing operator.yaml: %w", err)
+			}
+			if dstMap == nil {
+				dstMap = map[string]any{}
+			}
 		}
+		mergeDefaults(dstMap, tmpl.Operator)
+		out, err := yaml.Marshal(dstMap)
 		if err != nil {
-			return 0, fmt.Errorf("reading archive: %w", err)
+			return fmt.Errorf("marshaling operator.yaml: %w", err)
 		}
-
-		// Detect archive root from the first entry.
-		if stripPrefix == "" {
-			parts := strings.SplitN(hdr.Name, "/", 2)
-			stripPrefix = parts[0] + "/" + name + "/"
+		if err := os.WriteFile(dest, out, 0644); err != nil {
+			return fmt.Errorf("writing operator.yaml: %w", err)
 		}
+		fmt.Printf("  operator.yaml  merged\n")
+	}
 
-		if !strings.HasPrefix(hdr.Name, stripPrefix) {
-			continue
-		}
-
-		rel := strings.TrimPrefix(hdr.Name, stripPrefix)
-		if rel == "" {
-			continue // the template root dir itself
-		}
-
-		dest := filepath.Join(destDir, filepath.FromSlash(rel))
-
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(dest, 0755); err != nil {
-				return 0, fmt.Errorf("creating directory %s: %w", dest, err)
-			}
-
-		case tar.TypeReg:
+	if len(tmpl.OPA) > 0 {
+		opaDir := filepath.Join(dir, "services", "opa")
+		for relPath, content := range tmpl.OPA {
+			dest := filepath.Join(opaDir, filepath.FromSlash(relPath))
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-				return 0, fmt.Errorf("creating parent dir for %s: %w", dest, err)
+				return fmt.Errorf("creating opa dir for %s: %w", relPath, err)
 			}
-			if filepath.Base(dest) == "operator.yaml" {
-				if err := mergeConfigOperatorYAML(tr, dest); err != nil {
-					return 0, fmt.Errorf("merging operator.yaml: %w", err)
-				}
-			} else {
-				mode := hdr.FileInfo().Mode()
-				if mode == 0 {
-					mode = 0644
-				}
-				if err := writeConfigFile(tr, dest, mode); err != nil {
-					return 0, fmt.Errorf("writing %s: %w", rel, err)
-				}
+			if err := os.WriteFile(dest, []byte(content), 0644); err != nil {
+				return fmt.Errorf("writing opa/%s: %w", relPath, err)
 			}
-			count++
+			fmt.Printf("  services/opa/%-35s written\n", relPath)
 		}
 	}
 
-	if count == 0 {
-		return 0, fmt.Errorf("no files found for template %q in archive — check the name and tag", name)
-	}
-	return count, nil
+	return nil
 }
 
-// mergeConfigOperatorYAML deep-merges the YAML from r into the existing operator.yaml
-// at dest. Template values fill in missing keys; existing values take precedence.
-// If dest does not exist, the template file is written as-is.
-func mergeConfigOperatorYAML(r io.Reader, dest string) error {
-	srcData, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-
-	var srcMap map[string]any
-	if err := yaml.Unmarshal(srcData, &srcMap); err != nil {
-		return fmt.Errorf("parsing template operator.yaml: %w", err)
-	}
-	if srcMap == nil {
-		return nil // nothing to merge
-	}
-
-	// Load existing if present.
-	dstMap := map[string]any{}
-	if data, err := os.ReadFile(dest); err == nil {
-		if err := yaml.Unmarshal(data, &dstMap); err != nil {
-			return fmt.Errorf("parsing existing operator.yaml: %w", err)
-		}
-		if dstMap == nil {
-			dstMap = map[string]any{}
-		}
-	}
-
-	// Merge: template fills in keys absent from existing (existing wins on conflict).
-	mergeDefaults(dstMap, srcMap)
-
-	out, err := yaml.Marshal(dstMap)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dest, out, 0644)
-}
-
-// mergeDefaults recursively merges src into dst, but only sets keys from src
-// that are not already present in dst. For map values, recurses into nested maps.
-// This preserves existing cluster settings (fqdn, pki, topology) while applying
-// template defaults (tls, optional_services) if not already set.
+// mergeDefaults recursively merges src into dst, only setting keys absent from dst.
+// Existing values (cluster settings: fqdn, pki, topology) are preserved.
 func mergeDefaults(dst, src map[string]any) {
 	for k, srcVal := range src {
 		dstVal, exists := dst[k]
@@ -265,18 +223,155 @@ func mergeDefaults(dst, src map[string]any) {
 		if srcIsMap && dstIsMap {
 			mergeDefaults(dstMap, srcMap)
 		}
-		// Both non-map: existing wins, no-op.
 	}
 }
 
-func writeConfigFile(r io.Reader, dest string, mode os.FileMode) error {
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+// --- export config ---
+
+var exportConfigOutput string
+
+var exportConfigCmd = &cobra.Command{
+	Use:   "config <name>",
+	Short: "Pack config dir into a named template file",
+	Long: `Pack the current config directory's operator settings and OPA policy
+into a single template YAML file suitable for the cavalier/config repo.
+
+Captures:
+  operator.yaml settings  → template operator: section (PKI and secrets stripped)
+  services/opa/*.rego     → template opa: section
+
+Example:
+  cavalier-operator export config dev1
+  cavalier-operator export config dev1 -o /path/to/config/dev1.yaml`,
+	Args: cobra.ExactArgs(1),
+	RunE: runExportConfig,
+}
+
+var exportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export config dir to a portable template",
+}
+
+func init() {
+	exportConfigCmd.Flags().StringVarP(&exportConfigOutput, "output", "o", "", "output file (default: <name>.yaml)")
+	exportCmd.AddCommand(exportConfigCmd)
+}
+
+func runExportConfig(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	dir := resolveConfigDir()
+
+	outFile := exportConfigOutput
+	if outFile == "" {
+		outFile = name + ".yaml"
+	}
+
+	tmpl := &ConfigTemplate{}
+
+	// Read operator.yaml and strip PKI/secrets.
+	cfg, err := LoadConfig(dir)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
+	// Clear sensitive/cluster-specific fields before exporting.
+	cfg.Pki = nil
+	cfg.Fqdn = ""
+	cfg.Port = 0
+	cfg.Topology = nil
+	cfg.WebRoot = ""
+	cfg.OutputDir = ""
+	cfg.Patch = 0
+	cfg.Dev = false
+	cfg.GitlabRegistryToken = ""
+	cfg.TraceId = ""
+	// Write to YAML and read back as a raw map so we can embed in the template.
+	settingsYAML, err := protoOperator.OperatorConfigToYAML(cfg)
+	if err != nil {
+		return fmt.Errorf("serializing operator settings: %w", err)
+	}
+	var settingsMap map[string]any
+	if err := yaml.Unmarshal(settingsYAML, &settingsMap); err != nil {
+		return fmt.Errorf("parsing operator settings: %w", err)
+	}
+	// Drop empty/nil entries.
+	cleanMap(settingsMap)
+	if len(settingsMap) > 0 {
+		tmpl.Operator = settingsMap
+	}
+
+	// Read services/opa/ rego files.
+	opaDir := filepath.Join(dir, "services", "opa")
+	if fi, err := os.Stat(opaDir); err == nil && fi.IsDir() {
+		opaFiles := map[string]string{}
+		if err := collectRegoFiles(opaDir, "", opaFiles); err != nil {
+			return fmt.Errorf("reading opa policy: %w", err)
+		}
+		if len(opaFiles) > 0 {
+			tmpl.OPA = opaFiles
+		}
+	}
+
+	data, err := yaml.Marshal(tmpl)
+	if err != nil {
+		return fmt.Errorf("marshaling template: %w", err)
+	}
+
+	header := fmt.Sprintf("# %s — cavalier config template\n# Generated by: cavalier-operator export config %s\n# Upload to cavalier/config repo as %s.yaml\n\n", name, name, name)
+	if err := os.WriteFile(outFile, append([]byte(header), data...), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", outFile, err)
+	}
+
+	fmt.Printf("Exported template: %s\n", outFile)
+	if tmpl.Operator != nil {
+		fmt.Printf("  operator settings: %d keys\n", len(tmpl.Operator))
+	}
+	if tmpl.OPA != nil {
+		fmt.Printf("  opa rego files:    %d\n", len(tmpl.OPA))
+	}
+	return nil
+}
+
+// collectRegoFiles walks dir recursively and adds .rego file contents to files,
+// keyed by their path relative to dir.
+func collectRegoFiles(dir, rel string, files map[string]string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return err
 	}
-	return f.Close()
+	for _, e := range entries {
+		name := e.Name()
+		relPath := name
+		if rel != "" {
+			relPath = rel + "/" + name
+		}
+		fullPath := filepath.Join(dir, name)
+		if e.IsDir() {
+			if err := collectRegoFiles(fullPath, relPath, files); err != nil {
+				return err
+			}
+		} else if strings.HasSuffix(name, ".rego") {
+			data, err := os.ReadFile(fullPath)
+			if err != nil {
+				return err
+			}
+			files[relPath] = string(data)
+		}
+	}
+	return nil
+}
+
+// cleanMap removes nil and empty-map entries from m in-place.
+func cleanMap(m map[string]any) {
+	for k, v := range m {
+		if v == nil {
+			delete(m, k)
+			continue
+		}
+		if sub, ok := v.(map[string]any); ok {
+			cleanMap(sub)
+			if len(sub) == 0 {
+				delete(m, k)
+			}
+		}
+	}
 }
