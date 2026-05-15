@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	configProjectID = "secondstarcavalier%2Fcontrolplane%2Fcavalier%2Fconfig"
+	configProjectID = "secondstarcavalier%2Fcontrolplane%2Fcavalier%2Fconfig-templates"
 	configAPIBase   = "https://gitlab.com/api/v4"
 )
 
