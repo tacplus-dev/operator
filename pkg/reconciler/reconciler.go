@@ -327,7 +327,7 @@ func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart,
 	install := action.NewInstall(cfg)
 	install.ReleaseName = releaseName
 	install.Namespace = ns
-	install.CreateNamespace = true
+	install.CreateNamespace = false
 	install.Wait = false
 
 	rel, err := install.Run(ch, vals)
