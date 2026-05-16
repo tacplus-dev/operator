@@ -1,9 +1,7 @@
 package bootstrap
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,7 +23,6 @@ import (
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/opa"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/kernel"
-	protoKeycloak "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/keycloak"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/services/sentinel"
 )
 
@@ -261,94 +258,7 @@ func WriteCreds(cfgDir string) error {
 		return err
 	}
 
-	// Keycloak secrets — generated once, never overwritten.
-	if err := generateKeycloakSecrets(cfgDir); err != nil {
-		return fmt.Errorf("generating keycloak secrets: %w", err)
-	}
-
 	return nil
-}
-
-// KeycloakSecrets holds auto-generated secrets for the Keycloak IDP service.
-// Written to services/keycloak-generated.yaml; never overwritten once created.
-type KeycloakSecrets struct {
-	AdminPassword     string            `yaml:"admin_password"`
-	OauthClientSecret string            `yaml:"oauth_client_secret"`
-	UserPasswords     map[string]string `yaml:"user_passwords"`
-}
-
-// generateKeycloakSecrets creates services/keycloak-generated.yaml with random
-// secrets. Idempotent — skips if the file already exists.
-func generateKeycloakSecrets(cfgDir string) error {
-	path := filepath.Join(cfgDir, "services", "keycloak-generated.yaml")
-	if _, err := os.Stat(path); err == nil {
-		return nil // already exists, keep existing secrets
-	}
-
-	randHex := func(n int) (string, error) {
-		b := make([]byte, n)
-		if _, err := rand.Read(b); err != nil {
-			return "", err
-		}
-		return hex.EncodeToString(b), nil
-	}
-
-	adminPass, err := randHex(16) // 32 hex chars
-	if err != nil {
-		return fmt.Errorf("generating admin password: %w", err)
-	}
-	clientSecret, err := randHex(16)
-	if err != nil {
-		return fmt.Errorf("generating oauth client secret: %w", err)
-	}
-	adminUserPass, err := randHex(8) // 16 hex chars
-	if err != nil {
-		return fmt.Errorf("generating admin user password: %w", err)
-	}
-	joeuserPass, err := randHex(8)
-	if err != nil {
-		return fmt.Errorf("generating joeuser password: %w", err)
-	}
-
-	secrets := KeycloakSecrets{
-		AdminPassword:     adminPass,
-		OauthClientSecret: clientSecret,
-		UserPasswords: map[string]string{
-			"admin":   adminUserPass,
-			"joeuser": joeuserPass,
-		},
-	}
-
-	data, err := yaml.Marshal(secrets)
-	if err != nil {
-		return fmt.Errorf("marshaling keycloak secrets: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("writing keycloak-generated.yaml: %w", err)
-	}
-	fmt.Printf("  services/keycloak-generated.yaml (keycloak secrets generated)\n")
-	return nil
-}
-
-// LoadKeycloakSecrets reads the auto-generated keycloak secrets from services/keycloak-generated.yaml.
-// Returns an empty struct (no error) if the file does not exist.
-func LoadKeycloakSecrets(cfgDir string) (*KeycloakSecrets, error) {
-	path := filepath.Join(cfgDir, "services", "keycloak-generated.yaml")
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return &KeycloakSecrets{UserPasswords: map[string]string{}}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading keycloak-generated.yaml: %w", err)
-	}
-	var s KeycloakSecrets
-	if err := yaml.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("parsing keycloak-generated.yaml: %w", err)
-	}
-	if s.UserPasswords == nil {
-		s.UserPasswords = map[string]string{}
-	}
-	return &s, nil
 }
 
 // writeCredPairAndDelegate generates a cred pair for a service, writes it to disk,
@@ -582,61 +492,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 	if opCfg != nil {
 		fqdn = opCfg.Fqdn
 		issuer = Issuer(opCfg)
-	}
-
-	// 5a. When keycloak is enabled (dev mode or optional_services.keycloak=true):
-	//   - In dev mode: also inject keycloak as an oauth provider.
-	//   - Always: populate keycloak service config in kernel so it can serve it via GetConfig.
-	//     Without this, kernel returns empty config when the keycloak pod polls GetConfig,
-	//     causing handleKeycloakConfigStateConfig to overwrite the valid bootstrap config.
-	keycloakEnabled := opCfg != nil && (opCfg.Dev || opCfg.GetOptionalServices().GetKeycloak())
-	if keycloakEnabled {
-		kcSecrets, err := LoadKeycloakSecrets(cfgDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading keycloak secrets for oauth injection: %w", err)
-		}
-		if opCfg.Dev && kcSecrets.OauthClientSecret != "" {
-			realm := "cavalier"
-			keycloakIssuer := fmt.Sprintf("https://%s/realms/%s", opCfg.Fqdn, realm)
-			keycloakProvider := &protoOauth.ProviderConfig{
-				Enable:       true,
-				Name:         "Keycloak",
-				Issuer:       keycloakIssuer,
-				ClientId:     "cavalier",
-				ClientSecret: kcSecrets.OauthClientSecret,
-			}
-			if holder.OauthConfig == nil {
-				holder.OauthConfig = &protoOauth.Config{}
-			}
-			// Append keycloak provider only if not already present (avoid duplicates from services/oauth.yaml).
-			alreadyPresent := false
-			for _, p := range holder.OauthConfig.Providers {
-				if p.Issuer == keycloakIssuer {
-					alreadyPresent = true
-					break
-				}
-			}
-			if !alreadyPresent {
-				holder.OauthConfig.Providers = append(holder.OauthConfig.Providers, keycloakProvider)
-			}
-			hasHolder = true
-		}
-		// Populate keycloak service config so kernel can serve it via GetConfig.
-		if kcSecrets.AdminPassword != "" {
-			kcCfg := &protoKeycloak.Config{
-				AdminPassword:     kcSecrets.AdminPassword,
-				OauthClientId:     "cavalier",
-				OauthClientSecret: kcSecrets.OauthClientSecret,
-				DefaultGroups:     []string{"admins", "users"},
-				DefaultUsers: []*protoKeycloak.DefaultUser{
-					{Username: "admin", Password: kcSecrets.UserPasswords["admin"], Groups: []string{"admins", "users"}},
-					{Username: "joeuser", Password: kcSecrets.UserPasswords["joeuser"], Groups: []string{"users"}},
-				},
-			}
-			protoKeycloak.ConfigDefaults(kcCfg)
-			holder.KeycloakConfig = kcCfg
-			hasHolder = true
-		}
 	}
 
 	// 6. Build kernel Config proto

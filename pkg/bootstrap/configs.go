@@ -72,10 +72,6 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.SamlConfig) > 0 && opt.GetSaml() {
 		serviceFiles["saml"] = dc.SamlConfig
 	}
-	if len(dc.KeycloakConfig) > 0 && (opt.GetKeycloak() || dc.Cfg.Dev) {
-		serviceFiles["keycloak"] = dc.KeycloakConfig
-	}
-
 	for svc, data := range serviceFiles {
 		if err := os.WriteFile(filepath.Join(configsDir, svc+".yaml"), data, 0600); err != nil {
 			return fmt.Errorf("writing %s.yaml: %w", svc, err)

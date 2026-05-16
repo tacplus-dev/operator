@@ -13,5 +13,4 @@ var FrontendServiceNames = []string{
 	"opa",
 	"argus",
 	"letsencrypt",
-	"keycloak",
 }

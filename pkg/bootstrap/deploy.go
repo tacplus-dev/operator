@@ -35,7 +35,6 @@ type DeployConfigs struct {
 	GraphdbConfig      []byte
 	ColddbConfig       []byte
 	LetsencryptConfig  []byte
-	KeycloakConfig     []byte
 	GatewayOpts        GatewayOptions
 	Cfg                *protoOperator.OperatorConfig
 }
@@ -302,35 +301,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		}
 	}
 
-	var keycloakConfigYAML []byte
-	if opt.GetKeycloak() || cfg.Dev {
-		kcSecrets, err := LoadKeycloakSecrets(cfgDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading keycloak secrets: %w", err)
-		}
-		keycloakConfigYAML, err = buildSvc("keycloak", func(m map[string]any) {
-			m["admin_password"] = kcSecrets.AdminPassword
-			m["oauth_client_id"] = "cavalier"
-			m["oauth_client_secret"] = kcSecrets.OauthClientSecret
-			m["default_groups"] = []any{"admins", "users"}
-			m["default_users"] = []any{
-				map[string]any{
-					"username": "admin",
-					"password": kcSecrets.UserPasswords["admin"],
-					"groups":   []any{"admins", "users"},
-				},
-				map[string]any{
-					"username": "joeuser",
-					"password": kcSecrets.UserPasswords["joeuser"],
-					"groups":   []any{"users"},
-				},
-			}
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	var letsencryptConfigYAML []byte
 	if cfg.GetTls().GetLetsencrypt() {
 		letsencryptConfigYAML, err = buildSvc("letsencrypt", func(m map[string]any) {
@@ -395,7 +365,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		GraphdbConfig:     graphdbConfigYAML,
 		ColddbConfig:      colddbConfigYAML,
 		LetsencryptConfig: letsencryptConfigYAML,
-		KeycloakConfig:    keycloakConfigYAML,
 		GatewayOpts:       gatewayOpts,
 		Cfg:               cfg,
 	}, nil
@@ -457,7 +426,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"graphdb", dc.GraphdbConfig},
 		{"colddb", dc.ColddbConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
-		{"keycloak", dc.KeycloakConfig},
 	} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}

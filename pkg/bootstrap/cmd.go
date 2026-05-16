@@ -26,7 +26,6 @@ Modes:
 Bootstrap workflow:
   cavalier-operator init ca                Initialize root CA → crypto.yaml
   cavalier-operator init cluster           Initialize cluster PKI + operator.yaml
-  cavalier-operator init keycloak          Enable Keycloak IDP (dev/POC)
   cavalier-operator init-opa               Generate OPA entitlements policy
   cavalier-operator init config <name>     Apply named template from cavalier/config repo
   cavalier-operator export config <name>   Pack config dir back into a template file
@@ -59,7 +58,6 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.AddCommand(initCACmd)
 	initCmd.AddCommand(initClusterCmd)
-	initCmd.AddCommand(initKeycloakCmd)
 	initCmd.AddCommand(initConfigCmd)
 
 	rootCmd.AddCommand(generateCmd)

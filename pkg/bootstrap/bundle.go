@@ -78,7 +78,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"graphdb", dc.GraphdbConfig},
 		{"colddb", dc.ColddbConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
-		{"keycloak", dc.KeycloakConfig},
 	} {
 		if len(pair.data) > 0 {
 			svcs[pair.name] = string(pair.data)

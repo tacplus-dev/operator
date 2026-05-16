@@ -258,22 +258,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 		svcs = append(svcs, serviceSpec{Name:"saml", Replicas:topo.SamlNodes, Image:g.imageRef("saml"), HasGRPC:true, ListenPort:8443})
 	}
 
-	// Keycloak IDP — enabled when dev=true or optional_services.keycloak=true.
-	// ExtraPort 9443 exposes Keycloak's native HTTPS port alongside the gRPC wrapper (8443).
-	// KC_HOSTNAME is set to the full HTTPS URL so Keycloak builds correct issuer URLs in
-	// OIDC discovery responses. KC_PROXY_HEADERS=xforwarded trusts X-Forwarded-* from gateway.
-	if opt.GetKeycloak() || cfg.Dev {
-		kcFqdn := cfg.Fqdn
-		kcEnv := fmt.Sprintf(`        - name: KC_PROXY_HEADERS
-          value: xforwarded
-        - name: KC_HOSTNAME
-          value: https://%s
-        - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
-          value: "false"
-`, kcFqdn)
-		svcs = append(svcs, serviceSpec{Name:"keycloak", Replicas:1, Image:g.imageRef("keycloak"), HasGRPC:true, HasPVC:true, Storage:"1Gi", ListenPort:8443, ExtraPort:9443, ExtraPortName:"https", ExtraEnvVars:kcEnv})
-	}
-
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
 	if cfg.GetTls().GetLetsencrypt() {
 		svcs = append(svcs, serviceSpec{
