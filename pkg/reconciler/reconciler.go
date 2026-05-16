@@ -291,6 +291,7 @@ func (r *Reconciler) apply(_ context.Context, charts *helm.Charts, svcValues map
 	}); err != nil {
 		return fmt.Errorf("initialising helm action config: %w", err)
 	}
+	actionCfg.Releases.MaxHistory = 10
 
 	buffered := make([]*helmloader.BufferedFile, 0, len(charts.Files))
 	for name, data := range charts.Files {
@@ -344,6 +345,7 @@ func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart,
 func (r *Reconciler) helmUpgrade(cfg *action.Configuration, ch *helmchart.Chart, vals map[string]interface{}) error {
 	upgrade := action.NewUpgrade(cfg)
 	upgrade.Wait = false
+	upgrade.MaxHistory = 10
 
 	rel, err := upgrade.Run(releaseName, ch, vals)
 	if err != nil {

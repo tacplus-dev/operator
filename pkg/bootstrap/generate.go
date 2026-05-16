@@ -174,7 +174,9 @@ func runApply(cmd *cobra.Command, args []string) error {
 		ns = "cavalier"
 	}
 
-	restCfg, err := clientcmd.BuildConfigFromFlags("", "")
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
 	if err != nil {
 		return fmt.Errorf("loading kubeconfig: %w", err)
 	}
@@ -234,8 +236,18 @@ type cliGetter struct {
 
 func (g *cliGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters["cluster"] = &clientcmdapi.Cluster{Server: g.cfg.Host}
-	cfg.AuthInfos["user"] = &clientcmdapi.AuthInfo{Token: g.cfg.BearerToken}
+	cluster := &clientcmdapi.Cluster{
+		Server:                   g.cfg.Host,
+		CertificateAuthorityData: g.cfg.TLSClientConfig.CAData,
+		InsecureSkipTLSVerify:    g.cfg.TLSClientConfig.Insecure,
+	}
+	cfg.Clusters["cluster"] = cluster
+	authInfo := &clientcmdapi.AuthInfo{
+		Token:                 g.cfg.BearerToken,
+		ClientCertificateData: g.cfg.TLSClientConfig.CertData,
+		ClientKeyData:         g.cfg.TLSClientConfig.KeyData,
+	}
+	cfg.AuthInfos["user"] = authInfo
 	cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "cluster", AuthInfo: "user", Namespace: g.namespace}
 	cfg.CurrentContext = "ctx"
 	return clientcmd.NewDefaultClientConfig(*cfg, &clientcmd.ConfigOverrides{})
