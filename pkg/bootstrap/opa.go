@@ -124,9 +124,20 @@ default eval := {"token_entitlements": {}}
 
 eval := {"token_entitlements": {
 	"sentinel":     ["SENTINEL_RPCS_ANY"],
-	"openai":       ["OPENAI_RPCS_ANY"],
+	"gateway":      ["GATEWAY_RPCS_ANY"],
+	"mcp":          ["MCP_RPCS_ANY"],
+	"eventbus":     ["EVENTBUS_RPCS_ANY"],
+	"oauth":        ["OAUTH_RPCS_ANY"],
 	"anthropic":    ["ANTHROPIC_RPCS_ANY"],
+	"github":       ["GITHUB_RPCS_ANY"],
+	"gitlab":       ["GITLAB_RPCS_ANY"],
+	"openai":       ["OPENAI_RPCS_ANY"],
+	"argus":        ["ARGUS_RPCS_ANY"],
+	"saml":         ["SAML_RPCS_ANY"],
+	"config":       ["CONFIG_RPCS_ANY"],
 	"claudesensor": ["CLAUDESENSOR_RPCS_ANY"],
+	"scmsensor":    ["SCMSENSOR_RPCS_ANY"],
+	"llmsensor":    ["LLMSENSOR_RPCS_ANY"],
 }} if {
 	roles["admin"]
 }

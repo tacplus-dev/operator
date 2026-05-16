@@ -76,9 +76,10 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if err != nil {
 		return nil, fmt.Errorf("extracting root CA PEM: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "ca.pem"), caCertPEM, 0644); err != nil {
-		return nil, fmt.Errorf("writing CA cert: %w", err)
-	}
+	// Write ca.pem for tools that need it. Non-fatal: the reconciler runs in a
+	// read-only config dir so the write may fail, but the cert is still returned
+	// in DeployConfigs.CACertPEM for callers that need it.
+	_ = os.WriteFile(filepath.Join(cfgDir, "ca.pem"), caCertPEM, 0644)
 
 	kernelConfig, err := BuildKernelConfigProto(cfgDir)
 	if err != nil {
