@@ -343,28 +343,43 @@ func (c *Checker) registryToken(ctx context.Context, repo string, creds registry
 }
 
 func (c *Checker) listTags(ctx context.Context, repo, token string) ([]string, error) {
-	url := fmt.Sprintf("https://%s/v2/%s/tags/list", registryHost, repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+	var allTags []string
+	url := fmt.Sprintf("https://%s/v2/%s/tags/list?n=10000", registryHost, repo)
+
+	for url != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("tags/list returned %s", resp.Status)
+		}
+		var tr struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(body, &tr); err != nil {
+			return nil, fmt.Errorf("parsing tags: %w", err)
+		}
+		allTags = append(allTags, tr.Tags...)
+
+		// Follow pagination Link header if present.
+		url = ""
+		if link := resp.Header.Get("Link"); link != "" {
+			if start := strings.Index(link, "<"); start != -1 {
+				if end := strings.Index(link[start:], ">"); end != -1 {
+					url = link[start+1 : start+end]
+				}
+			}
+		}
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tags/list returned %s", resp.Status)
-	}
-	var tr struct {
-		Tags []string `json:"tags"`
-	}
-	if err := json.Unmarshal(body, &tr); err != nil {
-		return nil, fmt.Errorf("parsing tags: %w", err)
-	}
-	return tr.Tags, nil
+	return allTags, nil
 }
 
 // selectLatest returns the highest LOCAL_PATCH from tags matching
