@@ -171,6 +171,9 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		return nil, fmt.Errorf("loading gateway key: %w", err)
 	}
 	gatewayOpts := LoadGatewayOptions(filepath.Join(cfgDir, "services"))
+	if cfg.GetTls() != nil && cfg.GetTls().GetLetsencrypt() {
+		gatewayOpts.LetsEncrypt = true
+	}
 	gatewayConfigYAML, err := BuildGatewayServiceConfig(gatewayKey, trustedCAs, gatewayOpts, kernelEndpoints...)
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
@@ -319,6 +322,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if cfg.GetTls().GetLetsencrypt() {
 		letsencryptConfigYAML, err = buildSvc("letsencrypt", func(m map[string]any) {
 			m["fqdn"] = cfg.Fqdn
+			m["hostnames"] = []string{cfg.Fqdn}
 			m["http_listener"] = map[string]any{"host": "0.0.0.0", "port": int64(8080)}
 			m["renewal_check_interval_seconds"] = int64(3600)
 		})

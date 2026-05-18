@@ -63,8 +63,9 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 
 // GatewayOptions holds user-configurable gateway settings from services/gateway.yaml.
 type GatewayOptions struct {
-	EnableTCP  bool
-	EnableQUIC bool
+	EnableTCP    bool
+	EnableQUIC   bool
+	LetsEncrypt  bool
 }
 
 // BuildGatewayServiceConfig generates the serviceconfig YAML for gateway.
@@ -89,6 +90,11 @@ func BuildGatewayServiceConfig(
 	}
 	config["enable_tcp"] = opts.EnableTCP
 	config["enable_quic"] = opts.EnableQUIC
+	if opts.LetsEncrypt {
+		config["external_tls_mode"] = "letsencrypt"
+	} else {
+		config["external_tls_mode"] = "cert_chain"
+	}
 
 	return yaml.Marshal(config)
 }
