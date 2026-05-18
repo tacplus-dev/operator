@@ -695,14 +695,31 @@ spec:
 		}
 	}
 
-	// Deployment template (helm-templated for node iteration)
-	var buf bytes.Buffer
-	type tmplData struct {
-		Name     string
-		Replicas int32
-		HasPVC   bool
+	// Headless Service for StatefulSet DNS discovery.
+	if svc.IsStatefulSet {
+		listenPort := svc.ListenPort
+		if listenPort == 0 {
+			listenPort = 5000
+		}
+		charts.Files[fmt.Sprintf("templates/%s/service-headless.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+spec:
+  clusterIP: None
+  selector:
+    app: %s
+  ports:
+  - name: grpc
+    port: %d
+    targetPort: %d
+  - name: hazelcast
+    port: 5001
+    targetPort: 5001
+`, svc.Name, svc.Name, listenPort, listenPort))
 	}
-	_ = deploymentTmpl // used below via direct string generation for clarity
+
 	listenPort := svc.ListenPort
 	if listenPort == 0 {
 		listenPort = 5000
@@ -711,11 +728,114 @@ spec:
 	if listenPort == 8443 {
 		probeHelper = "cavalier.grpcProbe8443"
 	}
-	// Generate individual deployments — one per replica, named <service><index>
-	var deployBuf bytes.Buffer
-	for i := range int(svc.Replicas) {
-		name := fmt.Sprintf("%s%d", svc.Name, i)
-		deployBuf.WriteString(fmt.Sprintf(`---
+
+	if svc.IsStatefulSet {
+		// Generate a StatefulSet with an init container that selects the
+		// per-ordinal ConfigMap based on the pod's hostname (kernel-0 → 0).
+		var ssBuf bytes.Buffer
+		ssBuf.WriteString(fmt.Sprintf(`---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+spec:
+  serviceName: %s
+  replicas: %d
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+        {{- include "cavalier.labels" . | nindent 8 }}
+    spec:
+      {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+      - name: config-select
+        image: busybox:1.36
+        command: ["sh", "-c", "ORDINAL=${HOSTNAME##*-}; cp /configs/config-${ORDINAL}/config.yaml /bootstrap/bootstrap.yaml"]
+        volumeMounts:
+        - name: bootstrap
+          mountPath: /bootstrap
+`, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
+		// Mount each per-ordinal ConfigMap in the init container.
+		for i := range int(svc.Replicas) {
+			name := fmt.Sprintf("%s-%d", svc.Name, i)
+			ssBuf.WriteString(fmt.Sprintf(`        - name: config-%d
+          mountPath: /configs/config-%d
+`, i, i))
+			_ = name
+		}
+		ssBuf.WriteString(fmt.Sprintf(`      containers:
+      - name: %s
+        image: {{ .Values.%s.image }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        env:
+        - name: BOOTSTRAP_CONFIG
+          value: /bootstrap/bootstrap.yaml
+`, svc.Name, svc.Name))
+		if svc.ExtraEnvVars != "" {
+			ssBuf.WriteString(svc.ExtraEnvVars)
+		}
+		ssBuf.WriteString(fmt.Sprintf(`        ports:
+        - containerPort: %d
+          name: grpc
+        - containerPort: 5001
+          name: hazelcast
+        volumeMounts:
+        - name: bootstrap
+          mountPath: /bootstrap
+`, listenPort))
+		if svc.HasPVC {
+			ssBuf.WriteString(`        - name: data
+          mountPath: /app/data
+`)
+		}
+		if !svc.SkipProbes {
+			ssBuf.WriteString(fmt.Sprintf(`        readinessProbe:
+          {{- include "%s" . | nindent 10 }}
+        livenessProbe:
+          {{- include "%s" . | nindent 10 }}
+`, probeHelper, probeHelper))
+		}
+		ssBuf.WriteString(`      volumes:
+      - name: bootstrap
+        emptyDir: {}
+`)
+		for i := range int(svc.Replicas) {
+			name := fmt.Sprintf("%s-%d", svc.Name, i)
+			ssBuf.WriteString(fmt.Sprintf(`      - name: config-%d
+        configMap:
+          name: %s-config
+`, i, name))
+		}
+		if svc.HasPVC {
+			ssBuf.WriteString(fmt.Sprintf(`  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests:
+          storage: {{ .Values.%s.storage }}
+`, svc.Name))
+		}
+		charts.Files[fmt.Sprintf("templates/%s/statefulset.yaml", svc.Name)] = ssBuf.Bytes()
+	} else {
+		// Generate individual Deployments — one per replica, named <service><index>.
+		var deployBuf bytes.Buffer
+		for i := range int(svc.Replicas) {
+			name := fmt.Sprintf("%s%d", svc.Name, i)
+			deployBuf.WriteString(fmt.Sprintf(`---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -744,64 +864,64 @@ spec:
         - name: BOOTSTRAP_CONFIG
           value: /data/bootstrap.yaml
 `, name, name, name, name, name, svc.Name))
-		if svc.ExtraEnvVars != "" {
-			deployBuf.WriteString(svc.ExtraEnvVars)
-		}
-		if len(svc.NodeModes) > 0 {
-			nodeMode := "alpha"
-			if i < len(svc.NodeModes) {
-				nodeMode = svc.NodeModes[i]
+			if svc.ExtraEnvVars != "" {
+				deployBuf.WriteString(svc.ExtraEnvVars)
 			}
-			deployBuf.WriteString(fmt.Sprintf(`        - name: NODE_MODE
+			if len(svc.NodeModes) > 0 {
+				nodeMode := "alpha"
+				if i < len(svc.NodeModes) {
+					nodeMode = svc.NodeModes[i]
+				}
+				deployBuf.WriteString(fmt.Sprintf(`        - name: NODE_MODE
           value: %s
 `, nodeMode))
-		}
-		deployBuf.WriteString(fmt.Sprintf(`        ports:
+			}
+			deployBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d
           name: grpc
 `, listenPort))
-		if svc.AcmePort != 0 {
-			deployBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
+			if svc.AcmePort != 0 {
+				deployBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
           name: acme
 `, svc.AcmePort))
-		}
-		if svc.HasHazelcast {
-			deployBuf.WriteString(`        - containerPort: 5001
+			}
+			if svc.HasHazelcast {
+				deployBuf.WriteString(`        - containerPort: 5001
           name: hazelcast
 `)
-		}
-		deployBuf.WriteString(`        volumeMounts:
+			}
+			deployBuf.WriteString(`        volumeMounts:
         - name: config
           mountPath: /data/bootstrap.yaml
           subPath: config.yaml
 `)
-		if svc.HasPVC {
-			deployBuf.WriteString(`        - name: data
+			if svc.HasPVC {
+				deployBuf.WriteString(`        - name: data
           mountPath: /app/data
 `)
-		}
-		if !svc.SkipProbes {
-			deployBuf.WriteString(fmt.Sprintf(`        readinessProbe:
+			}
+			if !svc.SkipProbes {
+				deployBuf.WriteString(fmt.Sprintf(`        readinessProbe:
           {{- include "%s" . | nindent 10 }}
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
 `, probeHelper, probeHelper))
-		}
-		deployBuf.WriteString(`      volumes:
+			}
+			deployBuf.WriteString(`      volumes:
       - name: config
         configMap:
 `)
-		deployBuf.WriteString(fmt.Sprintf(`          name: %s-config
+			deployBuf.WriteString(fmt.Sprintf(`          name: %s-config
 `, name))
-		if svc.HasPVC {
-			deployBuf.WriteString(fmt.Sprintf(`      - name: data
+			if svc.HasPVC {
+				deployBuf.WriteString(fmt.Sprintf(`      - name: data
         persistentVolumeClaim:
           claimName: %s-data
 `, name))
+			}
 		}
+		charts.Files[fmt.Sprintf("templates/%s/deployment.yaml", svc.Name)] = deployBuf.Bytes()
 	}
-	_ = buf
-	charts.Files[fmt.Sprintf("templates/%s/deployment.yaml", svc.Name)] = deployBuf.Bytes()
 
 	return nil
 }
