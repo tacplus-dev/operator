@@ -303,6 +303,21 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 	return out
 }
 
+// ExpectedDeploymentNames returns the set of deployment names that the
+// generator would create for the given config. Used by the reconciler to
+// prune stale deployments after a topology change.
+func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.OperatorConfig, nodeCount int) map[string]bool {
+	topo := effectiveTopology(cfg, nodeCount)
+	svcs := g.enabledServices(cfg, topo)
+	names := make(map[string]bool)
+	for _, s := range svcs {
+		for i := range int(s.Replicas) {
+			names[fmt.Sprintf("%s%d", s.Name, i)] = true
+		}
+	}
+	return names
+}
+
 // --- chart file generators ---
 
 func (g *Generator) addChartYAML(charts *Charts, cfg *protoOperator.OperatorConfig) error {
@@ -565,14 +580,19 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.OperatorConfig
 		if svc.Name == "kernel" {
 			configValueKey = name
 		}
-		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
+		cmData := fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
   name: %s-config
   namespace: {{ .Values.global.namespace }}
 data:
   config.yaml: {{ .Values.%s.config | quote }}
-`, name, configValueKey))
+`, name, configValueKey)
+		if svc.Name == "gateway" {
+			cmData += fmt.Sprintf(`  gateway.yaml: {{ .Values.%s.serviceConfig | quote }}
+`, configValueKey)
+		}
+		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
 
 		// PVC if needed
 		if svc.HasPVC {
@@ -714,6 +734,14 @@ spec:
 `, name, name, name, name, name, svc.Name))
 		if svc.ExtraEnvVars != "" {
 			deployBuf.WriteString(svc.ExtraEnvVars)
+		}
+		if svc.Name == "gateway" {
+			deployBuf.WriteString(fmt.Sprintf(`        - name: GATEWAY_CONFIG
+          valueFrom:
+            configMapKeyRef:
+              name: %s-config
+              key: gateway.yaml
+`, name))
 		}
 		if len(svc.NodeModes) > 0 {
 			nodeMode := "alpha"

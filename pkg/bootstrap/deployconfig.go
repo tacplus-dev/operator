@@ -66,6 +66,7 @@ type GatewayOptions struct {
 	EnableTCP    bool
 	EnableQUIC   bool
 	LetsEncrypt  bool
+	Hostnames    []string
 }
 
 // BuildGatewayServiceConfig generates the serviceconfig YAML for gateway.
@@ -91,11 +92,32 @@ func BuildGatewayServiceConfig(
 	config["enable_tcp"] = opts.EnableTCP
 	config["enable_quic"] = opts.EnableQUIC
 	if opts.LetsEncrypt {
-		config["external_tls_mode"] = "letsencrypt"
+		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_LETSENCRYPT"
 	} else {
-		config["external_tls_mode"] = "cert_chain"
+		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_CERT_CHAIN"
+	}
+	if len(opts.Hostnames) > 0 {
+		config["external_hostnames"] = opts.Hostnames
 	}
 
+	return yaml.Marshal(config)
+}
+
+// BuildGatewayProtoConfig generates a YAML containing ONLY fields that match
+// the gateway.Config proto message. This is consumed by the GATEWAY_CONFIG env
+// var (parsed by config_from_bytes which uses strict proto serde).
+func BuildGatewayProtoConfig(opts GatewayOptions) ([]byte, error) {
+	config := map[string]any{}
+	if opts.LetsEncrypt {
+		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_LETSENCRYPT"
+	} else {
+		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_CERT_CHAIN"
+	}
+	if len(opts.Hostnames) > 0 {
+		config["external_hostnames"] = opts.Hostnames
+	}
+	config["enable_http"] = opts.EnableTCP
+	config["enable_http3"] = opts.EnableQUIC
 	return yaml.Marshal(config)
 }
 

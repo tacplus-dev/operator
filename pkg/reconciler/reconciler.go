@@ -244,6 +244,11 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		return fmt.Errorf("applying charts: %w", err)
 	}
 
+	// Prune deployments that are no longer in the chart (e.g. after topology scale-down).
+	if err := r.pruneStaleDeployments(ctx, nodeCount); err != nil {
+		r.log.Warn("failed to prune stale deployments", zap.Error(err))
+	}
+
 	r.log.Info("reconcile complete", zap.Int("files", len(charts.Files)))
 	return nil
 }
@@ -355,6 +360,51 @@ func (r *Reconciler) helmUpgrade(cfg *action.Configuration, ch *helmchart.Chart,
 		zap.String("release", rel.Name),
 		zap.Int("version", rel.Version),
 	)
+	return nil
+}
+
+// pruneStaleDeployments deletes Deployments in the cavalier namespace that are
+// managed by the chart but no longer expected (e.g. after topology scale-down).
+func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) error {
+	expected := r.generator.ExpectedDeploymentNames(r.cfg, nodeCount)
+
+	ns := r.cfg.Namespace
+	if ns == "" {
+		ns = "cavalier"
+	}
+
+	var deployList appsv1.DeploymentList
+	if err := r.client.List(ctx, &deployList, &client.ListOptions{
+		Namespace:     ns,
+		LabelSelector: labels.SelectorFromSet(labels.Set{"app.kubernetes.io/managed-by": "Helm"}),
+	}); err != nil {
+		return fmt.Errorf("listing deployments: %w", err)
+	}
+
+	for i := range deployList.Items {
+		dep := &deployList.Items[i]
+		name := dep.Name
+		if expected[name] {
+			continue
+		}
+		// Only delete deployments that belong to the cavalier helm release.
+		if dep.Labels["app.kubernetes.io/instance"] != releaseName {
+			continue
+		}
+		r.log.Info("pruning stale deployment", zap.String("name", name))
+		if err := r.client.Delete(ctx, dep); err != nil {
+			r.log.Warn("failed to delete stale deployment", zap.String("name", name), zap.Error(err))
+		}
+		// Also clean up the associated Service and ConfigMap.
+		svc := &corev1.Service{}
+		if err := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, svc); err == nil {
+			_ = r.client.Delete(ctx, svc)
+		}
+		cm := &corev1.ConfigMap{}
+		if err := r.client.Get(ctx, types.NamespacedName{Name: name + "-config", Namespace: ns}, cm); err == nil {
+			_ = r.client.Delete(ctx, cm)
+		}
+	}
 	return nil
 }
 

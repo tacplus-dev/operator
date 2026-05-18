@@ -22,6 +22,7 @@ type DeployConfigs struct {
 	BootstrapYAMLs     [][]byte
 	SentinelConfig     []byte
 	GatewayConfig      []byte
+	GatewayServiceCfg  []byte // gateway-proto-only config (no bootstrap fields)
 	EventbusConfig     []byte
 	OauthConfig        []byte
 	MsggatewayConfig   []byte
@@ -174,9 +175,16 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if cfg.GetTls() != nil && cfg.GetTls().GetLetsencrypt() {
 		gatewayOpts.LetsEncrypt = true
 	}
+	if cfg.Fqdn != "" {
+		gatewayOpts.Hostnames = []string{cfg.Fqdn}
+	}
 	gatewayConfigYAML, err := BuildGatewayServiceConfig(gatewayKey, trustedCAs, gatewayOpts, kernelEndpoints...)
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
+	}
+	gatewayServiceCfg, err := BuildGatewayProtoConfig(gatewayOpts)
+	if err != nil {
+		return nil, fmt.Errorf("building gateway proto config: %w", err)
 	}
 
 	opt := cfg.GetOptionalServices()
@@ -370,6 +378,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		BootstrapYAMLs:    bootstrapYAMLs,
 		SentinelConfig:    sentinelConfigYAML,
 		GatewayConfig:     gatewayConfigYAML,
+		GatewayServiceCfg: gatewayServiceCfg,
 		EventbusConfig:    eventbusConfigYAML,
 		OauthConfig:       oauthConfigYAML,
 		MsggatewayConfig:  msggatewayConfigYAML,
@@ -447,6 +456,13 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 	} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
+		}
+	}
+
+	// Gateway gets an extra serviceConfig key with proto-only fields.
+	if len(dc.GatewayServiceCfg) > 0 {
+		if gw, ok := vals["gateway"]; ok {
+			gw.(map[string]interface{})["serviceConfig"] = string(dc.GatewayServiceCfg)
 		}
 	}
 
