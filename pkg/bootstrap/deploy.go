@@ -89,6 +89,20 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		kernelConfig.ClusterCa = cfg.Pki.ClusterCa.Chain
 	}
 
+	// Assemble kernel trusted CAs: root + cluster + signing CAs.
+	// Kernel needs these for S2S TLS verification (e.g. kernel → OPA).
+	if cfg.Pki.RootCa != nil {
+		kernelConfig.TrustedCas = append(kernelConfig.TrustedCas, cfg.Pki.RootCa.Chain...)
+	}
+	if cfg.Pki.ClusterCa != nil {
+		kernelConfig.TrustedCas = append(kernelConfig.TrustedCas, cfg.Pki.ClusterCa.Chain...)
+	}
+	for _, sc := range cfg.Pki.NodeSigningCa {
+		if len(sc.Chain) > 0 {
+			kernelConfig.TrustedCas = append(kernelConfig.TrustedCas, sc.Chain[0])
+		}
+	}
+
 	if kernelConfig.Configs != nil && kernelConfig.Configs.EventbusConfig != nil {
 		if kernelConfig.Configs.EventbusConfig.ClusterSeed == "" {
 			kernelConfig.Configs.EventbusConfig.ClusterSeed = "cluster"
