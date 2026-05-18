@@ -103,23 +103,6 @@ func BuildGatewayServiceConfig(
 	return yaml.Marshal(config)
 }
 
-// BuildGatewayProtoConfig generates a YAML containing ONLY fields that match
-// the gateway.Config proto message. This is consumed by the GATEWAY_CONFIG env
-// var (parsed by config_from_bytes which uses strict proto serde).
-func BuildGatewayProtoConfig(opts GatewayOptions) ([]byte, error) {
-	config := map[string]any{}
-	if opts.LetsEncrypt {
-		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_LETSENCRYPT"
-	} else {
-		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_CERT_CHAIN"
-	}
-	if len(opts.Hostnames) > 0 {
-		config["external_hostnames"] = opts.Hostnames
-	}
-	config["enable_http"] = opts.EnableTCP
-	config["enable_http3"] = opts.EnableQUIC
-	return yaml.Marshal(config)
-}
 
 // LoadGatewayOptions reads the gateway service config and returns options.
 // Returns defaults (both enabled) if the file doesn't exist or is empty.

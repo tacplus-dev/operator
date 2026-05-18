@@ -151,6 +151,10 @@ type serviceSpec struct {
 	// SkipProbes, if true, omits the readiness and liveness probes from the Deployment.
 	// Use for services that do not expose a health-check endpoint.
 	SkipProbes     bool
+	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
+	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
+	// Used for kernel where stable pod identity and PVC lifecycle are required.
+	IsStatefulSet  bool
 }
 
 func effectiveTopology(cfg *protoOperator.OperatorConfig, nodeCount int) *protoOperator.Topology {
@@ -237,7 +241,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 
 	// Core always-on services.
 	svcs := []serviceSpec{
-		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000},
+		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true},
 		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443},
 		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443},
 		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443},
@@ -572,13 +576,19 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.OperatorConfig
 
 	// ConfigMap
 	for i := range int(svc.Replicas) {
-		name := fmt.Sprintf("%s%d", svc.Name, i)
+		// StatefulSet pods use hyphenated names (kernel-0); Deployments use kernel0.
+		var name string
+		if svc.IsStatefulSet {
+			name = fmt.Sprintf("%s-%d", svc.Name, i)
+		} else {
+			name = fmt.Sprintf("%s%d", svc.Name, i)
+		}
 		// Kernel uses per-replica value keys (kernel0, kernel1, …) because each
 		// replica has a distinct TLS certificate. All other services share one
 		// config across replicas and use the service name as the value key.
 		configValueKey := svc.Name
-		if svc.Name == "kernel" {
-			configValueKey = name
+		if svc.IsStatefulSet {
+			configValueKey = fmt.Sprintf("%s%d", svc.Name, i)
 		}
 		cmData := fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
@@ -588,14 +598,10 @@ metadata:
 data:
   config.yaml: {{ .Values.%s.config | quote }}
 `, name, configValueKey)
-		if svc.Name == "gateway" {
-			cmData += fmt.Sprintf(`  gateway.yaml: {{ .Values.%s.serviceConfig | quote }}
-`, configValueKey)
-		}
 		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
 
-		// PVC if needed
-		if svc.HasPVC {
+		// PVC if needed — StatefulSet manages PVCs via volumeClaimTemplates.
+		if svc.HasPVC && !svc.IsStatefulSet {
 			charts.Files[fmt.Sprintf("templates/%s/pvc-%d.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -628,7 +634,13 @@ spec:
     targetPort: %d
 `, svc.ExtraPortName, svc.ExtraPort, svc.ExtraPort)
 		}
-		// Internal ClusterIP service for gRPC service-to-service communication.
+		// Per-replica ClusterIP service for direct gRPC addressing.
+		var svcSelector string
+		if svc.IsStatefulSet {
+			svcSelector = fmt.Sprintf("    statefulset.kubernetes.io/pod-name: %s", name)
+		} else {
+			svcSelector = fmt.Sprintf("    app: %s", name)
+		}
 		charts.Files[fmt.Sprintf("templates/%s/service-%d.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -636,12 +648,12 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 spec:
   selector:
-    app: %s
+%s
   ports:
   - name: grpc
     port: %d
     targetPort: %d
-%s%s`, name, name, listenPort, listenPort, hazelcastPort, extraPort))
+%s%s`, name, svcSelector, listenPort, listenPort, hazelcastPort, extraPort))
 
 		// External LoadBalancer service for services with a configured external port
 		// (e.g. gateway exposed on port 443). This is a separate service to avoid
@@ -734,14 +746,6 @@ spec:
 `, name, name, name, name, name, svc.Name))
 		if svc.ExtraEnvVars != "" {
 			deployBuf.WriteString(svc.ExtraEnvVars)
-		}
-		if svc.Name == "gateway" {
-			deployBuf.WriteString(fmt.Sprintf(`        - name: GATEWAY_CONFIG
-          valueFrom:
-            configMapKeyRef:
-              name: %s-config
-              key: gateway.yaml
-`, name))
 		}
 		if len(svc.NodeModes) > 0 {
 			nodeMode := "alpha"
