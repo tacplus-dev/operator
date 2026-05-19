@@ -471,9 +471,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			continue
 		}
 		if len(svcMap) == 0 {
-			if sl.name != "opa" {
-				continue
-			}
 			svcMap = make(map[string]any)
 		}
 		if err := sl.load(svcMap); err != nil {
