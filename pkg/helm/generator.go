@@ -252,10 +252,8 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443},
 	}
 
-	// OAuth (OAuth2/OIDC broker) — enabled by default.
-	if opt.GetOauth() {
-		svcs = append(svcs, serviceSpec{Name:"oauth", Replicas:topo.OauthNodes, Image:g.imageRef("oauth"), HasGRPC:true, ListenPort:8443})
-	}
+	// OAuth (OAuth2/OIDC broker) — always enabled.
+	svcs = append(svcs, serviceSpec{Name:"oauth", Replicas:topo.OauthNodes, Image:g.imageRef("oauth"), HasGRPC:true, ListenPort:8443})
 
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
@@ -424,9 +422,16 @@ Standard gRPC readiness/liveness probe on port 5000 (kernel/Java).
 {{- define "cavalier.grpcProbe5000" -}}
 tcpSocket:
   port: 5000
-initialDelaySeconds: 30
-periodSeconds: 15
-failureThreshold: 5
+initialDelaySeconds: 10
+periodSeconds: 10
+failureThreshold: 3
+{{- end }}
+
+{{- define "cavalier.startupProbe5000" -}}
+tcpSocket:
+  port: 5000
+periodSeconds: 5
+failureThreshold: 60
 {{- end }}
 
 {{/*
@@ -435,9 +440,21 @@ Standard gRPC readiness/liveness probe on port 8443 (Rust/Tacplus services).
 {{- define "cavalier.grpcProbe8443" -}}
 tcpSocket:
   port: 8443
-initialDelaySeconds: 30
-periodSeconds: 15
-failureThreshold: 5
+initialDelaySeconds: 10
+periodSeconds: 10
+failureThreshold: 3
+{{- end }}
+
+{{/*
+Startup probe for services that depend on kernel. Gives up to 5 minutes
+for kernel to come up and the service to complete init before k8s kills it.
+Once the startup probe passes, the liveness probe takes over.
+*/}}
+{{- define "cavalier.startupProbe8443" -}}
+tcpSocket:
+  port: 8443
+periodSeconds: 5
+failureThreshold: 60
 {{- end }}
 
 {{/*
@@ -552,6 +569,8 @@ spec:
         - name: data
           mountPath: /app/data
         {{- end }}
+        startupProbe:
+          {{ "{{- include \"cavalier.startupProbe5000\" . | nindent 10 }}" }}
         readinessProbe:
           {{ "{{- include \"cavalier.grpcProbe5000\" . | nindent 10 }}" }}
         livenessProbe:
@@ -725,8 +744,10 @@ spec:
 		listenPort = 5000
 	}
 	probeHelper := "cavalier.grpcProbe5000"
+	startupProbeHelper := "cavalier.startupProbe5000"
 	if listenPort == 8443 {
 		probeHelper = "cavalier.grpcProbe8443"
+		startupProbeHelper = "cavalier.startupProbe8443"
 	}
 
 	if svc.IsStatefulSet {
@@ -801,11 +822,13 @@ spec:
 `)
 		}
 		if !svc.SkipProbes {
-			ssBuf.WriteString(fmt.Sprintf(`        readinessProbe:
+			ssBuf.WriteString(fmt.Sprintf(`        startupProbe:
+          {{- include "%s" . | nindent 10 }}
+        readinessProbe:
           {{- include "%s" . | nindent 10 }}
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
-`, probeHelper, probeHelper))
+`, startupProbeHelper, probeHelper, probeHelper))
 		}
 		ssBuf.WriteString(`      volumes:
       - name: bootstrap
@@ -901,11 +924,13 @@ spec:
 `)
 			}
 			if !svc.SkipProbes {
-				deployBuf.WriteString(fmt.Sprintf(`        readinessProbe:
+				deployBuf.WriteString(fmt.Sprintf(`        startupProbe:
+          {{- include "%s" . | nindent 10 }}
+        readinessProbe:
           {{- include "%s" . | nindent 10 }}
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
-`, probeHelper, probeHelper))
+`, startupProbeHelper, probeHelper, probeHelper))
 			}
 			deployBuf.WriteString(`      volumes:
       - name: config
