@@ -81,7 +81,8 @@ func BuildGatewayServiceConfig(
 		return nil, err
 	}
 
-	config["listen_address"] = map[string]any{"host": "0.0.0.0", "port": int64(gatewayPort)}
+	config["tcp_listener"] = map[string]any{"host": "0.0.0.0", "port": int64(gatewayPort)}
+	config["quic_listener"] = map[string]any{"host": "0.0.0.0", "port": int64(gatewayPort)}
 	config["max_request_size"] = int64(10 * 1024 * 1024)
 	config["request_timeout_seconds"] = int64(30)
 	config["shutdown_timeout_seconds"] = int64(30)
