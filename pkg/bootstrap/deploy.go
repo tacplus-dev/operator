@@ -183,12 +183,9 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	}
 	opt := cfg.GetOptionalServices()
 
-	var oauthConfigYAML []byte
-	if opt.GetOauth() {
-		oauthConfigYAML, err = buildSvc("oauth", nil)
-		if err != nil {
-			return nil, err
-		}
+	oauthConfigYAML, err := buildSvc("oauth", nil)
+	if err != nil {
+		return nil, err
 	}
 
 	eventbusConfigYAML, err := buildSvc("eventbus", func(m map[string]any) {
