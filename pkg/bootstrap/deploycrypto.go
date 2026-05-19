@@ -179,7 +179,9 @@ func GenerateCrypto(cfg *protoOperator.OperatorConfig, coreCount, edgeCount int,
 			nodeName = fmt.Sprintf("kernel-core-%d", i)
 		}
 		noHyphen := fmt.Sprintf("kernel%d", i)
-		dnsNames := []string{nodeName, noHyphen}
+		// Include StatefulSet DNS: <pod>.<headless-service> (e.g. kernel-0.kernel)
+		stsName := fmt.Sprintf("%s.kernel", nodeName)
+		dnsNames := []string{nodeName, noHyphen, stsName}
 		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
 			dnsNames = append(dnsNames, fqdn)
 		}
