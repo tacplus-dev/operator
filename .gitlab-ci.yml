@@ -63,7 +63,7 @@ proto-validate:
   script:
     - git clone --quiet https://gitlab.com/secondstarcavalier/schematic/platform/proto.git proto
     - git -C proto checkout --quiet "$PROTO_VERSION"
-    - tacplus build --skip-post --src proto
+    - tacplus build --src proto
     - go mod download
     - CGO_ENABLED=0 go build ./...
   rules:
@@ -89,7 +89,7 @@ proto-validate:
     - BASE="${CI_COMMIT_TAG%.[0-9]*}"
     - PATCH="$(echo "${BASE#v}" | cut -d. -f3 | cut -d- -f1)"
     - git -C proto checkout --quiet "${BASE}.${PATCH}"
-    - tacplus build --skip-post --src proto
+    - tacplus build --src proto
     - go mod download
     - VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
     - PKG="gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/bootstrap"
