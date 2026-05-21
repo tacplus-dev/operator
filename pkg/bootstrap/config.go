@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
 )
 
 const (

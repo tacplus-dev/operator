@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/filesystem"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/opalib"
+	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/filesystem"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/opalib"
 )
 
 // OPAPolicyDir returns the conventional OPA policy directory within a config dir.

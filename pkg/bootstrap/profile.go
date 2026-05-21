@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
-	protoEntitlements "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/generated/entitlements"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
+	protoEntitlements "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/generated/entitlements"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
 )
 
 // ApplyTopologyPreset sets topology fields from a named preset.

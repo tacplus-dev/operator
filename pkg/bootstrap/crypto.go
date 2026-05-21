@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/libs/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/libs/x509"
-	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/jwk"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/key"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/x509"
+	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/key"
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/x509"
+	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/jwk"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/key"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/x509"
 )
 
 const tlsTTL = 1 * time.Hour

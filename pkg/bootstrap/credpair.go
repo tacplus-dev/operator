@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/key"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/key"
 )
 
 // ResolveConfigDirSmart determines the bootstrap directory using smart detection:

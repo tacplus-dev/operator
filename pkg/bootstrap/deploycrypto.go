@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/libs/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/libs/x509"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/libs/x509"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
+	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/key"
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/x509"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/x509"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
 )
 
 const (

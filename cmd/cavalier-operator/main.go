@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"gitlab.com/secondstarcavalier/schematic/platform/operator/pkg/bootstrap"
+	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/bootstrap"
 )
 
 func main() {

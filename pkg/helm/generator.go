@@ -28,7 +28,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/operator/tacplus/types/utils/operator"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
 )
 
 // Charts is the in-memory representation of a generated Helm chart.
