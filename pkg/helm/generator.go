@@ -898,6 +898,13 @@ spec:
 				deployBuf.WriteString(fmt.Sprintf(`        - name: NODE_MODE
           value: %s
 `, nodeMode))
+				// GraphDB Alpha nodes need the Zero address for Raft cluster formation.
+				// Zero is always the first replica (graphdb0).
+				if svc.Name == "graphdb" && nodeMode == "alpha" {
+					deployBuf.WriteString(fmt.Sprintf(`        - name: GRAPHDB_ZERO_ADDR
+          value: %s0:5080
+`, svc.Name))
+				}
 			}
 			deployBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d
