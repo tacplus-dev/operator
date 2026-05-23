@@ -69,8 +69,14 @@ type Checker struct {
 	pollInterval time.Duration
 
 	mu     sync.RWMutex
-	cache  map[string]int32 // "proj/svc" → latest LOCAL_PATCH
+	cache  map[string]resolvedVersion // "proj/svc" → best (proto_patch, local_patch)
 	notify chan struct{}
+}
+
+// resolvedVersion holds the best proto_patch and local_patch found for a service.
+type resolvedVersion struct {
+	protoPatch int
+	localPatch int32
 }
 
 // New creates a Checker.
@@ -96,7 +102,7 @@ func New(versionLock, series string, protoPatch int, branch string, localPatch i
 		operatorNS:   operatorNS,
 		log:          log,
 		pollInterval: interval,
-		cache:        make(map[string]int32),
+		cache:        make(map[string]resolvedVersion),
 		notify:       make(chan struct{}, 1),
 	}
 }
@@ -109,8 +115,8 @@ func (c *Checker) Notify() <-chan struct{} {
 }
 
 // Resolve does one synchronous resolution of all services and caches the results.
-// Returns the resolved local-patch map. Safe to call before Run.
-func (c *Checker) Resolve(ctx context.Context) (map[string]int32, error) {
+// Returns the resolved version map. Safe to call before Run.
+func (c *Checker) Resolve(ctx context.Context) (map[string]resolvedVersion, error) {
 	creds, err := c.registryCreds(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting registry creds: %w", err)
@@ -123,25 +129,26 @@ func (c *Checker) Resolve(ctx context.Context) (map[string]int32, error) {
 	return resolved, nil
 }
 
-// LatestLocalPatch returns the cached latest LOCAL_PATCH for a service.
-// Returns the pinned localPatch if > 0. Returns 0 if not yet resolved.
-func (c *Checker) LatestLocalPatch(proj, svc string) int32 {
+// latestVersion returns the cached resolved version for a cache key.
+// Returns the pinned version if localPatch > 0. Returns zero value if not yet resolved.
+func (c *Checker) latestVersion(key string) resolvedVersion {
 	if c.localPatch > 0 {
-		return int32(c.localPatch)
+		return resolvedVersion{protoPatch: c.protoPatch, localPatch: int32(c.localPatch)}
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.cache[cacheKey(proj, svc)]
+	return c.cache[key]
+}
+
+// LatestLocalPatch returns the cached latest LOCAL_PATCH for a service.
+// Returns the pinned localPatch if > 0. Returns 0 if not yet resolved.
+func (c *Checker) LatestLocalPatch(proj, svc string) int32 {
+	return c.latestVersion(cacheKey(proj, svc)).localPatch
 }
 
 // LatestLocalPatchForOperator returns the latest LOCAL_PATCH for the operator image itself.
 func (c *Checker) LatestLocalPatchForOperator() int32 {
-	if c.localPatch > 0 {
-		return int32(c.localPatch)
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.cache["operator"]
+	return c.latestVersion("operator").localPatch
 }
 
 // Run polls the registry on pollInterval until ctx is cancelled.
@@ -200,31 +207,31 @@ func (c *Checker) imageTag(protoPatch int, branch string, localPatch int32) stri
 // ServiceTag returns the full image tag for a service using cached resolution.
 // Falls back to fallbackTag (the operator's own version) if not yet resolved.
 func (c *Checker) ServiceTag(proj, svc string) string {
-	lp := c.LatestLocalPatch(proj, svc)
-	if lp == 0 {
+	v := c.latestVersion(cacheKey(proj, svc))
+	if v.localPatch == 0 {
 		return c.fallbackTag
 	}
-	return c.imageTag(c.protoPatch, c.branch, lp)
+	return c.imageTag(v.protoPatch, c.branch, v.localPatch)
 }
 
 // OperatorTag returns the full image tag for the operator itself using cached resolution.
 // Falls back to fallbackTag (the operator's own version) if not yet resolved.
 func (c *Checker) OperatorTag() string {
-	lp := c.LatestLocalPatchForOperator()
-	if lp == 0 {
+	v := c.latestVersion("operator")
+	if v.localPatch == 0 {
 		return c.fallbackTag
 	}
-	return c.imageTag(c.protoPatch, c.branch, lp)
+	return c.imageTag(v.protoPatch, c.branch, v.localPatch)
 }
 
 // resolveAll queries the registry for all registered services plus the operator.
-func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[string]int32, error) {
-	result := make(map[string]int32)
+func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[string]resolvedVersion, error) {
+	result := make(map[string]resolvedVersion)
 
 	// Resolve each service.
 	for _, svc := range c.services {
 		repo := fmt.Sprintf("%s/%s/%s-%s", registryBase, svc.Proj, svc.Svc, c.series)
-		lp, err := c.resolveRepo(ctx, repo, creds)
+		v, err := c.resolveRepo(ctx, repo, creds)
 		if err != nil {
 			c.log.Warn("auto-upgrade: failed to resolve service",
 				zap.String("proj", svc.Proj),
@@ -233,39 +240,40 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 			)
 			continue
 		}
-		if lp > 0 {
-			result[cacheKey(svc.Proj, svc.Svc)] = lp
+		if v.localPatch > 0 {
+			result[cacheKey(svc.Proj, svc.Svc)] = v
 		}
 	}
 
 	// Resolve the operator itself.
 	opRepo := fmt.Sprintf("%s/cavalier-operator", operatorBase)
-	opLP, err := c.resolveRepo(ctx, opRepo, creds)
+	opV, err := c.resolveRepo(ctx, opRepo, creds)
 	if err != nil {
 		c.log.Warn("auto-upgrade: failed to resolve operator image", zap.Error(err))
-	} else if opLP > 0 {
-		result["operator"] = opLP
+	} else if opV.localPatch > 0 {
+		result["operator"] = opV
 	}
 
 	return result, nil
 }
 
-// resolveRepo queries a registry repo and returns the highest LOCAL_PATCH
-// matching (PROTO_PATCH, BRANCH). Returns 0 if no matching tags found.
-func (c *Checker) resolveRepo(ctx context.Context, repo string, creds registryCreds) (int32, error) {
+// resolveRepo queries a registry repo and returns the best version
+// matching (versionLock, branch) with proto_patch >= the operator's own.
+// Returns zero value if no matching tags found.
+func (c *Checker) resolveRepo(ctx context.Context, repo string, creds registryCreds) (resolvedVersion, error) {
 	token, err := c.registryToken(ctx, repo, creds)
 	if err != nil {
-		return 0, err
+		return resolvedVersion{}, err
 	}
 	tags, err := c.listTags(ctx, repo, token)
 	if err != nil {
-		return 0, err
+		return resolvedVersion{}, err
 	}
 	return selectLatest(tags, c.versionLock, c.protoPatch, c.branch), nil
 }
 
 // updateCache merges resolved into the cache. Returns true if any value changed.
-func (c *Checker) updateCache(resolved map[string]int32) bool {
+func (c *Checker) updateCache(resolved map[string]resolvedVersion) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	changed := false
@@ -382,25 +390,32 @@ func (c *Checker) listTags(ctx context.Context, repo, token string) ([]string, e
 	return allTags, nil
 }
 
-// selectLatest returns the highest LOCAL_PATCH from tags matching
-// v{versionLock}.{protoPatch}-{branch}.{N}.
-// Returns 0 if no matching tags are found.
-func selectLatest(tags []string, versionLock string, protoPatch int, branch string) int32 {
-	escaped := regexp.QuoteMeta(fmt.Sprintf("v%s.%d-%s.", versionLock, protoPatch, branch))
-	re := regexp.MustCompile(`^` + escaped + `(\d+)$`)
+// selectLatest returns the best version from tags matching
+// v{versionLock}.{PROTO_PATCH}-{branch}.{LOCAL_PATCH} where PROTO_PATCH >= minProtoPatch.
+// Among matching tags, the highest proto_patch wins; ties are broken by highest local_patch.
+// Returns zero value if no matching tags are found.
+func selectLatest(tags []string, versionLock string, minProtoPatch int, branch string) resolvedVersion {
+	prefix := regexp.QuoteMeta(fmt.Sprintf("v%s.", versionLock))
+	suffix := regexp.QuoteMeta(fmt.Sprintf("-%s.", branch))
+	re := regexp.MustCompile(`^` + prefix + `(\d+)` + suffix + `(\d+)$`)
 
-	var best int32
+	var best resolvedVersion
 	for _, t := range tags {
 		m := re.FindStringSubmatch(t)
 		if m == nil {
 			continue
 		}
-		p, err := strconv.Atoi(m[1])
+		pp, err := strconv.Atoi(m[1])
+		if err != nil || pp < minProtoPatch {
+			continue
+		}
+		lp, err := strconv.Atoi(m[2])
 		if err != nil {
 			continue
 		}
-		if int32(p) > best {
-			best = int32(p)
+		// Higher proto_patch wins; equal proto_patch: higher local_patch wins.
+		if pp > best.protoPatch || (pp == best.protoPatch && int32(lp) > best.localPatch) {
+			best = resolvedVersion{protoPatch: pp, localPatch: int32(lp)}
 		}
 	}
 	return best
