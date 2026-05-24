@@ -211,6 +211,16 @@ func graphdbNodeModes(n int32) []string {
 	return modes
 }
 
+// eventbusEnvVars returns extra env vars for EventBus pods.
+// Sets PROTO_CONFIG_NODE_ROLE so the embedded Kafka broker initializes.
+func eventbusEnvVars(n int32) string {
+	// All nodes are combined (broker + controller) for simplicity.
+	// Production would split broker/controller roles.
+	return `        - name: PROTO_CONFIG_NODE_ROLE
+          value: KAFKA_ROLE_COMBINED
+`
+}
+
 func (g *Generator) imageRef(svc string) string {
 	return g.imageRefProj(svc, svc)
 }
@@ -243,7 +253,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 	svcs := []serviceSpec{
 		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true},
 		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443},
-		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443},
+		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, ExtraEnvVars: eventbusEnvVars(topo.EventbusNodes)},
 		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443},
 		{Name:"opa", Replicas:topo.OpaNodes, Image:g.imageRef("opa"), HasGRPC:true, ListenPort:8443},
 		{Name:"argus", Replicas:topo.ArgusNodes, Image:g.imageRef("argus"), HasGRPC:true, ListenPort:8443},
