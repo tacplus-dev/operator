@@ -879,6 +879,14 @@ spec:
         env:
         - name: BOOTSTRAP_CONFIG
           value: /bootstrap/bootstrap.yaml
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
 `, svc.Name, svc.Name))
 		if jo := javaOptsEnv(svc); jo != "" {
 			ssBuf.WriteString(jo)
@@ -968,6 +976,14 @@ spec:
         env:
         - name: BOOTSTRAP_CONFIG
           value: /data/bootstrap.yaml
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
 `, name, name, name, name, name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
