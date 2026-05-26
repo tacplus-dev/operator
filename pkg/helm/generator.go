@@ -155,16 +155,25 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet  bool
-	// Resource limits/requests. If empty, no resources block is rendered
-	// (the JVM defaults to host RAM which over-commits the node).
+	// Resource limits/requests. Every service should have these set —
+	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
+	// based on host RAM that don't hold inside a container, and you end up
+	// over-committing the node. Sizing each service properly is the
+	// developer/operator's responsibility regardless of language.
 	MemRequest     string
 	MemLimit       string
 	CpuRequest     string
 	CpuLimit       string
-	// JavaHeap, if non-empty, sets `JAVA_OPTS=-Xmx<heap> -Xms<heap>` so the JVM
-	// respects the container memory limit. Required for Java services because
-	// the JVM's container-aware heuristics sometimes still misbehave at scale.
+	// JavaHeap, if non-empty, emits `JDK_JAVA_OPTIONS=-Xmx<heap> -Xms<heap>`.
+	// Tells the JVM what max heap to use. Independent of MemLimit; should be
+	// set lower than MemLimit to leave room for non-heap memory (metaspace,
+	// direct buffers, code cache, threads).
 	JavaHeap       string
+	// GoMemLimit, if non-empty, sets the GOMEMLIMIT env var (Go 1.19+) — Go's
+	// soft memory target. Set lower than MemLimit (commonly ~80%) so Go's GC
+	// triggers before the kernel OOM-killer fires. Same role as JavaHeap for
+	// the Go runtime.
+	GoMemLimit     string
 }
 
 // resourcesBlock returns the YAML `resources:` block for a container, indented
@@ -206,6 +215,15 @@ func javaOptsEnv(svc serviceSpec) string {
 		return ""
 	}
 	return fmt.Sprintf("        - name: JDK_JAVA_OPTIONS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, svc.JavaHeap)
+}
+
+// goMemLimitEnv returns a YAML env-var snippet that sets GOMEMLIMIT for Go
+// services. Empty string if GoMemLimit is not set.
+func goMemLimitEnv(svc serviceSpec) string {
+	if svc.GoMemLimit == "" {
+		return ""
+	}
+	return fmt.Sprintf("        - name: GOMEMLIMIT\n          value: \"%s\"\n", svc.GoMemLimit)
 }
 
 func effectiveTopology(cfg *protoOperator.OperatorConfig, nodeCount int) *protoOperator.Topology {
@@ -301,12 +319,16 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 	opt := cfg.GetOptionalServices()
 
 	// Core always-on services.
-	// Resource defaults. Tune these via topology if needed.
-	// Java services (kernel, eventbus, stratum) get a JavaHeap setting so
-	// the JVM respects the container memory limit. timedb (Rust),
-	// graphdb (Go), saml (Rust), and all other services don't need JavaHeap.
-	// stratum is an in-memory DB with in-memory result sets — its memory
-	// will need to grow as event volume grows; today's 2Gi limit is fine.
+	// Resource defaults below are starting points. Memory sizing is a
+	// per-service responsibility — Java services get JavaHeap, Go services
+	// get GoMemLimit, all set lower than MemLimit to leave room for non-GC-
+	// managed memory. Tune as each service's working set grows.
+	// Notable workloads:
+	//   - stratum: in-memory DB with in-memory result sets — needs to grow
+	//     with event volume; today's 2Gi limit is the starting point.
+	//   - graphdb: wraps Dgraph; memory grows with index + cache size.
+	//   - eventbus: embedded Kafka broker — heap usage scales with topic
+	//     count + replication settings.
 	svcs := []serviceSpec{
 		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true,
 			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
@@ -323,7 +345,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "timedb"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes),
 			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m"},
 		{Name:"graphdb", Replicas:topo.GraphdbNodes, Image:g.imageRef("graphdb"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
-			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m"},
+			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m", GoMemLimit:"800MiB"},
 		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443,
 			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
 	}
@@ -893,6 +915,9 @@ spec:
 		if jo := javaOptsEnv(svc); jo != "" {
 			ssBuf.WriteString(jo)
 		}
+		if gm := goMemLimitEnv(svc); gm != "" {
+			ssBuf.WriteString(gm)
+		}
 		if svc.ExtraEnvVars != "" {
 			ssBuf.WriteString(svc.ExtraEnvVars)
 		}
@@ -989,6 +1014,9 @@ spec:
 `, name, name, name, name, name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
+			}
+			if gm := goMemLimitEnv(svc); gm != "" {
+				deployBuf.WriteString(gm)
 			}
 			if svc.WebAppHostPath != "" {
 				// Dev-mode webapp hot reload: gateway reads WEB_ROOT and serves
