@@ -196,13 +196,16 @@ func resourcesBlock(svc serviceSpec) string {
 	return b.String()
 }
 
-// javaOptsEnv returns a YAML env-var snippet that sets JAVA_OPTS=-Xmx<heap> -Xms<heap>
-// for Java services. Empty string if JavaHeap is not set.
+// javaOptsEnv returns a YAML env-var snippet that sets JDK_JAVA_OPTIONS, which
+// the `java` binary reads directly (JEP 245, Java 9+) — works regardless of
+// how the container's entrypoint invokes the JVM. Empty string if JavaHeap
+// is not set. UseContainerSupport is the default on modern JDKs but set
+// explicitly for safety.
 func javaOptsEnv(svc serviceSpec) string {
 	if svc.JavaHeap == "" {
 		return ""
 	}
-	return fmt.Sprintf("        - name: JAVA_OPTS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, svc.JavaHeap)
+	return fmt.Sprintf("        - name: JDK_JAVA_OPTIONS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, svc.JavaHeap)
 }
 
 func effectiveTopology(cfg *protoOperator.OperatorConfig, nodeCount int) *protoOperator.Topology {
