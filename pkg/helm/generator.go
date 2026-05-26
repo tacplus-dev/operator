@@ -302,9 +302,11 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 
 	// Core always-on services.
 	// Resource defaults. Tune these via topology if needed.
-	// Java services (kernel, eventbus, stratum, graphdb, timedb, saml) get a
-	// JavaHeap setting so the JVM respects the container memory limit.
-	// Rust services get tighter limits — they're memory-efficient.
+	// Java services (kernel, eventbus, stratum) get a JavaHeap setting so
+	// the JVM respects the container memory limit. timedb (Rust),
+	// graphdb (Go), saml (Rust), and all other services don't need JavaHeap.
+	// stratum is an in-memory DB with in-memory result sets — its memory
+	// will need to grow as event volume grows; today's 2Gi limit is fine.
 	svcs := []serviceSpec{
 		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true,
 			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
@@ -333,7 +335,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
 		svcs = append(svcs, serviceSpec{Name:"saml", Replicas:topo.SamlNodes, Image:g.imageRef("saml"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"256Mi", MemLimit:"512Mi", CpuRequest:"50m", JavaHeap:"384m"})
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"})
 	}
 
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
