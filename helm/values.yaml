@@ -7,11 +7,8 @@ operator:
   imagePullPolicy: IfNotPresent
   imagePullSecret: gitlab-registry
 
-  # Kubernetes namespace for the operator itself.
-  namespace: cavalier-operator
-
-  # Namespace where cavalier services are deployed (passed to the operator via config).
-  targetNamespace: cavalier
+  # Kubernetes namespace for the operator and all cavalier services.
+  namespace: cavalier
 
   # Mode: "in-cluster" (default) or "generate-only".
   # Overrides operator.yaml if set here.
