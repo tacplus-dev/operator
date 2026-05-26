@@ -972,6 +972,12 @@ spec:
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}
+			if svc.WebAppHostPath != "" {
+				// Dev-mode webapp hot reload: gateway reads WEB_ROOT and serves
+				// SPA files from disk instead of the embedded bundle. The host
+				// directory is bind-mounted via hostPath below.
+				deployBuf.WriteString("        - name: WEB_ROOT\n          value: /web/app\n")
+			}
 			if svc.ExtraEnvVars != "" {
 				deployBuf.WriteString(svc.ExtraEnvVars)
 			}
@@ -1015,6 +1021,12 @@ spec:
           mountPath: /app/data
 `)
 			}
+			if svc.WebAppHostPath != "" {
+				deployBuf.WriteString(`        - name: webapp
+          mountPath: /web/app
+          readOnly: true
+`)
+			}
 			if !svc.SkipProbes {
 				deployBuf.WriteString(fmt.Sprintf(`        startupProbe:
           {{- include "%s" . | nindent 10 }}
@@ -1038,6 +1050,13 @@ spec:
         persistentVolumeClaim:
           claimName: %s-data
 `, name))
+			}
+			if svc.WebAppHostPath != "" {
+				deployBuf.WriteString(fmt.Sprintf(`      - name: webapp
+        hostPath:
+          path: %s
+          type: Directory
+`, svc.WebAppHostPath))
 			}
 		}
 		charts.Files[fmt.Sprintf("templates/%s/deployment.yaml", svc.Name)] = deployBuf.Bytes()
