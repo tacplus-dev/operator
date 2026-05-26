@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
+	"net/url"
 	"time"
 
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/key"
@@ -169,6 +170,15 @@ func GenerateCrypto(cfg *protoOperator.OperatorConfig, coreCount, edgeCount int,
 		return fmt.Errorf("parsing cluster CA certificate: %w", err)
 	}
 
+	// SPIFFE URI for kernel — added to the cert's URI SAN so that
+	// SPIFFE-aware clients can verify kernel identity via URI rather than DNS.
+	// Defaults to "local/dev" if operator.yaml didn't set spiffe_prefix.
+	spiffePrefix := cfg.SpiffePrefix
+	if spiffePrefix == "" {
+		spiffePrefix = "local/dev"
+	}
+	kernelSpiffeURI := fmt.Sprintf("spiffe://%s/kernel", spiffePrefix)
+
 	// Per-node TLS certs (one per kernel replica)
 	cfg.Pki.NodeTls = make([]*protoX509.X509CertChain, coreCount)
 	for i := range coreCount {
@@ -185,7 +195,7 @@ func GenerateCrypto(cfg *protoOperator.OperatorConfig, coreCount, edgeCount int,
 		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
 			dnsNames = append(dnsNames, fqdn)
 		}
-		cfg.Pki.NodeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, dnsNames)
+		cfg.Pki.NodeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, dnsNames, kernelSpiffeURI)
 		if err != nil {
 			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
 		}
@@ -195,7 +205,7 @@ func GenerateCrypto(cfg *protoOperator.OperatorConfig, coreCount, edgeCount int,
 	cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
 	for i := range edgeCount {
 		nodeName := fmt.Sprintf("kernel-edge-%d", i)
-		cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName})
+		cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
 		if err != nil {
 			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
 		}
@@ -241,7 +251,11 @@ func RootCACertPEM(cfg *protoOperator.OperatorConfig) ([]byte, error) {
 	return cc.Leaf().Bytes(), nil
 }
 
-func generateSignedCertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.Certificate, dnsNames []string) (*protoX509.X509CertChain, error) {
+// generateSignedCertChain creates a leaf TLS cert signed by the cluster CA.
+// `dnsNames` populates the DNS SAN list. `spiffeURI`, if non-empty, is added
+// as a URI SAN — this lets Rust SPIFFE verifiers identify the peer by its
+// `spiffe://${trust_domain}/${service}` workload identity rather than DNS.
+func generateSignedCertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.Certificate, dnsNames []string, spiffeURI string) (*protoX509.X509CertChain, error) {
 	serverKey, err := wrapperKey.NewEC384Key()
 	if err != nil {
 		return nil, fmt.Errorf("generating server key: %w", err)
@@ -263,6 +277,13 @@ func generateSignedCertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.Cer
 		ExtKeyUsage:           []stdx509.ExtKeyUsage{stdx509.ExtKeyUsageServerAuth, stdx509.ExtKeyUsageClientAuth},
 		DNSNames:              dnsNames,
 		BasicConstraintsValid: true,
+	}
+	if spiffeURI != "" {
+		u, err := url.Parse(spiffeURI)
+		if err != nil {
+			return nil, fmt.Errorf("parsing spiffe URI %q: %w", spiffeURI, err)
+		}
+		template.URIs = []*url.URL{u}
 	}
 
 	certDER, err := stdx509.CreateCertificate(rand.Reader, template, caCert, serverImmKey.PublicKey(), caKey.PrivateKey())
