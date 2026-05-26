@@ -155,6 +155,54 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet  bool
+	// Resource limits/requests. If empty, no resources block is rendered
+	// (the JVM defaults to host RAM which over-commits the node).
+	MemRequest     string
+	MemLimit       string
+	CpuRequest     string
+	CpuLimit       string
+	// JavaHeap, if non-empty, sets `JAVA_OPTS=-Xmx<heap> -Xms<heap>` so the JVM
+	// respects the container memory limit. Required for Java services because
+	// the JVM's container-aware heuristics sometimes still misbehave at scale.
+	JavaHeap       string
+}
+
+// resourcesBlock returns the YAML `resources:` block for a container, indented
+// to match position inside a containers[].* entry. Empty string if no fields set.
+func resourcesBlock(svc serviceSpec) string {
+	if svc.MemRequest == "" && svc.MemLimit == "" && svc.CpuRequest == "" && svc.CpuLimit == "" {
+		return ""
+	}
+	var b bytes.Buffer
+	b.WriteString("        resources:\n")
+	if svc.MemRequest != "" || svc.CpuRequest != "" {
+		b.WriteString("          requests:\n")
+		if svc.MemRequest != "" {
+			b.WriteString(fmt.Sprintf("            memory: %s\n", svc.MemRequest))
+		}
+		if svc.CpuRequest != "" {
+			b.WriteString(fmt.Sprintf("            cpu: %s\n", svc.CpuRequest))
+		}
+	}
+	if svc.MemLimit != "" || svc.CpuLimit != "" {
+		b.WriteString("          limits:\n")
+		if svc.MemLimit != "" {
+			b.WriteString(fmt.Sprintf("            memory: %s\n", svc.MemLimit))
+		}
+		if svc.CpuLimit != "" {
+			b.WriteString(fmt.Sprintf("            cpu: %s\n", svc.CpuLimit))
+		}
+	}
+	return b.String()
+}
+
+// javaOptsEnv returns a YAML env-var snippet that sets JAVA_OPTS=-Xmx<heap> -Xms<heap>
+// for Java services. Empty string if JavaHeap is not set.
+func javaOptsEnv(svc serviceSpec) string {
+	if svc.JavaHeap == "" {
+		return ""
+	}
+	return fmt.Sprintf("        - name: JAVA_OPTS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, svc.JavaHeap)
 }
 
 func effectiveTopology(cfg *protoOperator.OperatorConfig, nodeCount int) *protoOperator.Topology {
@@ -250,24 +298,39 @@ func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *pro
 	opt := cfg.GetOptionalServices()
 
 	// Core always-on services.
+	// Resource defaults. Tune these via topology if needed.
+	// Java services (kernel, eventbus, stratum, graphdb, timedb, saml) get a
+	// JavaHeap setting so the JVM respects the container memory limit.
+	// Rust services get tighter limits — they're memory-efficient.
 	svcs := []serviceSpec{
-		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true},
-		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443},
-		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, ExtraEnvVars: eventbusEnvVars(topo.EventbusNodes)},
-		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443},
-		{Name:"opa", Replicas:topo.OpaNodes, Image:g.imageRef("opa"), HasGRPC:true, ListenPort:8443},
-		{Name:"argus", Replicas:topo.ArgusNodes, Image:g.imageRef("argus"), HasGRPC:true, ListenPort:8443},
-		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "timedb"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes)},
-		{Name:"graphdb", Replicas:topo.GraphdbNodes, Image:g.imageRef("graphdb"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes)},
-		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443},
+		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true,
+			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
+		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443,
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
+		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, ExtraEnvVars: eventbusEnvVars(topo.EventbusNodes),
+			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
+		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443,
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"100m"},
+		{Name:"opa", Replicas:topo.OpaNodes, Image:g.imageRef("opa"), HasGRPC:true, ListenPort:8443,
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
+		{Name:"argus", Replicas:topo.ArgusNodes, Image:g.imageRef("argus"), HasGRPC:true, ListenPort:8443,
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
+		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "timedb"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes),
+			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m"},
+		{Name:"graphdb", Replicas:topo.GraphdbNodes, Image:g.imageRef("graphdb"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
+			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m"},
+		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443,
+			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
-	svcs = append(svcs, serviceSpec{Name:"oauth", Replicas:topo.OauthNodes, Image:g.imageRef("oauth"), HasGRPC:true, ListenPort:8443})
+	svcs = append(svcs, serviceSpec{Name:"oauth", Replicas:topo.OauthNodes, Image:g.imageRef("oauth"), HasGRPC:true, ListenPort:8443,
+		MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"})
 
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
-		svcs = append(svcs, serviceSpec{Name:"saml", Replicas:topo.SamlNodes, Image:g.imageRef("saml"), HasGRPC:true, ListenPort:8443})
+		svcs = append(svcs, serviceSpec{Name:"saml", Replicas:topo.SamlNodes, Image:g.imageRef("saml"), HasGRPC:true, ListenPort:8443,
+			MemRequest:"256Mi", MemLimit:"512Mi", CpuRequest:"50m", JavaHeap:"384m"})
 	}
 
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
@@ -814,6 +877,9 @@ spec:
         - name: BOOTSTRAP_CONFIG
           value: /bootstrap/bootstrap.yaml
 `, svc.Name, svc.Name))
+		if jo := javaOptsEnv(svc); jo != "" {
+			ssBuf.WriteString(jo)
+		}
 		if svc.ExtraEnvVars != "" {
 			ssBuf.WriteString(svc.ExtraEnvVars)
 		}
@@ -839,6 +905,9 @@ spec:
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
 `, startupProbeHelper, probeHelper, probeHelper))
+		}
+		if rb := resourcesBlock(svc); rb != "" {
+			ssBuf.WriteString(rb)
 		}
 		ssBuf.WriteString(`      volumes:
       - name: bootstrap
@@ -897,6 +966,9 @@ spec:
         - name: BOOTSTRAP_CONFIG
           value: /data/bootstrap.yaml
 `, name, name, name, name, name, svc.Name))
+			if jo := javaOptsEnv(svc); jo != "" {
+				deployBuf.WriteString(jo)
+			}
 			if svc.ExtraEnvVars != "" {
 				deployBuf.WriteString(svc.ExtraEnvVars)
 			}
@@ -948,6 +1020,9 @@ spec:
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
 `, startupProbeHelper, probeHelper, probeHelper))
+			}
+			if rb := resourcesBlock(svc); rb != "" {
+				deployBuf.WriteString(rb)
 			}
 			deployBuf.WriteString(`      volumes:
       - name: config
