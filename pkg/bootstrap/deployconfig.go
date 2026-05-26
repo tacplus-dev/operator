@@ -22,8 +22,12 @@ var (
 )
 
 // BuildBackendFields returns the backend connection YAML map fields
-// (endpoints, private_key, trusted_cas) for services connecting to kernel.
-func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host) (map[string]any, error) {
+// (endpoints, private_key, trusted_cas, spiffe_prefix) for services
+// connecting to kernel. `spiffePrefix` is the cluster's SPIFFE trust-domain
+// prefix; it MUST match the value seeded into kernel's bootstrap so all
+// workloads agree on the trust domain at boot. Empty values are omitted —
+// the service-side SM defaults to "local/dev" if absent.
+func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host, spiffePrefix string) (map[string]any, error) {
 	privateKeyYAML, err := protoKey.KeyToYAML(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling private_key: %w", err)
@@ -54,11 +58,15 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 		})
 	}
 
-	return map[string]any{
+	out := map[string]any{
 		"endpoints":   endpointsSlice,
 		"private_key": privateKeyMap,
 		"trusted_cas": trustedCAsSlice,
-	}, nil
+	}
+	if spiffePrefix != "" {
+		out["spiffe_prefix"] = spiffePrefix
+	}
+	return out, nil
 }
 
 // GatewayOptions holds user-configurable gateway settings from services/gateway.yaml.
@@ -74,9 +82,10 @@ func BuildGatewayServiceConfig(
 	privateKey *protoKey.Key,
 	trustedCAs []*protoX509.X509Cert,
 	opts GatewayOptions,
+	spiffePrefix string,
 	endpoints ...*protoHost.Host,
 ) ([]byte, error) {
-	config, err := BuildBackendFields(privateKey, trustedCAs, endpoints)
+	config, err := BuildBackendFields(privateKey, trustedCAs, endpoints, spiffePrefix)
 	if err != nil {
 		return nil, err
 	}

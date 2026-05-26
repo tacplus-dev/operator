@@ -486,9 +486,11 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 
 	fqdn := ""
 	issuer := ""
+	spiffePrefix := ""
 	if opCfg != nil {
 		fqdn = opCfg.Fqdn
 		issuer = Issuer(opCfg)
+		spiffePrefix = opCfg.SpiffePrefix
 	}
 
 	// 6. Build kernel Config proto
@@ -498,6 +500,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		Delegates:                  delegates,
 		Fqdn:                       fqdn,
 		Issuer:                     issuer,
+		SpiffePrefix:               spiffePrefix,
 	}
 	protoKernel.ConfigDefaults(kernelConfig)
 	if hasHolder {

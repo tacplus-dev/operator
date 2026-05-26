@@ -133,7 +133,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		if err != nil {
 			return nil, fmt.Errorf("loading %s key: %w", name, err)
 		}
-		fields, err := BuildBackendFields(key, trustedCAs, kernelEndpoints)
+		fields, err := BuildBackendFields(key, trustedCAs, kernelEndpoints, cfg.SpiffePrefix)
 		if err != nil {
 			return nil, fmt.Errorf("building %s config: %w", name, err)
 		}
@@ -177,7 +177,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if cfg.Fqdn != "" {
 		gatewayOpts.Hostnames = []string{cfg.Fqdn}
 	}
-	gatewayConfigYAML, err := BuildGatewayServiceConfig(gatewayKey, trustedCAs, gatewayOpts, kernelEndpoints...)
+	gatewayConfigYAML, err := BuildGatewayServiceConfig(gatewayKey, trustedCAs, gatewayOpts, cfg.SpiffePrefix, kernelEndpoints...)
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
 	}
@@ -207,7 +207,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading opa key: %w", err)
 	}
-	opaFields, err := BuildBackendFields(opaKey, trustedCAs, kernelEndpoints)
+	opaFields, err := BuildBackendFields(opaKey, trustedCAs, kernelEndpoints, cfg.SpiffePrefix)
 	if err != nil {
 		return nil, fmt.Errorf("building opa config: %w", err)
 	}
