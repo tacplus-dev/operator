@@ -16,6 +16,7 @@ import (
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/key"
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/generated/services_config"
+	protoAnthropic "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/anthropic"
 	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/graphdb"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/eventbus"
 	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/oauth"
@@ -459,6 +460,15 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			}
 
 			holder.OpaConfig = cfg
+			hasHolder = true
+			return nil
+		}},
+		{"anthropic", func(m map[string]any) error {
+			cfg := &protoAnthropic.Config{}
+			if err := unmarshalMapToProto(m, cfg); err != nil {
+				return err
+			}
+			holder.AnthropicConfig = cfg
 			hasHolder = true
 			return nil
 		}},
