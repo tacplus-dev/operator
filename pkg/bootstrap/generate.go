@@ -147,6 +147,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 		if err := ValidateConfig(cfg); err != nil {
 			return err
 		}
+		dc, err := BuildDeployConfigs(dir)
+		if err != nil {
+			return fmt.Errorf("building deploy configs: %w", err)
+		}
+		svcValues = ServiceConfigValues(dc)
 	}
 
 	if applyGateways > 0 {
