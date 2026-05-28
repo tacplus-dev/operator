@@ -154,6 +154,28 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		}
 	}
 
+	// mergeServiceYAML returns a buildSvc-extra lambda that overlays the
+	// contents of services/<file> (if present) onto the generated config
+	// fields. Used to plumb per-service settings (e.g. anthropic
+	// federation_rule_id) authored in the deploy bundle through to the
+	// service's runtime Config. Missing or unparseable file is silently
+	// ignored — these yaml overlays are optional.
+	mergeServiceYAML := func(file string) func(map[string]any) {
+		return func(m map[string]any) {
+			data, err := os.ReadFile(filepath.Join(cfgDir, "services", file))
+			if err != nil {
+				return
+			}
+			var src map[string]any
+			if err := yaml.Unmarshal(data, &src); err != nil {
+				return
+			}
+			for k, v := range src {
+				m[k] = v
+			}
+		}
+	}
+
 	sentinelConfigYAML, err := buildSvc("sentinel", func(m map[string]any) {
 		m["max_request_size"] = int64(10 * 1024 * 1024)
 		m["request_timeout_seconds"] = int64(30)
@@ -271,7 +293,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		return nil, fmt.Errorf("marshaling opa config: %w", err)
 	}
 
-	anthropicConfigYAML, err := buildSvc("anthropic", nil)
+	anthropicConfigYAML, err := buildSvc("anthropic", mergeServiceYAML("anthropic.yaml"))
 	if err != nil {
 		return nil, err
 	}
