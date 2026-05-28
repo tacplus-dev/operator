@@ -43,7 +43,7 @@ func runOperator(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error {
+func runInCluster(dir string, cfg *protoOperator.OperatorConfig, log *zap.Logger) error {
 	log.Info("starting in-cluster operator", zap.String("config_dir", dir))
 
 	restCfg, err := ctrlcfg.GetConfig()
@@ -97,7 +97,7 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 	return mgr.Start(context.Background())
 }
 
-func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
+func runGenerate(cfg *protoOperator.OperatorConfig, log *zap.Logger) error {
 	topo := cfg.GetTopology()
 	if topo == nil || topo.GatewayNodes == 0 {
 		return fmt.Errorf("topology.gateway_nodes must be set in GENERATE_ONLY mode")

@@ -124,7 +124,7 @@ func init() {
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
-	var cfg *protoOperator.Config
+	var cfg *protoOperator.OperatorConfig
 	var svcValues map[string]interface{}
 
 	if applyBundleFile != "" {

@@ -285,7 +285,7 @@ func runExportConfig(cmd *cobra.Command, args []string) error {
 	cfg.GitlabRegistryToken = ""
 	cfg.TraceId = ""
 	// Write to YAML and read back as a raw map so we can embed in the template.
-	settingsYAML, err := protoOperator.ConfigToYAML(cfg)
+	settingsYAML, err := protoOperator.OperatorConfigToYAML(cfg)
 	if err != nil {
 		return fmt.Errorf("serializing operator settings: %w", err)
 	}

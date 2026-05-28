@@ -66,7 +66,7 @@ func New(series, versionLock string, resolver TagResolver) *Generator {
 // Generate produces the full cavalier Helm chart for the given config.
 // nodeCount is the number of schedulable Kubernetes nodes; it is used to
 // set gateway_nodes when topology.gateway_nodes == 0.
-func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts, error) {
+func (g *Generator) Generate(cfg *protoOperator.OperatorConfig, nodeCount int) (*Charts, error) {
 	topo := effectiveTopology(cfg, nodeCount)
 
 	charts := &Charts{Files: make(map[string][]byte)}
@@ -226,7 +226,7 @@ func goMemLimitEnv(svc serviceSpec) string {
 	return fmt.Sprintf("        - name: GOMEMLIMIT\n          value: \"%s\"\n", svc.GoMemLimit)
 }
 
-func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.Topology {
+func effectiveTopology(cfg *protoOperator.OperatorConfig, nodeCount int) *protoOperator.Topology {
 	t := cfg.GetTopology()
 	if t == nil {
 		t = &protoOperator.Topology{}
@@ -315,7 +315,7 @@ func (g *Generator) resolveTag(proj, svc string) string {
 	return "latest"
 }
 
-func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperator.Topology) []serviceSpec {
+func (g *Generator) enabledServices(cfg *protoOperator.OperatorConfig, topo *protoOperator.Topology) []serviceSpec {
 	opt := cfg.GetOptionalServices()
 
 	// Core always-on services.
@@ -408,7 +408,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 // ExpectedDeploymentNames returns the set of deployment names that the
 // generator would create for the given config. Used by the reconciler to
 // prune stale deployments after a topology change.
-func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount int) map[string]bool {
+func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.OperatorConfig, nodeCount int) map[string]bool {
 	topo := effectiveTopology(cfg, nodeCount)
 	svcs := g.enabledServices(cfg, topo)
 	names := make(map[string]bool)
@@ -422,7 +422,7 @@ func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount
 
 // --- chart file generators ---
 
-func (g *Generator) addChartYAML(charts *Charts, cfg *protoOperator.Config) error {
+func (g *Generator) addChartYAML(charts *Charts, cfg *protoOperator.OperatorConfig) error {
 	tag := g.series
 	content := fmt.Sprintf(`apiVersion: v2
 name: cavalier
@@ -456,7 +456,7 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 {{- end }}
 `))
 
-func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, topo *protoOperator.Topology) error {
+func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.OperatorConfig, topo *protoOperator.Topology) error {
 	svcs := g.enabledServices(cfg, topo)
 	port := cfg.Port
 	if port == 0 {
@@ -572,7 +572,7 @@ imagePullSecrets:
 
 // addRegistrySecret emits templates/registry-secret.yaml when gitlab_registry_token is set.
 // The secret provides pull credentials for registry.gitlab.com in the cavalier namespace.
-func (g *Generator) addRegistrySecret(charts *Charts, cfg *protoOperator.Config) error {
+func (g *Generator) addRegistrySecret(charts *Charts, cfg *protoOperator.OperatorConfig) error {
 	token := cfg.GetGitlabRegistryToken()
 	if token == "" {
 		return nil
@@ -603,7 +603,7 @@ data:
 	return nil
 }
 
-func (g *Generator) addNamespace(charts *Charts, cfg *protoOperator.Config) error {
+func (g *Generator) addNamespace(charts *Charts, cfg *protoOperator.OperatorConfig) error {
 	ns := cfg.Namespace
 	if ns == "" {
 		ns = "cavalier"
@@ -687,7 +687,7 @@ spec:
 {{- end }}
 `))
 
-func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
+func (g *Generator) addService(charts *Charts, cfg *protoOperator.OperatorConfig, svc serviceSpec) error {
 	ns := cfg.Namespace
 	if ns == "" {
 		ns = "cavalier"

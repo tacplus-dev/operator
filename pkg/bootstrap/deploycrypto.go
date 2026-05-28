@@ -44,7 +44,7 @@ func utf8CN(cn string) stdpkix.Name {
 // GenerateRootCA generates a self-signed root CA and sets cfg.Pki.RootCa.
 // If cfg.Pki.RootCa is already set, reuses the existing key and cert.
 // Returns the immutable key and parsed x509 certificate for signing child certs.
-func GenerateRootCA(cfg *protoOperator.Config) (*wrapperKey.ImmutableKey, *stdx509.Certificate, error) {
+func GenerateRootCA(cfg *protoOperator.OperatorConfig) (*wrapperKey.ImmutableKey, *stdx509.Certificate, error) {
 	if cfg.Pki == nil {
 		cfg.Pki = &protoOperator.PKI{}
 	}
@@ -114,7 +114,7 @@ func GenerateRootCA(cfg *protoOperator.Config) (*wrapperKey.ImmutableKey, *stdx5
 // If cfg.Pki.RootCa is nil, a new root CA is generated via GenerateRootCA.
 // coreCount is the number of kernel nodes; edgeCount is for split-node mode (0 for collapsed).
 // fqdn is an optional extra SAN added to each node TLS cert.
-func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn string) error {
+func GenerateCrypto(cfg *protoOperator.OperatorConfig, coreCount, edgeCount int, fqdn string) error {
 	if cfg.Pki == nil {
 		cfg.Pki = &protoOperator.PKI{}
 	}
@@ -240,7 +240,7 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn st
 }
 
 // RootCACertPEM extracts the PEM-encoded root CA certificate from cfg.Pki.RootCa.
-func RootCACertPEM(cfg *protoOperator.Config) ([]byte, error) {
+func RootCACertPEM(cfg *protoOperator.OperatorConfig) ([]byte, error) {
 	if cfg.Pki == nil || cfg.Pki.RootCa == nil || len(cfg.Pki.RootCa.Chain) == 0 {
 		return nil, fmt.Errorf("no root CA in config")
 	}

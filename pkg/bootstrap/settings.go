@@ -18,12 +18,12 @@ const (
 
 // LoadConfig loads operator.yaml and crypto.yaml from cfgDir, deserializes
 // both as OperatorConfig, and deep-merges them. Missing files are silently skipped.
-func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
-	cfg := &protoOperator.Config{}
+func LoadConfig(cfgDir string) (*protoOperator.OperatorConfig, error) {
+	cfg := &protoOperator.OperatorConfig{}
 
 	settingsPath := filepath.Join(cfgDir, OperatorSettingsFile)
 	if data, err := os.ReadFile(settingsPath); err == nil {
-		part, err := protoOperator.ConfigFromBytes(data)
+		part, err := protoOperator.OperatorConfigFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", OperatorSettingsFile, err)
 		}
@@ -34,7 +34,7 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 
 	cryptoPath := filepath.Join(cfgDir, OperatorCryptoFile)
 	if data, err := os.ReadFile(cryptoPath); err == nil {
-		part, err := protoOperator.ConfigFromBytes(data)
+		part, err := protoOperator.OperatorConfigFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", OperatorCryptoFile, err)
 		}
@@ -48,15 +48,15 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 
 // SaveSettings writes non-PKI fields to operator.yaml.
 // PKI material is stripped before writing (it lives in crypto.yaml).
-func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
+func SaveSettings(cfgDir string, cfg *protoOperator.OperatorConfig) error {
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	settings := proto.Clone(cfg).(*protoOperator.Config)
+	settings := proto.Clone(cfg).(*protoOperator.OperatorConfig)
 	settings.Pki = nil
 
-	data, err := protoOperator.ConfigToYAML(settings)
+	data, err := protoOperator.OperatorConfigToYAML(settings)
 	if err != nil {
 		return fmt.Errorf("marshaling operator.yaml: %w", err)
 	}
@@ -66,14 +66,14 @@ func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 
 // SaveCrypto writes only PKI material to crypto.yaml.
 // Non-PKI fields are stripped before writing.
-func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
+func SaveCrypto(cfgDir string, cfg *protoOperator.OperatorConfig) error {
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	crypto := &protoOperator.Config{Pki: cfg.Pki}
+	crypto := &protoOperator.OperatorConfig{Pki: cfg.Pki}
 
-	data, err := protoOperator.ConfigToYAML(crypto)
+	data, err := protoOperator.OperatorConfigToYAML(crypto)
 	if err != nil {
 		return fmt.Errorf("marshaling crypto.yaml: %w", err)
 	}
@@ -83,7 +83,7 @@ func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
 
 // Issuer computes the full issuer URL from cfg.Fqdn and cfg.Port.
 // Port 443 is omitted (standard HTTPS). Defaults to localhost:8443.
-func Issuer(cfg *protoOperator.Config) string {
+func Issuer(cfg *protoOperator.OperatorConfig) string {
 	fqdn := cfg.Fqdn
 	if fqdn == "" {
 		fqdn = "localhost"
@@ -99,7 +99,7 @@ func Issuer(cfg *protoOperator.Config) string {
 }
 
 // ValidateConfig checks that cfg is internally consistent for deployment.
-func ValidateConfig(cfg *protoOperator.Config) error {
+func ValidateConfig(cfg *protoOperator.OperatorConfig) error {
 	if cfg.Fqdn == "" {
 		return fmt.Errorf("fqdn is required — run 'cavalier-operator init cluster --fqdn <fqdn>'")
 	}

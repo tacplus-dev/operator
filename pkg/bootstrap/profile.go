@@ -14,7 +14,7 @@ import (
 
 // ApplyTopologyPreset sets topology fields from a named preset.
 // Presets: "small" (default), "medium", "large".
-func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
+func ApplyTopologyPreset(cfg *protoOperator.OperatorConfig, preset string) {
 	if cfg.Topology == nil {
 		cfg.Topology = &protoOperator.Topology{}
 	}

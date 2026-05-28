@@ -44,13 +44,13 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 	// Split config into settings (no PKI) and crypto (PKI only) for the bundle.
 	settingsOnly := *dc.Cfg
 	settingsOnly.Pki = nil
-	settingsYAML, err := protoOperator.ConfigToYAML(&settingsOnly)
+	settingsYAML, err := protoOperator.OperatorConfigToYAML(&settingsOnly)
 	if err != nil {
 		return nil, fmt.Errorf("serializing operator config: %w", err)
 	}
 
-	cryptoOnly := &protoOperator.Config{Pki: dc.Cfg.Pki}
-	cryptoYAML, err := protoOperator.ConfigToYAML(cryptoOnly)
+	cryptoOnly := &protoOperator.OperatorConfig{Pki: dc.Cfg.Pki}
+	cryptoYAML, err := protoOperator.OperatorConfigToYAML(cryptoOnly)
 	if err != nil {
 		return nil, fmt.Errorf("serializing crypto: %w", err)
 	}
@@ -121,17 +121,17 @@ func SaveBundle(b *Bundle, path string) error {
 
 // BundleConfig reconstructs an OperatorConfig from a bundle by merging the
 // settings and crypto YAML back together.
-func BundleConfig(b *Bundle) (*protoOperator.Config, error) {
-	cfg := &protoOperator.Config{}
+func BundleConfig(b *Bundle) (*protoOperator.OperatorConfig, error) {
+	cfg := &protoOperator.OperatorConfig{}
 	if b.Config != "" {
-		part, err := protoOperator.ConfigFromBytes([]byte(b.Config))
+		part, err := protoOperator.OperatorConfigFromBytes([]byte(b.Config))
 		if err != nil {
 			return nil, fmt.Errorf("parsing bundle config: %w", err)
 		}
 		proto.Merge(cfg, part)
 	}
 	if b.Crypto != "" {
-		part, err := protoOperator.ConfigFromBytes([]byte(b.Crypto))
+		part, err := protoOperator.OperatorConfigFromBytes([]byte(b.Crypto))
 		if err != nil {
 			return nil, fmt.Errorf("parsing bundle crypto: %w", err)
 		}

@@ -36,7 +36,7 @@ type DeployConfigs struct {
 	ColddbConfig       []byte
 	LetsencryptConfig  []byte
 	GatewayOpts        GatewayOptions
-	Cfg                *protoOperator.Config
+	Cfg                *protoOperator.OperatorConfig
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -87,15 +87,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 
 	if cfg.Pki.ClusterCa != nil {
 		kernelConfig.ClusterCa = cfg.Pki.ClusterCa.Chain
-	}
-
-	// Cluster-admin bootstrap cred_pairs come from operator.yaml. Render
-	// them into kernel's config so kernel can authenticate ClusterAdmin
-	// RPCs (CreateTenant, DeleteTenant, ListTenants) after boot. The
-	// operator itself does not store the private keys — they live with
-	// the cluster admin / CI pipeline.
-	if len(cfg.ClusterCredPairs) > 0 {
-		kernelConfig.ClusterCredPairs = cfg.ClusterCredPairs
 	}
 
 	// Assemble kernel trusted CAs: root + cluster + signing CAs.
