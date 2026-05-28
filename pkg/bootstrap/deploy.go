@@ -36,7 +36,7 @@ type DeployConfigs struct {
 	ColddbConfig       []byte
 	LetsencryptConfig  []byte
 	GatewayOpts        GatewayOptions
-	Cfg                *protoOperator.OperatorConfig
+	Cfg                *protoOperator.Config
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all

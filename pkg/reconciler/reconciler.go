@@ -60,7 +60,7 @@ type ServiceConfigProvider func() (map[string]interface{}, error)
 
 // Reconciler manages the cavalier Helm release inside the cluster.
 type Reconciler struct {
-	cfg            *protoOperator.OperatorConfig
+	cfg            *protoOperator.Config
 	configProvider ServiceConfigProvider
 	checker        *upgrade.Checker
 	generator      *helm.Generator
@@ -79,7 +79,7 @@ type Reconciler struct {
 // operatorNS is the namespace where the operator pod runs (used for reading
 // the gitlab-registry secret when auto_upgrade is enabled).
 // checker resolves per-service image tags; the generator uses it as a TagResolver.
-func New(cfg *protoOperator.OperatorConfig, configProvider ServiceConfigProvider, checker *upgrade.Checker, mgr manager.Manager, log *zap.Logger, operatorNS, series, versionLock string) *Reconciler {
+func New(cfg *protoOperator.Config, configProvider ServiceConfigProvider, checker *upgrade.Checker, mgr manager.Manager, log *zap.Logger, operatorNS, series, versionLock string) *Reconciler {
 	return &Reconciler{
 		cfg:            cfg,
 		configProvider: configProvider,
