@@ -191,7 +191,11 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn st
 		noHyphen := fmt.Sprintf("kernel%d", i)
 		// Include StatefulSet DNS: <pod>.<headless-service> (e.g. kernel-0.kernel)
 		stsName := fmt.Sprintf("%s.kernel", nodeName)
-		dnsNames := []string{nodeName, noHyphen, stsName}
+		// "kernel" = the headless service / service name. The gateway's backend
+		// resolver verifies TLS with domain_name = service_id ("kernel"), exactly
+		// like every other service, so the cert must carry the bare service name
+		// or the gateway can't proxy /kernel.* RPCs.
+		dnsNames := []string{nodeName, noHyphen, stsName, "kernel"}
 		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
 			dnsNames = append(dnsNames, fqdn)
 		}
