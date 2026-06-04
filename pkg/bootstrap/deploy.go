@@ -37,24 +37,6 @@ type DeployConfigs struct {
 	LetsencryptConfig []byte
 	GatewayOpts       GatewayOptions
 	Cfg               *protoOperator.Config
-	// SeedYAML is the one-time mint bootstrap-secrets file (seed.yaml). It holds
-	// the PRIVATE half of each per-mint bootstrap key and is delivered to mint,
-	// consumed once, then DISCARDED — never persisted to durable config/state.
-	// This combined form (all instances) is what static mode writes to disk and
-	// bakes into the bundle.
-	SeedYAML []byte
-	// SeedYAMLByInstance is the per-mint-instance form of the seed: one
-	// single-entry seed.yaml document keyed by instance label ("mint-0", …).
-	// Dynamic-mode delivery mounts one document per StatefulSet pod via a
-	// per-ordinal Secret, so each replica receives only its own discardable
-	// bootstrap private key. Same lifecycle as SeedYAML (consumed once, then
-	// discarded; never durable).
-	SeedYAMLByInstance map[string][]byte
-	// KernelBootstrapTrust holds the PUBLIC halves of the mint bootstrap keys,
-	// tagged bootstrap / short-TTL, destined for kernel's JWKS / verifying-key
-	// trust seed. See BuildKernelBootstrapTrustEntries for the proto-injection
-	// gap (kernel.Config has no JWKS-seed field yet).
-	KernelBootstrapTrust []KernelBootstrapTrustEntry
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -154,43 +136,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	for i := range nodeCount {
 		kernelEndpoints[i] = &protoHost.Host{Host: fmt.Sprintf("kernel-%d.kernel", i), Port: int32(protoKernel.DefaultListenerPort)}
 	}
-
-	// Mint bootstrap-key model (INTEGRATION_PLAN.md §A0): provision a per-mint
-	// bootstrap keypair, emit the private halves into seed.yaml, and the public
-	// halves into kernel's trust seed (short-TTL / bootstrap-tagged). Generated
-	// in BOTH deploy modes — static CLI bakes seed.yaml into the bundle, the
-	// dynamic reconciler emits it at provision time. Only mint is provisioned a
-	// bootstrap key; other services obtain their keys from mint at runtime.
-	bootstrapKeys, err := GenerateMintBootstrapKeys(MintReplicaCount())
-	if err != nil {
-		return nil, fmt.Errorf("generating mint bootstrap keys: %w", err)
-	}
-	bootstrapExpiry := BootstrapKeyExpiry()
-	seed, err := BuildSeed(bootstrapKeys, bootstrapExpiry)
-	if err != nil {
-		return nil, fmt.Errorf("building seed: %w", err)
-	}
-	seedYAML, err := SeedToYAML(seed)
-	if err != nil {
-		return nil, fmt.Errorf("serializing seed: %w", err)
-	}
-	// Per-instance seed documents for dynamic-mode per-pod Secret delivery (the
-	// mint StatefulSet mounts one document per ordinal). Same private halves as
-	// the combined seedYAML, split one-entry-per-instance.
-	seedYAMLByInstance, err := PerInstanceSeedYAML(bootstrapKeys, bootstrapExpiry)
-	if err != nil {
-		return nil, fmt.Errorf("building per-instance seed: %w", err)
-	}
-	kernelBootstrapTrust, err := BuildKernelBootstrapTrustEntries(bootstrapKeys, bootstrapExpiry)
-	if err != nil {
-		return nil, fmt.Errorf("building kernel bootstrap trust entries: %w", err)
-	}
-	// TODO(proto): inject kernelBootstrapTrust into kernelConfig once kernel.Config
-	// gains a JWKS / verifying-key seed field. Today kernel.Config has no field to
-	// carry a bootstrap JWK with a TTL (only cluster_ca / trusted_cas /
-	// cluster_cred_pairs), so the public bootstrap keys are surfaced via
-	// DeployConfigs.KernelBootstrapTrust (and the bundle) for kernel to ingest
-	// rather than baked into the kernel Config proto. See operator_mint_seed.md.
 
 	buildSvc := func(name string, extra func(map[string]any)) ([]byte, error) {
 		key, err := LoadPrivateKey(filepath.Join(cfgDir, "creds", name))
@@ -470,9 +415,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		LetsencryptConfig:    letsencryptConfigYAML,
 		GatewayOpts:          gatewayOpts,
 		Cfg:                  cfg,
-		SeedYAML:             seedYAML,
-		SeedYAMLByInstance:   seedYAMLByInstance,
-		KernelBootstrapTrust: kernelBootstrapTrust,
 	}, nil
 }
 
@@ -536,21 +478,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
 		}
-	}
-
-	// Mint bootstrap secret (dynamic-mode delivery). Surface the seed under the
-	// "mint" service key, but as PER-ORDINAL entries (seed0, seed1, …) under a
-	// distinct sub-key so each StatefulSet pod gets only its own discardable
-	// bootstrap private key. The helm generator's mint Secret template consumes
-	// {{ .Values.mint.seed<ordinal> }} into a per-ordinal Secret, mounted once
-	// then discarded — NEVER folded into a durable ConfigMap. The combined
-	// `seed` (all instances) is also surfaced for parity with the bundle and as
-	// a fallback; per-ordinal entries are the canonical dynamic-mode delivery.
-	//
-	// Static-mode deploys additionally emit the combined seed.yaml to disk
-	// (BuildConfigOutput / bundle); that path is unchanged.
-	if mintVals := MintSeedHelmValues(dc.SeedYAML, dc.SeedYAMLByInstance); mintVals != nil {
-		vals["mint"] = mintVals
 	}
 
 	return vals

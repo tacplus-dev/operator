@@ -24,16 +24,6 @@ func BuildConfigOutput(cfgDir string) error {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 
-	// seed.yaml — the one-time mint bootstrap secrets file. Written next to the
-	// configs but kept distinct (it is consumed once by mint then discarded;
-	// NEVER persisted to durable config/state). mode 0o600 — it holds private
-	// bootstrap keys.
-	if len(dc.SeedYAML) > 0 {
-		if err := os.WriteFile(filepath.Join(configsDir, "seed.yaml"), dc.SeedYAML, 0600); err != nil {
-			return fmt.Errorf("writing seed.yaml: %w", err)
-		}
-	}
-
 	for i, bsYAML := range dc.BootstrapYAMLs {
 		name := dc.BootstrapNames[i]
 		if err := os.WriteFile(filepath.Join(configsDir, name+".yaml"), bsYAML, 0644); err != nil {
