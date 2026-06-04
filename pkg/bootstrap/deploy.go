@@ -89,13 +89,13 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		kernelConfig.ClusterCa = cfg.Pki.ClusterCa.Chain
 	}
 
-	// Cluster-admin bootstrap cred_pairs come from operator.yaml. Render
-	// them into kernel's config so kernel can authenticate ClusterAdmin
+	// Root-admin bootstrap cred_pairs come from operator.yaml. Render
+	// them into kernel's config so kernel can authenticate TenantAdmin
 	// RPCs (CreateTenant, DeleteTenant, ListTenants) after boot. The
 	// operator itself does not store the private keys — they live with
-	// the cluster admin / CI pipeline.
-	if len(cfg.ClusterCredPairs) > 0 {
-		kernelConfig.ClusterCredPairs = cfg.ClusterCredPairs
+	// the cluster/root admin / CI pipeline.
+	if len(cfg.RootCredPairs) > 0 {
+		kernelConfig.RootCredPairs = cfg.RootCredPairs
 	}
 
 	// Assemble kernel trusted CAs: root + cluster + signing CAs.
