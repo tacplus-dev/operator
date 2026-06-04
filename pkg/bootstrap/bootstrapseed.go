@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -54,11 +55,16 @@ const bootstrapKeyTTL = 10 * time.Minute
 const defaultMintReplicas = 1
 
 // MintReplicaCount returns how many mint instances to provision bootstrap keys
-// for. There is no proto topology field for mint yet (Topology has no
-// mint_nodes), so this is overridable via CAVALIER_MINT_REPLICAS for now.
+// for. This is the CANONICAL count: one bootstrap key (and one per-ordinal seed
+// Secret) is generated per replica. The helm generator's mintReplicas() reads
+// the SAME CAVALIER_MINT_REPLICAS env var so the StatefulSet replica count and
+// the number of provisioned seed entries stay in lock-step.
 //
-// TODO(proto): add `mint_nodes` to operator.Topology and read it here instead of
-// the env var. Until then static and dynamic deploys share this single source.
+// TODO(proto): operator.Topology has no `mint_nodes` field (it is a generated
+// proto type; adding the field is a proto-repo change owned by the lead). Until
+// it lands, the count comes from CAVALIER_MINT_REPLICAS (default 1). When
+// mint_nodes is added, read it here (and in helm.mintReplicas via the topology)
+// and drop the env var.
 func MintReplicaCount() int {
 	if v := os.Getenv("CAVALIER_MINT_REPLICAS"); v != "" {
 		var n int
@@ -193,6 +199,76 @@ func SeedToYAML(s *Seed) ([]byte, error) {
 		return nil, fmt.Errorf("serializing seed: %w", err)
 	}
 	return data, nil
+}
+
+// PerInstanceSeedYAML builds one seed.yaml document per mint instance, keyed by
+// instance label (e.g. "mint-0"). Each document contains ONLY that instance's
+// bootstrap entry. mint runs as a StatefulSet with stable per-pod identity, so
+// each replica must receive only its own discardable bootstrap private key (the
+// dynamic-mode delivery mounts one document per pod via a per-ordinal Secret —
+// see the helm generator's mint Secret template). notAfter is the absolute
+// expiry stamped on every entry, matching the kernel trust seed.
+func PerInstanceSeedYAML(keys []MintBootstrapKey, notAfter int64) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(keys))
+	for _, k := range keys {
+		seed, err := BuildSeed([]MintBootstrapKey{k}, notAfter)
+		if err != nil {
+			return nil, fmt.Errorf("building %s seed: %w", k.Instance, err)
+		}
+		data, err := SeedToYAML(seed)
+		if err != nil {
+			return nil, fmt.Errorf("serializing %s seed: %w", k.Instance, err)
+		}
+		out[k.Instance] = data
+	}
+	return out, nil
+}
+
+// MintSeedHelmValues builds the "mint" Helm-value sub-map that delivers the
+// one-time bootstrap seed to the mint StatefulSet. Each per-instance document is
+// surfaced as seed<ordinal> (consumed by the per-ordinal mint seed Secret
+// template); the combined seedYAML is also surfaced as "seed" for parity with
+// the bundle/disk artifact. seedByInstance keys are "mint-<ordinal>".
+//
+// Returns nil when there is nothing to deliver.
+func MintSeedHelmValues(seedYAML []byte, seedByInstance map[string][]byte) map[string]interface{} {
+	mintVals := map[string]interface{}{}
+	if len(seedYAML) > 0 {
+		mintVals["seed"] = string(seedYAML)
+	}
+	for instance, data := range seedByInstance {
+		if ord, ok := strings.CutPrefix(instance, "mint-"); ok {
+			mintVals["seed"+ord] = string(data)
+		}
+	}
+	if len(mintVals) == 0 {
+		return nil
+	}
+	return mintVals
+}
+
+// SplitSeedYAML parses a combined seed.yaml (all mint instances) back into
+// per-instance single-entry documents keyed by instance label ("mint-0", …).
+// Used by the bundle apply path, where only the combined seed is stored, to
+// reconstruct the per-ordinal Secret values. Returns nil for empty input.
+func SplitSeedYAML(seedYAML []byte) (map[string][]byte, error) {
+	if len(seedYAML) == 0 {
+		return nil, nil
+	}
+	var s Seed
+	if err := yaml.Unmarshal(seedYAML, &s); err != nil {
+		return nil, fmt.Errorf("parsing combined seed: %w", err)
+	}
+	out := make(map[string][]byte, len(s.MintBootstrap))
+	for _, entry := range s.MintBootstrap {
+		single := Seed{Version: s.Version, BuiltAt: s.BuiltAt, MintBootstrap: []SeedMintEntry{entry}}
+		data, err := SeedToYAML(&single)
+		if err != nil {
+			return nil, fmt.Errorf("serializing %s seed: %w", entry.Instance, err)
+		}
+		out[entry.Instance] = data
+	}
+	return out, nil
 }
 
 // KernelBootstrapTrustEntry is one public bootstrap key seeded into kernel's

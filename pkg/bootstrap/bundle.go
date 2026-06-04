@@ -150,9 +150,21 @@ func BundleConfig(b *Bundle) (*protoOperator.Config, error) {
 // BundleServiceValues converts a bundle's Services map to the Helm values
 // format expected by the reconciler/apply flow: map of name → {"config": yaml}.
 func BundleServiceValues(b *Bundle) map[string]interface{} {
-	vals := make(map[string]interface{}, len(b.Services))
+	vals := make(map[string]interface{}, len(b.Services)+1)
 	for name, cfg := range b.Services {
 		vals[name] = map[string]interface{}{"config": cfg}
+	}
+	// Surface the one-time mint bootstrap seed for the per-ordinal mint seed
+	// Secret. The bundle stores only the combined seed.yaml, so split it back
+	// into per-instance documents (mint.seed<ordinal>). Best-effort: a malformed
+	// seed is skipped rather than failing the whole apply.
+	if b.Seed != "" {
+		byInstance, err := SplitSeedYAML([]byte(b.Seed))
+		if err == nil {
+			if mintVals := MintSeedHelmValues([]byte(b.Seed), byInstance); mintVals != nil {
+				vals["mint"] = mintVals
+			}
+		}
 	}
 	return vals
 }

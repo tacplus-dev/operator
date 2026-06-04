@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"text/template"
 
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
@@ -155,6 +156,13 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet  bool
+	// HasSeedSecret, if true, the service consumes a one-time bootstrap seed.yaml
+	// from a per-ordinal Secret (NOT a durable config ConfigMap) — used by mint,
+	// whose discardable bootstrap private key is delivered once and then deleted.
+	// Each ordinal gets its own Secret carrying only that pod's seed document
+	// (Helm value mint.seed<ordinal>). Mutually drives the seed-Secret templates
+	// and the seed volume mount; the service still receives no operator config.
+	HasSeedSecret  bool
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
@@ -224,6 +232,27 @@ func goMemLimitEnv(svc serviceSpec) string {
 		return ""
 	}
 	return fmt.Sprintf("        - name: GOMEMLIMIT\n          value: \"%s\"\n", svc.GoMemLimit)
+}
+
+// mintReplicas returns how many mint StatefulSet replicas to provision. mint is
+// the sole signing authority and runs as a small StatefulSet (stable per-pod
+// identity); each replica is provisioned its own one-time bootstrap key.
+//
+// TODO(proto): operator.Topology has no mint_nodes field (it is a generated
+// proto type; adding the field is a proto-repo change owned by the lead). Until
+// it lands, the replica count comes from CAVALIER_MINT_REPLICAS (default 1),
+// which MUST stay in lock-step with bootstrap.MintReplicaCount() — that is the
+// canonical source for how many per-mint bootstrap keys are generated. Both
+// read the same env var so the StatefulSet replica count and the number of
+// provisioned seed entries agree. When mint_nodes is added, read it from topo
+// here and from cfg in bootstrap.MintReplicaCount().
+func mintReplicas() int32 {
+	if v := os.Getenv("CAVALIER_MINT_REPLICAS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return int32(n)
+		}
+	}
+	return 1
 }
 
 func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.Topology {
@@ -332,6 +361,13 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	svcs := []serviceSpec{
 		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true,
 			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
+		// mint — the sole signing authority. StatefulSet with stable per-pod
+		// identity + per-pod PVC for its disk persistence (diskstore). Consumes a
+		// one-time bootstrap seed.yaml from a per-ordinal Secret (HasSeedSecret),
+		// not a durable config ConfigMap. Replica count from mintReplicas()
+		// (see TODO(proto): no Topology.mint_nodes field yet).
+		{Name:"mint", Replicas:mintReplicas(), Image:g.imageRef("mint"), HasGRPC:true, HasPVC:true, Storage:"1Gi", ListenPort:8443, IsStatefulSet:true, HasSeedSecret:true,
+			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
 		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443,
 			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
 		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, ExtraEnvVars: eventbusEnvVars(topo.EventbusNodes),
@@ -702,14 +738,34 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 		} else {
 			name = fmt.Sprintf("%s%d", svc.Name, i)
 		}
-		// Kernel uses per-replica value keys (kernel0, kernel1, …) because each
-		// replica has a distinct TLS certificate. All other services share one
-		// config across replicas and use the service name as the value key.
-		configValueKey := svc.Name
-		if svc.IsStatefulSet {
-			configValueKey = fmt.Sprintf("%s%d", svc.Name, i)
-		}
-		cmData := fmt.Sprintf(`apiVersion: v1
+		if svc.HasSeedSecret {
+			// Seed-secret services (mint) receive a one-time bootstrap seed.yaml
+			// via a PER-ORDINAL Secret instead of a durable config ConfigMap.
+			// The Secret carries only this pod's discardable bootstrap private
+			// key (Helm value mint.seed<ordinal>). Guarded with `if` so a missing
+			// value (e.g. seed not provisioned) renders an empty Secret rather
+			// than the literal "<no value>". Mounted once, consumed, discarded.
+			secData := fmt.Sprintf(`{{- if (index .Values "%s" (printf "seed%d") | default "") }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s-seed
+  namespace: {{ .Values.global.namespace }}
+type: Opaque
+stringData:
+  seed.yaml: {{ index .Values "%s" (printf "seed%d") | quote }}
+{{- end }}
+`, svc.Name, i, name, svc.Name, i)
+			charts.Files[fmt.Sprintf("templates/%s/seed-secret-%d.yaml", svc.Name, i)] = []byte(secData)
+		} else {
+			// Kernel uses per-replica value keys (kernel0, kernel1, …) because each
+			// replica has a distinct TLS certificate. All other services share one
+			// config across replicas and use the service name as the value key.
+			configValueKey := svc.Name
+			if svc.IsStatefulSet {
+				configValueKey = fmt.Sprintf("%s%d", svc.Name, i)
+			}
+			cmData := fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
   name: %s-config
@@ -717,7 +773,8 @@ metadata:
 data:
   config.yaml: {{ .Values.%s.config | quote }}
 `, name, configValueKey)
-		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
+			charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
+		}
 
 		// PVC if needed — StatefulSet manages PVCs via volumeClaimTemplates.
 		if svc.HasPVC && !svc.IsStatefulSet {
@@ -820,6 +877,13 @@ spec:
 		if listenPort == 0 {
 			listenPort = 5000
 		}
+		hazelcastHeadless := ""
+		if svc.HasHazelcast {
+			hazelcastHeadless = `  - name: hazelcast
+    port: 5001
+    targetPort: 5001
+`
+		}
 		charts.Files[fmt.Sprintf("templates/%s/service-headless.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -833,10 +897,7 @@ spec:
   - name: grpc
     port: %d
     targetPort: %d
-  - name: hazelcast
-    port: 5001
-    targetPort: 5001
-`, svc.Name, svc.Name, listenPort, listenPort))
+%s`, svc.Name, svc.Name, listenPort, listenPort, hazelcastHeadless))
 	}
 
 	listenPort := svc.ListenPort
@@ -880,30 +941,60 @@ spec:
         {{- include "cavalier.labels" . | nindent 8 }}
     spec:
       {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
-      initContainers:
+`, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
+		if svc.HasSeedSecret {
+			// Seed-secret services (mint): the init container selects this pod's
+			// per-ordinal bootstrap Secret (mint-<ordinal>-seed) by hostname and
+			// stages it as /bootstrap/seed.yaml. mint reads it once, installs its
+			// real key, then deletes the bootstrap key (the Secret is one-time).
+			ssBuf.WriteString(`      initContainers:
+      - name: seed-select
+        image: busybox:1.36
+        command: ["sh", "-c", "ORDINAL=${HOSTNAME##*-}; cp /seeds/seed-${ORDINAL}/seed.yaml /bootstrap/seed.yaml"]
+        volumeMounts:
+        - name: bootstrap
+          mountPath: /bootstrap
+`)
+			for i := range int(svc.Replicas) {
+				ssBuf.WriteString(fmt.Sprintf(`        - name: seed-%d
+          mountPath: /seeds/seed-%d
+`, i, i))
+			}
+		} else {
+			ssBuf.WriteString(`      initContainers:
       - name: config-select
         image: busybox:1.36
         command: ["sh", "-c", "ORDINAL=${HOSTNAME##*-}; cp /configs/config-${ORDINAL}/config.yaml /bootstrap/bootstrap.yaml"]
         volumeMounts:
         - name: bootstrap
           mountPath: /bootstrap
-`, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
-		// Mount each per-ordinal ConfigMap in the init container.
-		for i := range int(svc.Replicas) {
-			name := fmt.Sprintf("%s-%d", svc.Name, i)
-			ssBuf.WriteString(fmt.Sprintf(`        - name: config-%d
+`)
+			// Mount each per-ordinal ConfigMap in the init container.
+			for i := range int(svc.Replicas) {
+				ssBuf.WriteString(fmt.Sprintf(`        - name: config-%d
           mountPath: /configs/config-%d
 `, i, i))
-			_ = name
+			}
+		}
+		// Seed-secret services consume a one-time bootstrap seed.yaml (SEED_CONFIG)
+		// rather than a durable bootstrap.yaml (BOOTSTRAP_CONFIG).
+		// TODO(mint): confirm mint reads the seed via SEED_CONFIG (vs a fixed
+		// path or a different env var name) — mint-side consumption is out of
+		// scope for the operator and unverifiable from here.
+		bootstrapEnv := `        - name: BOOTSTRAP_CONFIG
+          value: /bootstrap/bootstrap.yaml
+`
+		if svc.HasSeedSecret {
+			bootstrapEnv = `        - name: SEED_CONFIG
+          value: /bootstrap/seed.yaml
+`
 		}
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
         image: {{ .Values.%s.image }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         env:
-        - name: BOOTSTRAP_CONFIG
-          value: /bootstrap/bootstrap.yaml
-        - name: NODE_NAME
+%s        - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
@@ -911,7 +1002,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, svc.Name, svc.Name))
+`, svc.Name, svc.Name, bootstrapEnv))
 		if jo := javaOptsEnv(svc); jo != "" {
 			ssBuf.WriteString(jo)
 		}
@@ -924,12 +1015,16 @@ spec:
 		ssBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d
           name: grpc
-        - containerPort: 5001
+`, listenPort))
+		if svc.HasHazelcast {
+			ssBuf.WriteString(`        - containerPort: 5001
           name: hazelcast
-        volumeMounts:
+`)
+		}
+		ssBuf.WriteString(`        volumeMounts:
         - name: bootstrap
           mountPath: /bootstrap
-`, listenPort))
+`)
 		if svc.HasPVC {
 			ssBuf.WriteString(`        - name: data
           mountPath: /app/data
@@ -951,12 +1046,26 @@ spec:
       - name: bootstrap
         emptyDir: {}
 `)
-		for i := range int(svc.Replicas) {
-			name := fmt.Sprintf("%s-%d", svc.Name, i)
-			ssBuf.WriteString(fmt.Sprintf(`      - name: config-%d
+		if svc.HasSeedSecret {
+			// Each ordinal mounts its own one-time bootstrap Secret. optional:true
+			// so a pod whose seed wasn't provisioned (or after the Secret is
+			// deleted post-consumption) still schedules.
+			for i := range int(svc.Replicas) {
+				name := fmt.Sprintf("%s-%d", svc.Name, i)
+				ssBuf.WriteString(fmt.Sprintf(`      - name: seed-%d
+        secret:
+          secretName: %s-seed
+          optional: true
+`, i, name))
+			}
+		} else {
+			for i := range int(svc.Replicas) {
+				name := fmt.Sprintf("%s-%d", svc.Name, i)
+				ssBuf.WriteString(fmt.Sprintf(`      - name: config-%d
         configMap:
           name: %s-config
 `, i, name))
+			}
 		}
 		if svc.HasPVC {
 			ssBuf.WriteString(fmt.Sprintf(`  volumeClaimTemplates:

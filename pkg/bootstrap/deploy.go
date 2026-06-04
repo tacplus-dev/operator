@@ -40,7 +40,16 @@ type DeployConfigs struct {
 	// SeedYAML is the one-time mint bootstrap-secrets file (seed.yaml). It holds
 	// the PRIVATE half of each per-mint bootstrap key and is delivered to mint,
 	// consumed once, then DISCARDED — never persisted to durable config/state.
+	// This combined form (all instances) is what static mode writes to disk and
+	// bakes into the bundle.
 	SeedYAML []byte
+	// SeedYAMLByInstance is the per-mint-instance form of the seed: one
+	// single-entry seed.yaml document keyed by instance label ("mint-0", …).
+	// Dynamic-mode delivery mounts one document per StatefulSet pod via a
+	// per-ordinal Secret, so each replica receives only its own discardable
+	// bootstrap private key. Same lifecycle as SeedYAML (consumed once, then
+	// discarded; never durable).
+	SeedYAMLByInstance map[string][]byte
 	// KernelBootstrapTrust holds the PUBLIC halves of the mint bootstrap keys,
 	// tagged bootstrap / short-TTL, destined for kernel's JWKS / verifying-key
 	// trust seed. See BuildKernelBootstrapTrustEntries for the proto-injection
@@ -164,6 +173,13 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	seedYAML, err := SeedToYAML(seed)
 	if err != nil {
 		return nil, fmt.Errorf("serializing seed: %w", err)
+	}
+	// Per-instance seed documents for dynamic-mode per-pod Secret delivery (the
+	// mint StatefulSet mounts one document per ordinal). Same private halves as
+	// the combined seedYAML, split one-entry-per-instance.
+	seedYAMLByInstance, err := PerInstanceSeedYAML(bootstrapKeys, bootstrapExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("building per-instance seed: %w", err)
 	}
 	kernelBootstrapTrust, err := BuildKernelBootstrapTrustEntries(bootstrapKeys, bootstrapExpiry)
 	if err != nil {
@@ -455,6 +471,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		GatewayOpts:          gatewayOpts,
 		Cfg:                  cfg,
 		SeedYAML:             seedYAML,
+		SeedYAMLByInstance:   seedYAMLByInstance,
 		KernelBootstrapTrust: kernelBootstrapTrust,
 	}, nil
 }
@@ -521,18 +538,19 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		}
 	}
 
-	// Mint bootstrap secret (dynamic-mode delivery). Surface seed.yaml under a
-	// DISTINCT key ("mint-seed") so it is NEVER folded into a durable service
-	// ConfigMap. The dynamic reconciler should deliver this to mint as a
-	// one-time Secret (mounted, consumed once, discarded), not a ConfigMap.
+	// Mint bootstrap secret (dynamic-mode delivery). Surface the seed under the
+	// "mint" service key, but as PER-ORDINAL entries (seed0, seed1, …) under a
+	// distinct sub-key so each StatefulSet pod gets only its own discardable
+	// bootstrap private key. The helm generator's mint Secret template consumes
+	// {{ .Values.mint.seed<ordinal> }} into a per-ordinal Secret, mounted once
+	// then discarded — NEVER folded into a durable ConfigMap. The combined
+	// `seed` (all instances) is also surfaced for parity with the bundle and as
+	// a fallback; per-ordinal entries are the canonical dynamic-mode delivery.
 	//
-	// TODO(mint-chart): there is no mint StatefulSet / Secret template in the
-	// Helm chart yet, so this value is currently inert in dynamic mode — the
-	// chart must add a mint workload + a one-time bootstrap Secret consuming
-	// {{ .Values.mint-seed.seed }} before this takes effect. Static-mode
-	// deploys already emit seed.yaml to disk (BuildConfigOutput / bundle).
-	if len(dc.SeedYAML) > 0 {
-		vals["mint-seed"] = map[string]interface{}{"seed": string(dc.SeedYAML)}
+	// Static-mode deploys additionally emit the combined seed.yaml to disk
+	// (BuildConfigOutput / bundle); that path is unchanged.
+	if mintVals := MintSeedHelmValues(dc.SeedYAML, dc.SeedYAMLByInstance); mintVals != nil {
+		vals["mint"] = mintVals
 	}
 
 	return vals
