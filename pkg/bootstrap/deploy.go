@@ -17,26 +17,35 @@ import (
 
 // DeployConfigs holds all generated per-service configurations.
 type DeployConfigs struct {
-	CACertPEM          []byte
-	BootstrapNames     []string
-	BootstrapYAMLs     [][]byte
-	SentinelConfig     []byte
-	GatewayConfig      []byte
-	EventbusConfig     []byte
-	OauthConfig        []byte
-	MsggatewayConfig   []byte
-	OpaConfig        []byte
-	AnthropicConfig    []byte
-	OpenAIConfig       []byte
-	SamlConfig         []byte
-	StratumConfig      []byte
-	ArgusConfig        []byte
-	TimedbConfig       []byte
-	GraphdbConfig      []byte
-	ColddbConfig       []byte
-	LetsencryptConfig  []byte
-	GatewayOpts        GatewayOptions
-	Cfg                *protoOperator.Config
+	CACertPEM         []byte
+	BootstrapNames    []string
+	BootstrapYAMLs    [][]byte
+	SentinelConfig    []byte
+	GatewayConfig     []byte
+	EventbusConfig    []byte
+	OauthConfig       []byte
+	MsggatewayConfig  []byte
+	OpaConfig         []byte
+	AnthropicConfig   []byte
+	OpenAIConfig      []byte
+	SamlConfig        []byte
+	StratumConfig     []byte
+	ArgusConfig       []byte
+	TimedbConfig      []byte
+	GraphdbConfig     []byte
+	ColddbConfig      []byte
+	LetsencryptConfig []byte
+	GatewayOpts       GatewayOptions
+	Cfg               *protoOperator.Config
+	// SeedYAML is the one-time mint bootstrap-secrets file (seed.yaml). It holds
+	// the PRIVATE half of each per-mint bootstrap key and is delivered to mint,
+	// consumed once, then DISCARDED — never persisted to durable config/state.
+	SeedYAML []byte
+	// KernelBootstrapTrust holds the PUBLIC halves of the mint bootstrap keys,
+	// tagged bootstrap / short-TTL, destined for kernel's JWKS / verifying-key
+	// trust seed. See BuildKernelBootstrapTrustEntries for the proto-injection
+	// gap (kernel.Config has no JWKS-seed field yet).
+	KernelBootstrapTrust []KernelBootstrapTrustEntry
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -136,6 +145,36 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	for i := range nodeCount {
 		kernelEndpoints[i] = &protoHost.Host{Host: fmt.Sprintf("kernel-%d.kernel", i), Port: int32(protoKernel.DefaultListenerPort)}
 	}
+
+	// Mint bootstrap-key model (INTEGRATION_PLAN.md §A0): provision a per-mint
+	// bootstrap keypair, emit the private halves into seed.yaml, and the public
+	// halves into kernel's trust seed (short-TTL / bootstrap-tagged). Generated
+	// in BOTH deploy modes — static CLI bakes seed.yaml into the bundle, the
+	// dynamic reconciler emits it at provision time. Only mint is provisioned a
+	// bootstrap key; other services obtain their keys from mint at runtime.
+	bootstrapKeys, err := GenerateMintBootstrapKeys(MintReplicaCount())
+	if err != nil {
+		return nil, fmt.Errorf("generating mint bootstrap keys: %w", err)
+	}
+	bootstrapExpiry := BootstrapKeyExpiry()
+	seed, err := BuildSeed(bootstrapKeys, bootstrapExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("building seed: %w", err)
+	}
+	seedYAML, err := SeedToYAML(seed)
+	if err != nil {
+		return nil, fmt.Errorf("serializing seed: %w", err)
+	}
+	kernelBootstrapTrust, err := BuildKernelBootstrapTrustEntries(bootstrapKeys, bootstrapExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("building kernel bootstrap trust entries: %w", err)
+	}
+	// TODO(proto): inject kernelBootstrapTrust into kernelConfig once kernel.Config
+	// gains a JWKS / verifying-key seed field. Today kernel.Config has no field to
+	// carry a bootstrap JWK with a TTL (only cluster_ca / trusted_cas /
+	// cluster_cred_pairs), so the public bootstrap keys are surfaced via
+	// DeployConfigs.KernelBootstrapTrust (and the bundle) for kernel to ingest
+	// rather than baked into the kernel Config proto. See operator_mint_seed.md.
 
 	buildSvc := func(name string, extra func(map[string]any)) ([]byte, error) {
 		key, err := LoadPrivateKey(filepath.Join(cfgDir, "creds", name))
@@ -395,26 +434,28 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	}
 
 	return &DeployConfigs{
-		CACertPEM:         caCertPEM,
-		BootstrapNames:    bootstrapNames,
-		BootstrapYAMLs:    bootstrapYAMLs,
-		SentinelConfig:    sentinelConfigYAML,
-		GatewayConfig:     gatewayConfigYAML,
-		EventbusConfig:    eventbusConfigYAML,
-		OauthConfig:       oauthConfigYAML,
-		MsggatewayConfig:  msggatewayConfigYAML,
-		OpaConfig:       opaConfigYAML,
-		AnthropicConfig:   anthropicConfigYAML,
-		OpenAIConfig:      openaiConfigYAML,
-		SamlConfig:        samlConfigYAML,
-		StratumConfig:     stratumConfigYAML,
-		ArgusConfig:       argusConfigYAML,
-		TimedbConfig:      timedbConfigYAML,
-		GraphdbConfig:     graphdbConfigYAML,
-		ColddbConfig:      colddbConfigYAML,
-		LetsencryptConfig: letsencryptConfigYAML,
-		GatewayOpts:       gatewayOpts,
-		Cfg:               cfg,
+		CACertPEM:            caCertPEM,
+		BootstrapNames:       bootstrapNames,
+		BootstrapYAMLs:       bootstrapYAMLs,
+		SentinelConfig:       sentinelConfigYAML,
+		GatewayConfig:        gatewayConfigYAML,
+		EventbusConfig:       eventbusConfigYAML,
+		OauthConfig:          oauthConfigYAML,
+		MsggatewayConfig:     msggatewayConfigYAML,
+		OpaConfig:            opaConfigYAML,
+		AnthropicConfig:      anthropicConfigYAML,
+		OpenAIConfig:         openaiConfigYAML,
+		SamlConfig:           samlConfigYAML,
+		StratumConfig:        stratumConfigYAML,
+		ArgusConfig:          argusConfigYAML,
+		TimedbConfig:         timedbConfigYAML,
+		GraphdbConfig:        graphdbConfigYAML,
+		ColddbConfig:         colddbConfigYAML,
+		LetsencryptConfig:    letsencryptConfigYAML,
+		GatewayOpts:          gatewayOpts,
+		Cfg:                  cfg,
+		SeedYAML:             seedYAML,
+		KernelBootstrapTrust: kernelBootstrapTrust,
 	}, nil
 }
 
@@ -478,6 +519,20 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
 		}
+	}
+
+	// Mint bootstrap secret (dynamic-mode delivery). Surface seed.yaml under a
+	// DISTINCT key ("mint-seed") so it is NEVER folded into a durable service
+	// ConfigMap. The dynamic reconciler should deliver this to mint as a
+	// one-time Secret (mounted, consumed once, discarded), not a ConfigMap.
+	//
+	// TODO(mint-chart): there is no mint StatefulSet / Secret template in the
+	// Helm chart yet, so this value is currently inert in dynamic mode — the
+	// chart must add a mint workload + a one-time bootstrap Secret consuming
+	// {{ .Values.mint-seed.seed }} before this takes effect. Static-mode
+	// deploys already emit seed.yaml to disk (BuildConfigOutput / bundle).
+	if len(dc.SeedYAML) > 0 {
+		vals["mint-seed"] = map[string]interface{}{"seed": string(dc.SeedYAML)}
 	}
 
 	return vals

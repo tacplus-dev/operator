@@ -31,6 +31,12 @@ type Bundle struct {
 	// Services maps service name to its fully-rendered YAML config.
 	// Kernel nodes are keyed as "bootstrap0", "bootstrap1", etc.
 	Services map[string]string `yaml:"services"`
+	// Seed is the one-time mint bootstrap-secrets file (seed.yaml content): the
+	// PRIVATE half of each per-mint bootstrap key. It is delivered to mint,
+	// consumed once, then DISCARDED — NEVER persisted to durable config/state.
+	// Kept as a distinct top-level field (not under Crypto, which is durable PKI)
+	// to reinforce its one-time lifecycle.
+	Seed string `yaml:"seed,omitempty"`
 }
 
 // BuildBundle runs BuildDeployConfigs for cfgDir and returns a Bundle
@@ -91,6 +97,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		Crypto:   string(cryptoYAML),
 		CACert:   string(dc.CACertPEM),
 		Services: svcs,
+		Seed:     string(dc.SeedYAML),
 	}, nil
 }
 
@@ -152,8 +159,9 @@ func BundleServiceValues(b *Bundle) map[string]interface{} {
 
 // ExpandBundle writes the bundle contents into a directory layout:
 //
-//	<dir>/operator.yaml     — settings
-//	<dir>/crypto.yaml       — PKI material
+//	<dir>/operator.yaml     — settings (durable)
+//	<dir>/crypto.yaml       — PKI material (durable)
+//	<dir>/seed.yaml         — one-time mint bootstrap secrets (consume once, discard)
 //	<dir>/ca.pem            — root CA certificate
 //	<dir>/configs/<svc>.yaml — rendered service configs
 func ExpandBundle(b *Bundle, dir string) error {
@@ -166,6 +174,14 @@ func ExpandBundle(b *Bundle, dir string) error {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "crypto.yaml"), []byte(b.Crypto), 0600); err != nil {
 		return fmt.Errorf("writing crypto.yaml: %w", err)
+	}
+	// seed.yaml is the one-time bootstrap-secrets file (private mint bootstrap
+	// keys). mode 0o600; consumed once by mint then discarded. Only written when
+	// present so older bundles without a seed expand cleanly.
+	if b.Seed != "" {
+		if err := os.WriteFile(filepath.Join(dir, "seed.yaml"), []byte(b.Seed), 0600); err != nil {
+			return fmt.Errorf("writing seed.yaml: %w", err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), []byte(b.CACert), 0644); err != nil {
 		return fmt.Errorf("writing ca.pem: %w", err)
@@ -203,6 +219,12 @@ func PackBundle(dir string) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
+	// seed.yaml is optional — only present when mint bootstrap keys were
+	// provisioned. A missing seed.yaml is not an error.
+	var seed string
+	if data, err := os.ReadFile(filepath.Join(dir, "seed.yaml")); err == nil {
+		seed = string(data)
+	}
 
 	configsDir := filepath.Join(dir, "configs")
 	entries, err := os.ReadDir(configsDir)
@@ -229,6 +251,7 @@ func PackBundle(dir string) (*Bundle, error) {
 		Crypto:   crypto,
 		CACert:   caCert,
 		Services: svcs,
+		Seed:     seed,
 	}, nil
 }
 
