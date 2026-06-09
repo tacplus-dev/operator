@@ -7,12 +7,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/host"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/key"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/x509"
-	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/gateway"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/kernel"
-	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/sentinel"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
+	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
+	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
+	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
 )
 
 var (

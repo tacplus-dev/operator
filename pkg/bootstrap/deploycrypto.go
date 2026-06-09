@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/libs/x509"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/x509"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
+	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/key"
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 const (

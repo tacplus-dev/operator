@@ -3,6 +3,7 @@ module gitlab.com/secondstarcavalier/schematic/platform/services/operator
 go 1.25.5
 
 require (
+	github.com/dsnet/compress v0.0.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jinzhu/copier v0.4.0

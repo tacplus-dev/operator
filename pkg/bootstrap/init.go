@@ -14,7 +14,7 @@ import (
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // --- run (default) ---

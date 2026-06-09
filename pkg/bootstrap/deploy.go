@@ -8,11 +8,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/host"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/opalib"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/libs/x509"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/kernel"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/tacplus/types/services/operator"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/opalib"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
+	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // DeployConfigs holds all generated per-service configurations.
