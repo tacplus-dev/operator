@@ -5,11 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/filesystem"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/opalib"
 )
+
+const stablePolicyCreated int64 = 0
 
 // OPAPolicyDir returns the conventional OPA policy directory within a config dir.
 func OPAPolicyDir(cfgDir string) string {
@@ -41,7 +42,7 @@ func BuildOpaPolicy(entryPoint string, bundle *protoFilesystem.Directory) *proto
 	return &protoOpa.OpaPolicy{
 		EntryPoint: entryPoint,
 		Bundle:     bundle,
-		Created:    time.Now().Unix(),
+		Created:    stablePolicyCreated,
 	}
 }
 
@@ -102,7 +103,7 @@ func LoadOPAPolicy(regoDir, entryPoint string) (*protoOpa.OpaPolicy, error) {
 	return &protoOpa.OpaPolicy{
 		EntryPoint: entryPoint,
 		Bundle:     bundle,
-		Created:    time.Now().Unix(),
+		Created:    stablePolicyCreated,
 	}, nil
 }
 
