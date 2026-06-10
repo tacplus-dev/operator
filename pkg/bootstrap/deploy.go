@@ -150,8 +150,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		if err != nil {
 			return nil, fmt.Errorf("building %s config: %w", name, err)
 		}
-		fields["listen_address"] = map[string]any{"host": "0.0.0.0", "port": int64(8443)}
-		fields["logger"] = defaultLoggerFields()
+		applyServiceDefaults(fields)
 		if extra != nil {
 			extra(fields)
 		}

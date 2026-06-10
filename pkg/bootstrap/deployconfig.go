@@ -30,6 +30,14 @@ func defaultLoggerFields() map[string]any {
 	}
 }
 
+func applyServiceDefaults(fields map[string]any) {
+	fields["listen_address"] = map[string]any{"host": "0.0.0.0", "port": int64(8443)}
+	fields["max_request_size"] = int64(10 * 1024 * 1024)
+	fields["request_timeout_seconds"] = int64(30)
+	fields["shutdown_timeout_seconds"] = int64(30)
+	fields["logger"] = defaultLoggerFields()
+}
+
 func normalizeBase64URLNoPad(encoded string) (string, error) {
 	decoders := []*base64.Encoding{
 		base64.RawURLEncoding,
