@@ -9,34 +9,35 @@ import (
 	"gopkg.in/yaml.v3"
 
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/opalib"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
+	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // DeployConfigs holds all generated per-service configurations.
 type DeployConfigs struct {
-	CACertPEM         []byte
-	BootstrapNames    []string
-	BootstrapYAMLs    [][]byte
-	SentinelConfig    []byte
-	GatewayConfig     []byte
-	EventbusConfig    []byte
-	OauthConfig       []byte
-	MsggatewayConfig  []byte
-	OpaConfig         []byte
-	AnthropicConfig   []byte
-	OpenAIConfig      []byte
-	SamlConfig        []byte
-	StratumConfig     []byte
-	ArgusConfig       []byte
-	TimedbConfig      []byte
-	GraphdbConfig     []byte
-	ColddbConfig      []byte
-	LetsencryptConfig []byte
-	GatewayOpts       GatewayOptions
-	Cfg               *protoOperator.Config
+	CACertPEM                []byte
+	BootstrapNames           []string
+	BootstrapYAMLs           [][]byte
+	SentinelConfig           []byte
+	GatewayConfig            []byte
+	EventbusConfig           []byte
+	OauthConfig              []byte
+	MsggatewayConfig         []byte
+	OpaConfig                []byte
+	AnthropicConfig          []byte
+	OpenAIConfig             []byte
+	SamlConfig               []byte
+	StratumConfig            []byte
+	ArgusConfig              []byte
+	TimedbConfig             []byte
+	GraphdbConfig            []byte
+	ColddbConfig             []byte
+	LetsencryptConfig        []byte
+	LetsencryptServiceConfig []byte
+	GatewayOpts              GatewayOptions
+	Cfg                      *protoOperator.Config
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -113,6 +114,9 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	}
 
 	if kernelConfig.Configs != nil && kernelConfig.Configs.EventbusConfig != nil {
+		if kernelConfig.Configs.EventbusConfig.NodeRole == protoEventbus.KafkaNodeRole_KAFKA_ROLE_UNDEFINED {
+			kernelConfig.Configs.EventbusConfig.NodeRole = protoEventbus.KafkaNodeRole_KAFKA_ROLE_COMBINED
+		}
 		if kernelConfig.Configs.EventbusConfig.ClusterSeed == "" {
 			kernelConfig.Configs.EventbusConfig.ClusterSeed = "cluster"
 		}
@@ -147,60 +151,18 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 			return nil, fmt.Errorf("building %s config: %w", name, err)
 		}
 		fields["listen_address"] = map[string]any{"host": "0.0.0.0", "port": int64(8443)}
-		fields["logger"] = map[string]any{"level": "LEVEL_DEBUG", "output_paths": []string{"stdout"}}
+		fields["logger"] = defaultLoggerFields()
 		if extra != nil {
 			extra(fields)
 		}
 		return yaml.Marshal(fields)
 	}
 
-	authRules := func(m map[string]any) {
-		m["max_request_size"] = int64(10 * 1024 * 1024)
-		m["request_timeout_seconds"] = int64(30)
-		m["shutdown_timeout_seconds"] = int64(30)
-		m["auth_rules"] = map[string]any{
-			"1": map[string]any{"action": "ACTION_PERMIT", "issuer": Issuer(cfg), "method": "*"},
-		}
-	}
-
-	// mergeServiceYAML returns a buildSvc-extra lambda that overlays the
-	// contents of services/<file> (if present) onto the generated config
-	// fields. Used to plumb per-service settings (e.g. anthropic
-	// federation_rule_id) authored in the deploy bundle through to the
-	// service's runtime Config. Missing or unparseable file is silently
-	// ignored — these yaml overlays are optional.
-	mergeServiceYAML := func(file string) func(map[string]any) {
-		return func(m map[string]any) {
-			data, err := os.ReadFile(filepath.Join(cfgDir, "services", file))
-			if err != nil {
-				return
-			}
-			var src map[string]any
-			if err := yaml.Unmarshal(data, &src); err != nil {
-				return
-			}
-			for k, v := range src {
-				m[k] = v
-			}
-		}
-	}
-
-	sentinelConfigYAML, err := buildSvc("sentinel", func(m map[string]any) {
-		m["max_request_size"] = int64(10 * 1024 * 1024)
-		m["request_timeout_seconds"] = int64(30)
-		m["shutdown_timeout_seconds"] = int64(30)
-		m["auth_rules"] = map[string]any{
-			"1": map[string]any{"action": "ACTION_PERMIT", "issuer": Issuer(cfg), "method": "*"},
-		}
-	})
+	sentinelConfigYAML, err := buildSvc("sentinel", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	gatewayKey, err := LoadPrivateKey(filepath.Join(cfgDir, "creds", "gateway"))
-	if err != nil {
-		return nil, fmt.Errorf("loading gateway key: %w", err)
-	}
 	gatewayOpts := LoadGatewayOptions(filepath.Join(cfgDir, "services"))
 	if cfg.GetTls() != nil && cfg.GetTls().GetLetsencrypt() {
 		gatewayOpts.LetsEncrypt = true
@@ -208,7 +170,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if cfg.Fqdn != "" {
 		gatewayOpts.Hostnames = []string{cfg.Fqdn}
 	}
-	gatewayConfigYAML, err := BuildGatewayServiceConfig(gatewayKey, trustedCAs, gatewayOpts, cfg.SpiffePrefix, kernelEndpoints...)
+	gatewayConfigYAML, err := buildSvc("gateway", nil)
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
 	}
@@ -219,9 +181,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		return nil, err
 	}
 
-	eventbusConfigYAML, err := buildSvc("eventbus", func(m map[string]any) {
-		m["cluster_seed"] = "cluster"
-	})
+	eventbusConfigYAML, err := buildSvc("eventbus", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -234,75 +194,12 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		}
 	}
 
-	opaKey, err := LoadPrivateKey(filepath.Join(cfgDir, "creds", "opa"))
+	opaConfigYAML, err := buildSvc("opa", nil)
 	if err != nil {
-		return nil, fmt.Errorf("loading opa key: %w", err)
-	}
-	opaFields, err := BuildBackendFields(opaKey, trustedCAs, kernelEndpoints, cfg.SpiffePrefix)
-	if err != nil {
-		return nil, fmt.Errorf("building opa config: %w", err)
-	}
-	opaFields["listen_address"] = map[string]any{"host": "0.0.0.0", "port": int64(8443)}
-	opaFields["logger"] = map[string]any{"level": "LEVEL_DEBUG", "output_paths": []string{"stdout"}}
-
-	btDir := BackendTokenPolicyDir(cfgDir)
-	if _, err := os.Stat(btDir); err == nil {
-		btPolicy, err := LoadOPAPolicy(btDir, "data.backend_token.eval")
-		if err != nil {
-			return nil, fmt.Errorf("loading OPA backend token policy: %w", err)
-		}
-		btYAML, err := protoOpa.OpaPolicyToYAML(btPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling backend token policy: %w", err)
-		}
-		var btMap map[string]any
-		if err := yaml.Unmarshal(btYAML, &btMap); err != nil {
-			return nil, fmt.Errorf("converting backend token policy: %w", err)
-		}
-		opaFields["backend_token_policy"] = btMap
+		return nil, err
 	}
 
-	// Load OPA entitlements policy from services/opa/ if present.
-	epDir := OPAPolicyDir(cfgDir)
-	if _, err := os.Stat(epDir); err == nil {
-		epPolicy, err := LoadOPAPolicy(epDir, "data.entitlements.eval")
-		if err != nil {
-			return nil, fmt.Errorf("loading OPA entitlements policy: %w", err)
-		}
-		epYAML, err := protoOpa.OpaPolicyToYAML(epPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling entitlements policy: %w", err)
-		}
-		var epMap map[string]any
-		if err := yaml.Unmarshal(epYAML, &epMap); err != nil {
-			return nil, fmt.Errorf("converting entitlements policy: %w", err)
-		}
-		opaFields["entitlements_policy"] = epMap
-	}
-
-	// Load OPA proxy policy from services/opa-proxy-policy/ if present.
-	ppDir := ProxyPolicyDir(cfgDir)
-	if _, err := os.Stat(ppDir); err == nil {
-		ppPolicy, err := LoadOPAPolicy(ppDir, "data.proxypolicy.eval")
-		if err != nil {
-			return nil, fmt.Errorf("loading OPA proxy policy: %w", err)
-		}
-		ppYAML, err := protoOpa.OpaPolicyToYAML(ppPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling proxy policy: %w", err)
-		}
-		var ppMap map[string]any
-		if err := yaml.Unmarshal(ppYAML, &ppMap); err != nil {
-			return nil, fmt.Errorf("converting proxy policy: %w", err)
-		}
-		opaFields["proxy_policy"] = ppMap
-	}
-	opaConfigYAML, err := yaml.Marshal(opaFields)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling opa config: %w", err)
-	}
-
-	anthropicConfigYAML, err := buildSvc("anthropic", mergeServiceYAML("anthropic.yaml"))
+	anthropicConfigYAML, err := buildSvc("anthropic", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +217,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		}
 	}
 
-	stratumConfigYAML, err := buildSvc("stratum", authRules)
+	stratumConfigYAML, err := buildSvc("stratum", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -330,34 +227,39 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		return nil, err
 	}
 
-	timedbConfigYAML, err := buildSvc("timedb", authRules)
+	timedbConfigYAML, err := buildSvc("timedb", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	graphdbConfigYAML, err := buildSvc("graphdb", authRules)
+	graphdbConfigYAML, err := buildSvc("graphdb", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var colddbConfigYAML []byte
 	if t.ColddbNodes > 0 {
-		colddbConfigYAML, err = buildSvc("colddb", authRules)
+		colddbConfigYAML, err = buildSvc("colddb", nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	var letsencryptConfigYAML []byte
+	var letsencryptServiceConfigYAML []byte
 	if cfg.GetTls().GetLetsencrypt() {
-		letsencryptConfigYAML, err = buildSvc("letsencrypt", func(m map[string]any) {
-			m["fqdn"] = cfg.Fqdn
-			m["hostnames"] = []string{cfg.Fqdn}
-			m["http_listener"] = map[string]any{"host": "0.0.0.0", "port": int64(8080)}
-			m["renewal_check_interval_seconds"] = int64(3600)
-		})
+		letsencryptConfigYAML, err = buildSvc("letsencrypt", nil)
 		if err != nil {
 			return nil, err
+		}
+		letsencryptServiceConfigYAML, err = yaml.Marshal(map[string]any{
+			"fqdn":                           cfg.Fqdn,
+			"hostnames":                      []string{cfg.Fqdn},
+			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(8080)},
+			"renewal_check_interval_seconds": int64(3600),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshaling letsencrypt service config: %w", err)
 		}
 	}
 
@@ -395,26 +297,27 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	}
 
 	return &DeployConfigs{
-		CACertPEM:            caCertPEM,
-		BootstrapNames:       bootstrapNames,
-		BootstrapYAMLs:       bootstrapYAMLs,
-		SentinelConfig:       sentinelConfigYAML,
-		GatewayConfig:        gatewayConfigYAML,
-		EventbusConfig:       eventbusConfigYAML,
-		OauthConfig:          oauthConfigYAML,
-		MsggatewayConfig:     msggatewayConfigYAML,
-		OpaConfig:            opaConfigYAML,
-		AnthropicConfig:      anthropicConfigYAML,
-		OpenAIConfig:         openaiConfigYAML,
-		SamlConfig:           samlConfigYAML,
-		StratumConfig:        stratumConfigYAML,
-		ArgusConfig:          argusConfigYAML,
-		TimedbConfig:         timedbConfigYAML,
-		GraphdbConfig:        graphdbConfigYAML,
-		ColddbConfig:         colddbConfigYAML,
-		LetsencryptConfig:    letsencryptConfigYAML,
-		GatewayOpts:          gatewayOpts,
-		Cfg:                  cfg,
+		CACertPEM:                caCertPEM,
+		BootstrapNames:           bootstrapNames,
+		BootstrapYAMLs:           bootstrapYAMLs,
+		SentinelConfig:           sentinelConfigYAML,
+		GatewayConfig:            gatewayConfigYAML,
+		EventbusConfig:           eventbusConfigYAML,
+		OauthConfig:              oauthConfigYAML,
+		MsggatewayConfig:         msggatewayConfigYAML,
+		OpaConfig:                opaConfigYAML,
+		AnthropicConfig:          anthropicConfigYAML,
+		OpenAIConfig:             openaiConfigYAML,
+		SamlConfig:               samlConfigYAML,
+		StratumConfig:            stratumConfigYAML,
+		ArgusConfig:              argusConfigYAML,
+		TimedbConfig:             timedbConfigYAML,
+		GraphdbConfig:            graphdbConfigYAML,
+		ColddbConfig:             colddbConfigYAML,
+		LetsencryptConfig:        letsencryptConfigYAML,
+		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
+		GatewayOpts:              gatewayOpts,
+		Cfg:                      cfg,
 	}, nil
 }
 
@@ -478,6 +381,14 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
 		}
+	}
+	if len(dc.LetsencryptServiceConfig) > 0 {
+		le, ok := vals["letsencrypt"].(map[string]interface{})
+		if !ok {
+			le = map[string]interface{}{}
+			vals["letsencrypt"] = le
+		}
+		le["serviceConfig"] = string(dc.LetsencryptServiceConfig)
 	}
 
 	return vals

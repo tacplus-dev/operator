@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,46 @@ var (
 	gatewayPort    = int32(protoGateway.DefaultTcpListenerPort)
 )
 
+func defaultLoggerFields() map[string]any {
+	return map[string]any{
+		"format":       "json",
+		"level":        "debug",
+		"output_paths": []string{"stdout"},
+	}
+}
+
+func normalizeBase64URLNoPad(encoded string) (string, error) {
+	decoders := []*base64.Encoding{
+		base64.RawURLEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.StdEncoding,
+	}
+	for _, decoder := range decoders {
+		if decoded, err := decoder.DecodeString(encoded); err == nil {
+			return base64.RawURLEncoding.EncodeToString(decoded), nil
+		}
+	}
+	return "", fmt.Errorf("invalid base64 payload")
+}
+
+func normalizeBase64Field(m map[string]any) error {
+	raw, ok := m["base64"]
+	if !ok {
+		return nil
+	}
+	encoded, ok := raw.(string)
+	if !ok || encoded == "" {
+		return nil
+	}
+	normalized, err := normalizeBase64URLNoPad(encoded)
+	if err != nil {
+		return err
+	}
+	m["base64"] = normalized
+	return nil
+}
+
 // BuildBackendFields returns the backend connection YAML map fields
 // (endpoints, private_key, trusted_cas, spiffe_prefix) for services
 // connecting to kernel. `spiffePrefix` is the cluster's SPIFFE trust-domain
@@ -36,6 +77,9 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 	if err := yaml.Unmarshal(privateKeyYAML, &privateKeyMap); err != nil {
 		return nil, fmt.Errorf("unmarshaling private_key YAML: %w", err)
 	}
+	if err := normalizeBase64Field(privateKeyMap); err != nil {
+		return nil, fmt.Errorf("normalizing private_key.base64: %w", err)
+	}
 
 	var trustedCAsSlice []any
 	for _, ca := range trustedCAs {
@@ -46,6 +90,9 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 		var caMap map[string]any
 		if err := yaml.Unmarshal(caYAML, &caMap); err != nil {
 			return nil, fmt.Errorf("unmarshaling trusted CA YAML: %w", err)
+		}
+		if err := normalizeBase64Field(caMap); err != nil {
+			return nil, fmt.Errorf("normalizing trusted CA base64: %w", err)
 		}
 		trustedCAsSlice = append(trustedCAsSlice, caMap)
 	}
@@ -71,10 +118,10 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 
 // GatewayOptions holds user-configurable gateway settings from services/gateway.yaml.
 type GatewayOptions struct {
-	EnableTCP    bool
-	EnableQUIC   bool
-	LetsEncrypt  bool
-	Hostnames    []string
+	EnableTCP   bool
+	EnableQUIC  bool
+	LetsEncrypt bool
+	Hostnames   []string
 }
 
 // BuildGatewayServiceConfig generates the serviceconfig YAML for gateway.
@@ -95,10 +142,7 @@ func BuildGatewayServiceConfig(
 	config["max_request_size"] = int64(10 * 1024 * 1024)
 	config["request_timeout_seconds"] = int64(30)
 	config["shutdown_timeout_seconds"] = int64(30)
-	config["logger"] = map[string]any{
-		"level":        "LEVEL_DEBUG",
-		"output_paths": []string{"stdout"},
-	}
+	config["logger"] = defaultLoggerFields()
 	config["enable_tcp"] = opts.EnableTCP
 	config["enable_quic"] = opts.EnableQUIC
 	if opts.LetsEncrypt {
@@ -112,7 +156,6 @@ func BuildGatewayServiceConfig(
 
 	return yaml.Marshal(config)
 }
-
 
 // LoadGatewayOptions reads the gateway service config and returns options.
 // Returns defaults (both enabled) if the file doesn't exist or is empty.

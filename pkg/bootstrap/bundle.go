@@ -28,9 +28,12 @@ type Bundle struct {
 	Crypto string `yaml:"crypto"`
 	// CACert is the PEM-encoded root CA certificate.
 	CACert string `yaml:"ca_cert"`
-	// Services maps service name to its fully-rendered YAML config.
+	// Services maps service name to its fully-rendered bootstrap YAML config.
 	// Kernel nodes are keyed as "bootstrap0", "bootstrap1", etc.
 	Services map[string]string `yaml:"services"`
+	// ServiceConfigs maps service name to an optional runtime/service-local
+	// YAML config that must be mounted separately from BOOTSTRAP_CONFIG.
+	ServiceConfigs map[string]string `yaml:"service_configs,omitempty"`
 }
 
 // BuildBundle runs BuildDeployConfigs for cfgDir and returns a Bundle
@@ -84,13 +87,19 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		}
 	}
 
+	serviceConfigs := make(map[string]string)
+	if len(dc.LetsencryptServiceConfig) > 0 {
+		serviceConfigs["letsencrypt"] = string(dc.LetsencryptServiceConfig)
+	}
+
 	return &Bundle{
-		Version:  Version,
-		BuiltAt:  time.Now().Unix(),
-		Config:   string(settingsYAML),
-		Crypto:   string(cryptoYAML),
-		CACert:   string(dc.CACertPEM),
-		Services: svcs,
+		Version:        Version,
+		BuiltAt:        time.Now().Unix(),
+		Config:         string(settingsYAML),
+		Crypto:         string(cryptoYAML),
+		CACert:         string(dc.CACertPEM),
+		Services:       svcs,
+		ServiceConfigs: serviceConfigs,
 	}, nil
 }
 
@@ -147,6 +156,14 @@ func BundleServiceValues(b *Bundle) map[string]interface{} {
 	for name, cfg := range b.Services {
 		vals[name] = map[string]interface{}{"config": cfg}
 	}
+	for name, cfg := range b.ServiceConfigs {
+		entry, ok := vals[name].(map[string]interface{})
+		if !ok {
+			entry = map[string]interface{}{}
+			vals[name] = entry
+		}
+		entry["serviceConfig"] = cfg
+	}
 	return vals
 }
 
@@ -175,6 +192,12 @@ func ExpandBundle(b *Bundle, dir string) error {
 		path := filepath.Join(dir, "configs", name+".yaml")
 		if err := os.WriteFile(path, []byte(cfg), 0600); err != nil {
 			return fmt.Errorf("writing configs/%s.yaml: %w", name, err)
+		}
+	}
+	for name, cfg := range b.ServiceConfigs {
+		path := filepath.Join(dir, "configs", name+"-service.yaml")
+		if err := os.WriteFile(path, []byte(cfg), 0600); err != nil {
+			return fmt.Errorf("writing configs/%s-service.yaml: %w", name, err)
 		}
 	}
 	return nil
@@ -210,6 +233,7 @@ func PackBundle(dir string) (*Bundle, error) {
 		return nil, fmt.Errorf("reading configs dir: %w", err)
 	}
 	svcs := make(map[string]string)
+	serviceConfigs := make(map[string]string)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
@@ -219,16 +243,21 @@ func PackBundle(dir string) (*Bundle, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading configs/%s: %w", e.Name(), err)
 		}
+		if strings.HasSuffix(name, "-service") {
+			serviceConfigs[strings.TrimSuffix(name, "-service")] = string(data)
+			continue
+		}
 		svcs[name] = string(data)
 	}
 
 	return &Bundle{
-		Version:  Version,
-		BuiltAt:  time.Now().Unix(),
-		Config:   config,
-		Crypto:   crypto,
-		CACert:   caCert,
-		Services: svcs,
+		Version:        Version,
+		BuiltAt:        time.Now().Unix(),
+		Config:         config,
+		Crypto:         crypto,
+		CACert:         caCert,
+		Services:       svcs,
+		ServiceConfigs: serviceConfigs,
 	}, nil
 }
 

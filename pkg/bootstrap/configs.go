@@ -77,6 +77,11 @@ func BuildConfigOutput(cfgDir string) error {
 			return fmt.Errorf("writing %s.yaml: %w", svc, err)
 		}
 	}
+	if len(dc.LetsencryptServiceConfig) > 0 {
+		if err := os.WriteFile(filepath.Join(configsDir, "letsencrypt-service.yaml"), dc.LetsencryptServiceConfig, 0600); err != nil {
+			return fmt.Errorf("writing letsencrypt-service.yaml: %w", err)
+		}
+	}
 
 	return nil
 }

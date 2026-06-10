@@ -12,6 +12,10 @@ spec:
       app: cavalier-operator
   template:
     metadata:
+      annotations:
+        checksum/config-settings: {{ .Values.config.settings | sha256sum | quote }}
+        checksum/config-crypto: {{ .Values.config.crypto | sha256sum | quote }}
+        checksum/config-bundle: {{ .Values.config.bundle | sha256sum | quote }}
       labels:
         app: cavalier-operator
         {{- include "cavalier-operator.labels" . | nindent 8 }}

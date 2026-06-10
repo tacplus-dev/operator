@@ -124,56 +124,57 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 // --- internal types ---
 
 type serviceSpec struct {
-	Name           string
-	Replicas       int32
-	Image          string
-	HasGRPC        bool
-	HasPVC         bool
-	Storage        string
-	Port           int32
-	WebAppHostPath string
-	HasHazelcast   bool
-	ListenPort     int32  // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
+	Name             string
+	Replicas         int32
+	Image            string
+	HasGRPC          bool
+	HasPVC           bool
+	Storage          string
+	Port             int32
+	WebAppHostPath   string
+	HasServiceConfig bool
+	HasHazelcast     bool
+	ListenPort       int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
-	NodeModes      []string
+	NodeModes []string
 	// ExtraEnvVars, if non-empty, is appended to the env block in the Deployment.
 	// Each entry should be a fully-formed YAML env var block (name + value lines).
-	ExtraEnvVars   string
+	ExtraEnvVars string
 	// AcmePort, if non-zero, adds a containerPort and a LoadBalancer Service for
 	// ACME HTTP-01 challenge traffic. The service maps external port 80 to AcmePort
 	// inside the container (allows non-root binding on port >1024).
-	AcmePort       int32
+	AcmePort int32
 	// ExtraPort, if non-zero, adds an additional named port to the ClusterIP Service.
 	// ExtraPortName is the port name used in the Service spec (required when ExtraPort != 0).
-	ExtraPort      int32
-	ExtraPortName  string
+	ExtraPort     int32
+	ExtraPortName string
 	// SkipProbes, if true, omits the readiness and liveness probes from the Deployment.
 	// Use for services that do not expose a health-check endpoint.
-	SkipProbes     bool
+	SkipProbes bool
 	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
-	IsStatefulSet  bool
+	IsStatefulSet bool
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
 	// over-committing the node. Sizing each service properly is the
 	// developer/operator's responsibility regardless of language.
-	MemRequest     string
-	MemLimit       string
-	CpuRequest     string
-	CpuLimit       string
+	MemRequest string
+	MemLimit   string
+	CpuRequest string
+	CpuLimit   string
 	// JavaHeap, if non-empty, emits `JDK_JAVA_OPTIONS=-Xmx<heap> -Xms<heap>`.
 	// Tells the JVM what max heap to use. Independent of MemLimit; should be
 	// set lower than MemLimit to leave room for non-heap memory (metaspace,
 	// direct buffers, code cache, threads).
-	JavaHeap       string
+	JavaHeap string
 	// GoMemLimit, if non-empty, sets the GOMEMLIMIT env var (Go 1.19+) — Go's
 	// soft memory target. Set lower than MemLimit (commonly ~80%) so Go's GC
 	// triggers before the kernel OOM-killer fires. Same role as JavaHeap for
 	// the Go runtime.
-	GoMemLimit     string
+	GoMemLimit string
 }
 
 // resourcesBlock returns the YAML `resources:` block for a container, indented
@@ -244,9 +245,9 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		SentinelNodes:   t.SentinelNodes,
 		EventbusNodes:   t.EventbusNodes,
 		GatewayNodes:    t.GatewayNodes,
-		OauthNodes:  t.OauthNodes,
+		OauthNodes:      t.OauthNodes,
 		MsggatewayNodes: t.MsggatewayNodes,
-		OpaNodes:      t.OpaNodes,
+		OpaNodes:        t.OpaNodes,
 		TimedbNodes:     t.TimedbNodes,
 		GraphdbNodes:    t.GraphdbNodes,
 		ColddbNodes:     t.ColddbNodes,
@@ -278,16 +279,6 @@ func graphdbNodeModes(n int32) []string {
 		}
 	}
 	return modes
-}
-
-// eventbusEnvVars returns extra env vars for EventBus pods.
-// Sets PROTO_CONFIG_NODE_ROLE so the embedded Kafka broker initializes.
-func eventbusEnvVars(n int32) string {
-	// All nodes are combined (broker + controller) for simplicity.
-	// Production would split broker/controller roles.
-	return `        - name: PROTO_CONFIG_NODE_ROLE
-          value: KAFKA_ROLE_COMBINED
-`
 }
 
 func (g *Generator) imageRef(svc string) string {
@@ -330,47 +321,48 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
-		{Name:"kernel", Replicas:topo.KernelNodes, Image:g.imageRef("kernel"), HasGRPC:true, HasPVC:true, Storage:"2Gi", HasHazelcast:true, ListenPort:5000, IsStatefulSet:true,
-			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
-		{Name:"sentinel", Replicas:topo.SentinelNodes, Image:g.imageRef("sentinel"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
-		{Name:"eventbus", Replicas:topo.EventbusNodes, Image:g.imageRef("eventbus"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, ExtraEnvVars: eventbusEnvVars(topo.EventbusNodes),
-			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
-		{Name:"gateway", Replicas:topo.GatewayNodes, Image:g.imageRef("gateway"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"100m"},
-		{Name:"opa", Replicas:topo.OpaNodes, Image:g.imageRef("opa"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
-		{Name:"argus", Replicas:topo.ArgusNodes, Image:g.imageRef("argus"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"},
-		{Name:"timedb", Replicas:topo.TimedbNodes, Image:g.imageRefProj("timedb", "timedb"), HasGRPC:true, HasPVC:true, Storage:"2Gi", ListenPort:8443, NodeModes:timedbNodeModes(topo.TimedbNodes),
-			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m"},
-		{Name:"graphdb", Replicas:topo.GraphdbNodes, Image:g.imageRef("graphdb"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
-			MemRequest:"256Mi", MemLimit:"1Gi", CpuRequest:"100m", GoMemLimit:"800MiB"},
-		{Name:"stratum", Replicas:topo.StratumNodes, Image:g.imageRef("stratum"), HasGRPC:true, HasPVC:true, Storage:"5Gi", ListenPort:8443,
-			MemRequest:"1Gi", MemLimit:"2Gi", CpuRequest:"250m", JavaHeap:"1g"},
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+		{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
+		{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+		{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"},
+		{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
+		{Name: "argus", Replicas: topo.ArgusNodes, Image: g.imageRef("argus"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
+		{Name: "timedb", Replicas: topo.TimedbNodes, Image: g.imageRefProj("timedb", "timedb"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443, NodeModes: timedbNodeModes(topo.TimedbNodes),
+			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m"},
+		{Name: "graphdb", Replicas: topo.GraphdbNodes, Image: g.imageRef("graphdb"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
+			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m", GoMemLimit: "800MiB"},
+		{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443,
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
-	svcs = append(svcs, serviceSpec{Name:"oauth", Replicas:topo.OauthNodes, Image:g.imageRef("oauth"), HasGRPC:true, ListenPort:8443,
-		MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"})
+	svcs = append(svcs, serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef("oauth"), HasGRPC: true, ListenPort: 8443,
+		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"})
 
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
-		svcs = append(svcs, serviceSpec{Name:"saml", Replicas:topo.SamlNodes, Image:g.imageRef("saml"), HasGRPC:true, ListenPort:8443,
-			MemRequest:"128Mi", MemLimit:"512Mi", CpuRequest:"50m"})
+		svcs = append(svcs, serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef("saml"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"})
 	}
 
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
 	if cfg.GetTls().GetLetsencrypt() {
 		svcs = append(svcs, serviceSpec{
-			Name:       "letsencrypt",
-			Replicas:   1,
-			Image:      g.imageRef("letsencrypt"),
-			HasGRPC:    true,
-			ListenPort: 8443,
-			AcmePort:   8080,
-			SkipProbes: true,
-			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
+			Name:             "letsencrypt",
+			Replicas:         1,
+			Image:            g.imageRef("letsencrypt"),
+			HasGRPC:          true,
+			ListenPort:       8443,
+			AcmePort:         8080,
+			SkipProbes:       true,
+			ExtraEnvVars:     "        - name: SERVICE_CONFIG\n          value: /data/service.yaml\n",
+			HasServiceConfig: true,
 		})
 	}
 
@@ -379,20 +371,20 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		svcs = append(svcs, serviceSpec{Name: "anthropic", Replicas: topo.GatewayNodes, Image: g.imageRefProj("anthropic-proxy", "anthropic"), HasGRPC: true, ListenPort: 8443})
 	}
 	if opt.GetOpenai() {
-		svcs = append(svcs, serviceSpec{Name:"openai", Replicas:topo.GatewayNodes, Image:g.imageRefProj("openai-proxy", "openai"), HasGRPC:true, ListenPort:8443})
+		svcs = append(svcs, serviceSpec{Name: "openai", Replicas: topo.GatewayNodes, Image: g.imageRefProj("openai-proxy", "openai"), HasGRPC: true, ListenPort: 8443})
 	}
 
 	// MCP server — one replica when enabled.
 	if opt.GetMcp() {
-		svcs = append(svcs, serviceSpec{Name:"mcp", Replicas:1, Image:g.imageRef("mcp"), HasGRPC:true, ListenPort:8443})
+		svcs = append(svcs, serviceSpec{Name: "mcp", Replicas: 1, Image: g.imageRef("mcp"), HasGRPC: true, ListenPort: 8443})
 	}
 
 	// On hold — only deployed when explicitly set above zero.
 	if topo.ColddbNodes > 0 {
-		svcs = append(svcs, serviceSpec{Name:"colddb", Replicas:topo.ColddbNodes, Image:g.imageRef("colddb"), HasGRPC:true, HasPVC:true, Storage:"10Gi", ListenPort:8443})
+		svcs = append(svcs, serviceSpec{Name: "colddb", Replicas: topo.ColddbNodes, Image: g.imageRef("colddb"), HasGRPC: true, HasPVC: true, Storage: "10Gi", ListenPort: 8443})
 	}
 	if topo.MsggatewayNodes > 0 {
-		svcs = append(svcs, serviceSpec{Name:"msggateway", Replicas:topo.MsggatewayNodes, Image:g.imageRef("msggateway"), HasGRPC:true, ListenPort:8443})
+		svcs = append(svcs, serviceSpec{Name: "msggateway", Replicas: topo.MsggatewayNodes, Image: g.imageRef("msggateway"), HasGRPC: true, ListenPort: 8443})
 	}
 
 	// Filter zero-replica services.
@@ -717,6 +709,9 @@ metadata:
 data:
   config.yaml: {{ .Values.%s.config | quote }}
 `, name, configValueKey)
+		if svc.HasServiceConfig {
+			cmData += fmt.Sprintf("  service.yaml: {{ .Values.%s.serviceConfig | quote }}\n", configValueKey)
+		}
 		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
 
 		// PVC if needed — StatefulSet manages PVCs via volumeClaimTemplates.
@@ -882,9 +877,16 @@ spec:
       labels:
         app: %s
         {{- include "cavalier.labels" . | nindent 8 }}
-    spec:
-      {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
 `, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
+		ssBuf.WriteString(`      annotations:
+`)
+		for i := range int(svc.Replicas) {
+			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ .Values.%s%d.config | sha256sum | quote }}
+`, i, svc.Name, i))
+		}
+		ssBuf.WriteString(`    spec:
+      {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
+`)
 		ssBuf.WriteString(`      initContainers:
       - name: config-select
         image: busybox:1.36
@@ -1001,7 +1003,14 @@ spec:
       labels:
         app: %s
         {{- include "cavalier.labels" . | nindent 8 }}
-    spec:
+      annotations:
+        checksum/config: {{ .Values.%s.config | sha256sum | quote }}
+`, name, name, name, svc.Name))
+			if svc.HasServiceConfig {
+				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ .Values.%s.serviceConfig | sha256sum | quote }}
+`, svc.Name))
+			}
+			deployBuf.WriteString(fmt.Sprintf(`    spec:
       {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
       hostname: %s
       containers:
@@ -1019,7 +1028,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, name, name, name, name, name, svc.Name))
+`, name, name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}
@@ -1070,6 +1079,12 @@ spec:
           mountPath: /data/bootstrap.yaml
           subPath: config.yaml
 `)
+			if svc.HasServiceConfig {
+				deployBuf.WriteString(`        - name: config
+          mountPath: /data/service.yaml
+          subPath: service.yaml
+`)
+			}
 			if svc.HasPVC {
 				deployBuf.WriteString(`        - name: data
           mountPath: /app/data
