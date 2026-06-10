@@ -24,8 +24,8 @@ var (
 
 func defaultLoggerFields() map[string]any {
 	return map[string]any{
-		"format":       "json",
-		"level":        "debug",
+		"format":       "format-json",
+		"level":        "level-debug",
 		"output_paths": []string{"stdout"},
 	}
 }
