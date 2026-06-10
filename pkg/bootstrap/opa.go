@@ -10,7 +10,8 @@ import (
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/opalib"
 )
 
-const stablePolicyCreated int64 = 0
+// Minimum accepted by the generated OPA policy validators.
+const stablePolicyCreated int64 = 1735689600
 
 // OPAPolicyDir returns the conventional OPA policy directory within a config dir.
 func OPAPolicyDir(cfgDir string) string {

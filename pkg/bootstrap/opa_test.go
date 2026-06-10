@@ -26,6 +26,9 @@ func TestLoadOPAPolicyIsStable(t *testing.T) {
 	if first.GetCreated() != stablePolicyCreated {
 		t.Fatalf("created = %d, want %d", first.GetCreated(), stablePolicyCreated)
 	}
+	if first.GetCreated() < 1735689600 {
+		t.Fatalf("created = %d, want at least 1735689600", first.GetCreated())
+	}
 	if !proto.Equal(first, second) {
 		t.Fatalf("loading the same OPA policy twice produced different protos:\nfirst=%v\nsecond=%v", first, second)
 	}
