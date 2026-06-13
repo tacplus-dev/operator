@@ -17,9 +17,17 @@ rules:
       - deployments
       - statefulsets
       - services
+      - serviceaccounts
       - configmaps
       - secrets
       - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Manage cluster-scoped RBAC emitted by the Cavalier service chart.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - clusterroles
+      - clusterrolebindings
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # Leader election.

@@ -152,6 +152,10 @@ type serviceSpec struct {
 	// SkipProbes, if true, omits the readiness and liveness probes from the Deployment.
 	// Use for services that do not expose a health-check endpoint.
 	SkipProbes bool
+	// ServiceAccountName, if non-empty, creates and uses a dedicated service account.
+	ServiceAccountName string
+	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
+	TokenReviewRBAC bool
 	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
@@ -175,6 +179,13 @@ type serviceSpec struct {
 	// triggers before the kernel OOM-killer fires. Same role as JavaHeap for
 	// the Go runtime.
 	GoMemLimit string
+}
+
+func serviceAccountLine(svc serviceSpec) string {
+	if svc.ServiceAccountName == "" {
+		return ""
+	}
+	return fmt.Sprintf("      serviceAccountName: %s", svc.ServiceAccountName)
 }
 
 // resourcesBlock returns the YAML `resources:` block for a container, indented
@@ -322,7 +333,11 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//     count + replication settings.
 	svcs := []serviceSpec{
 		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+			ServiceAccountName: "kernel", MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
+			ServiceAccountName: "kmaker", TokenReviewRBAC: true,
+			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
+			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
 		{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
 		{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
@@ -685,6 +700,45 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 		ns = "cavalier"
 	}
 
+	if svc.ServiceAccountName != "" {
+		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+`, svc.ServiceAccountName))
+	}
+	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" {
+		charts.Files[fmt.Sprintf("templates/%s/tokenreview-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: %s-tokenreview
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: %s-tokenreview
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: %s-tokenreview
+subjects:
+- kind: ServiceAccount
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+`, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
+	}
+
 	// ConfigMap
 	for i := range int(svc.Replicas) {
 		// StatefulSet pods use hyphenated names (kernel-0); Deployments use kernel0.
@@ -887,6 +941,9 @@ spec:
 		ssBuf.WriteString(`    spec:
       {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
 `)
+		if svc.ServiceAccountName != "" {
+			ssBuf.WriteString(fmt.Sprintf("      serviceAccountName: %s\n", svc.ServiceAccountName))
+		}
 		ssBuf.WriteString(`      initContainers:
       - name: config-select
         image: busybox:1.36
@@ -1012,6 +1069,7 @@ spec:
 			}
 			deployBuf.WriteString(fmt.Sprintf(`    spec:
       {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
+%s
       hostname: %s
       containers:
       - name: %s
@@ -1028,7 +1086,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, name, name, svc.Name))
+`, serviceAccountLine(svc), name, name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}

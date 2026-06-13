@@ -12,6 +12,7 @@ import (
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
+	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -34,6 +35,7 @@ type DeployConfigs struct {
 	TimedbConfig             []byte
 	GraphdbConfig            []byte
 	ColddbConfig             []byte
+	KmakerConfig             []byte
 	LetsencryptConfig        []byte
 	LetsencryptServiceConfig []byte
 	GatewayOpts              GatewayOptions
@@ -262,6 +264,18 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		}
 	}
 
+	var kmakerConfigYAML []byte
+	if t.KmakerNodes > 0 {
+		kmakerConfig, err := BuildKmakerConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("building kmaker config: %w", err)
+		}
+		kmakerConfigYAML, err = protoKmaker.ConfigToYAML(kmakerConfig)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling kmaker config: %w", err)
+		}
+	}
+
 	// Per-node kernel bootstrap configs.
 	members := make([]*protoHost.Host, nodeCount)
 	for i := range nodeCount {
@@ -313,11 +327,75 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		TimedbConfig:             timedbConfigYAML,
 		GraphdbConfig:            graphdbConfigYAML,
 		ColddbConfig:             colddbConfigYAML,
+		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
 	}, nil
+}
+
+func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("operator config is nil")
+	}
+	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
+		return nil, fmt.Errorf("pki.cluster_ca with private key is required")
+	}
+
+	kmakerConfig := &protoKmaker.Config{}
+	if cfg.GetKmaker() != nil {
+		kmakerConfig = proto.Clone(cfg.GetKmaker()).(*protoKmaker.Config)
+	}
+
+	if kmakerConfig.ClusterName == "" {
+		kmakerConfig.ClusterName = cfg.Fqdn
+		if kmakerConfig.ClusterName == "" {
+			kmakerConfig.ClusterName = "cavalier"
+		}
+	}
+	if kmakerConfig.Listener == nil {
+		kmakerConfig.Listener = &protoHost.Host{}
+	}
+	if kmakerConfig.Listener.Host == "" {
+		kmakerConfig.Listener.Host = "0.0.0.0"
+	}
+	if kmakerConfig.Listener.Port == 0 {
+		kmakerConfig.Listener.Port = 8443
+	}
+	if len(kmakerConfig.ClusterCa) == 0 {
+		if cfg.Pki.RootCa != nil {
+			kmakerConfig.ClusterCa = append(kmakerConfig.ClusterCa, cfg.Pki.RootCa.Chain...)
+		}
+		kmakerConfig.ClusterCa = append(kmakerConfig.ClusterCa, cfg.Pki.ClusterCa.Chain...)
+	}
+	if kmakerConfig.SigningCa == nil {
+		kmakerConfig.SigningCa = cfg.Pki.ClusterCa
+	}
+	if kmakerConfig.SpiffePrefix == "" {
+		kmakerConfig.SpiffePrefix = cfg.SpiffePrefix
+		if kmakerConfig.SpiffePrefix == "" {
+			kmakerConfig.SpiffePrefix = "local/dev"
+		}
+	}
+	if kmakerConfig.TokenAudience == "" {
+		kmakerConfig.TokenAudience = "kmaker"
+	}
+	if len(kmakerConfig.KernelServiceAccounts) == 0 {
+		ns := cfg.Namespace
+		if ns == "" {
+			ns = "cavalier"
+		}
+		kmakerConfig.KernelServiceAccounts = []*protoKmaker.KernelServiceAccount{{
+			Namespace: ns,
+			Name:      "kernel",
+		}}
+	}
+	if kmakerConfig.KernelCertLifetimeSeconds <= 0 {
+		kmakerConfig.KernelCertLifetimeSeconds = 86400
+	}
+
+	return kmakerConfig, nil
 }
 
 // FilterTopology zeros out node counts for services not in the allowed set.
@@ -344,6 +422,7 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("argus", &t.ArgusNodes)
 	check("stratum", &t.StratumNodes)
 	check("saml", &t.SamlNodes)
+	check("kmaker", &t.KmakerNodes)
 }
 
 // ServiceConfigValues converts a DeployConfigs into a Helm values map.
@@ -375,6 +454,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"timedb", dc.TimedbConfig},
 		{"graphdb", dc.GraphdbConfig},
 		{"colddb", dc.ColddbConfig},
+		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {
 		if len(pair.data) > 0 {

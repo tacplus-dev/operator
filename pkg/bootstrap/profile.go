@@ -31,6 +31,7 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.ArgusNodes = 5
 		t.StratumNodes = 5
 		t.SamlNodes = 5
+		t.KmakerNodes = 3
 	case "medium":
 		t.KernelNodes = 5
 		t.SentinelNodes = 3
@@ -42,6 +43,7 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.ArgusNodes = 3
 		t.StratumNodes = 3
 		t.SamlNodes = 3
+		t.KmakerNodes = 3
 	default: // small — matches proto field annotation defaults
 		t.KernelNodes = 3
 		t.SentinelNodes = 3
@@ -53,6 +55,7 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.ArgusNodes = 3
 		t.StratumNodes = 3
 		t.SamlNodes = 3
+		t.KmakerNodes = 1
 	}
 }
 
