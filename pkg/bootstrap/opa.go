@@ -125,29 +125,33 @@ roles := merged if {
 default eval := {"token_entitlements": {}}
 
 eval := {"token_entitlements": {
-	"sentinel":     ["SENTINEL_RPCS_ANY"],
-	"gateway":      ["GATEWAY_RPCS_ANY"],
-	"mcp":          ["MCP_RPCS_ANY"],
-	"eventbus":     ["EVENTBUS_RPCS_ANY"],
-	"oauth":        ["OAUTH_RPCS_ANY"],
-	"anthropic":    ["ANTHROPIC_RPCS_ANY"],
-	"github":       ["GITHUB_RPCS_ANY"],
-	"gitlab":       ["GITLAB_RPCS_ANY"],
-	"openai":       ["OPENAI_RPCS_ANY"],
-	"argus":        ["ARGUS_RPCS_ANY"],
-	"saml":         ["SAML_RPCS_ANY"],
-	"config":       ["CONFIG_RPCS_ANY"],
-	"claudesensor": ["CLAUDESENSOR_RPCS_ANY"],
-	"scmsensor":    ["SCMSENSOR_RPCS_ANY"],
-	"llmsensor":    ["LLMSENSOR_RPCS_ANY"],
+	"grants": [
+		"SENTINEL_RPCS_ANY",
+		"GATEWAY_RPCS_ANY",
+		"MCP_RPCS_ANY",
+		"EVENTBUS_RPCS_ANY",
+		"OAUTH_RPCS_ANY",
+		"ANTHROPIC_RPCS_ANY",
+		"GITHUB_RPCS_ANY",
+		"GITLAB_RPCS_ANY",
+		"OPENAI_RPCS_ANY",
+		"ARGUS_RPCS_ANY",
+		"SAML_RPCS_ANY",
+		"CONFIG_RPCS_ANY",
+		"CLAUDESENSOR_RPCS_ANY",
+		"SCMSENSOR_RPCS_ANY",
+		"LLMSENSOR_RPCS_ANY",
+	],
 }} if {
 	roles["admin"]
 }
 
 eval := {"token_entitlements": {
-	"openai":       ["OPENAI_RPCS_ANY"],
-	"anthropic":    ["ANTHROPIC_RPCS_ANY"],
-	"claudesensor": ["CLAUDESENSOR_RPCS_ANY"],
+	"grants": [
+		"OPENAI_RPCS_ANY",
+		"ANTHROPIC_RPCS_ANY",
+		"CLAUDESENSOR_RPCS_ANY",
+	],
 }} if {
 	roles["user"]
 	not roles["admin"]
