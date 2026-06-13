@@ -12,18 +12,18 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
-	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/jwk"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
+	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/jwk"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoAnthropic "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/anthropic"
-	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/graphdb"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
-	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
-	protoMsggateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/msggateway"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
+	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/graphdb"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
+	protoMsggateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/msggateway"
+	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
 )
 
@@ -148,14 +148,14 @@ func WriteServices(cfgDir string) error {
 	kernelContent := fmt.Sprintf(exampleKernelYAMLTemplate, certB64, keyB64)
 
 	files := map[string]string{
-		"kernel.yaml":    kernelContent,
-		"sentinel.yaml":  exampleSentinelYAML,
-		"gateway.yaml":   exampleGatewayYAML,
-		"eventbus.yaml":  exampleEventbusYAML,
-		"oauth.yaml": exampleOauthYAML,
-		"graphdb.yaml":   exampleGraphdbYAML,
-		"saml.yaml":      exampleSamlYAML,
-		"opa.yaml":  exampleOpaYAML,
+		"kernel.yaml":   kernelContent,
+		"sentinel.yaml": exampleSentinelYAML,
+		"gateway.yaml":  exampleGatewayYAML,
+		"eventbus.yaml": exampleEventbusYAML,
+		"oauth.yaml":    exampleOauthYAML,
+		"graphdb.yaml":  exampleGraphdbYAML,
+		"saml.yaml":     exampleSamlYAML,
+		"opa.yaml":      exampleOpaYAML,
 	}
 
 	for relPath, content := range files {
@@ -496,11 +496,9 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 
 	fqdn := ""
 	issuer := ""
-	spiffePrefix := ""
 	if opCfg != nil {
 		fqdn = opCfg.Fqdn
 		issuer = Issuer(opCfg)
-		spiffePrefix = opCfg.SpiffePrefix
 	}
 
 	// 6. Build kernel Config proto
@@ -510,7 +508,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		Delegates:                  delegates,
 		Fqdn:                       fqdn,
 		Issuer:                     issuer,
-		SpiffePrefix:               spiffePrefix,
 	}
 	protoKernel.ConfigDefaults(kernelConfig)
 	if hasHolder {
