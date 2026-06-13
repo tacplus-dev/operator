@@ -30,6 +30,12 @@ rules:
       - clusterrolebindings
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
+  # Allow the operator to grant kmaker TokenReview access.
+  - apiGroups: ["authentication.k8s.io"]
+    resources:
+      - tokenreviews
+    verbs: ["create"]
+
   # Leader election.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

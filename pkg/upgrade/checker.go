@@ -258,7 +258,7 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 }
 
 // resolveRepo queries a registry repo and returns the best version
-// matching (versionLock, branch) with proto_patch >= the operator's own.
+// matching (versionLock, branch) with proto_patch <= the operator's own.
 // Returns zero value if no matching tags found.
 func (c *Checker) resolveRepo(ctx context.Context, repo string, creds registryCreds) (resolvedVersion, error) {
 	token, err := c.registryToken(ctx, repo, creds)
@@ -391,10 +391,10 @@ func (c *Checker) listTags(ctx context.Context, repo, token string) ([]string, e
 }
 
 // selectLatest returns the best version from tags matching
-// v{versionLock}.{PROTO_PATCH}-{branch}.{LOCAL_PATCH} where PROTO_PATCH >= minProtoPatch.
-// Among matching tags, the highest proto_patch wins; ties are broken by highest local_patch.
+// v{versionLock}.{PROTO_PATCH}-{branch}.{LOCAL_PATCH} where PROTO_PATCH <= maxProtoPatch.
+// Among compatible tags, the highest proto_patch wins; ties are broken by highest local_patch.
 // Returns zero value if no matching tags are found.
-func selectLatest(tags []string, versionLock string, minProtoPatch int, branch string) resolvedVersion {
+func selectLatest(tags []string, versionLock string, maxProtoPatch int, branch string) resolvedVersion {
 	prefix := regexp.QuoteMeta(fmt.Sprintf("v%s.", versionLock))
 	suffix := regexp.QuoteMeta(fmt.Sprintf("-%s.", branch))
 	re := regexp.MustCompile(`^` + prefix + `(\d+)` + suffix + `(\d+)$`)
@@ -406,7 +406,7 @@ func selectLatest(tags []string, versionLock string, minProtoPatch int, branch s
 			continue
 		}
 		pp, err := strconv.Atoi(m[1])
-		if err != nil || pp < minProtoPatch {
+		if err != nil || (maxProtoPatch > 0 && pp > maxProtoPatch) {
 			continue
 		}
 		lp, err := strconv.Atoi(m[2])
