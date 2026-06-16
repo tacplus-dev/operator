@@ -48,3 +48,12 @@
   config-write failures are ignored.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
   ./cmd/cavalier-operator`, and `git diff --check`.
+- Live follow-up: `.200` successfully reached apply, but because the read-only
+  config volume still contained stale certs, each 30-second reconcile
+  regenerated a fresh PKI and produced repeated Helm upgrades.
+- Change: the in-cluster service config provider now caches the regenerated PKI
+  in-process and feeds it back into later deploy config builds, making the
+  rendered service configs stable for the operator pod lifetime. Durable
+  writable Secret persistence remains a post-demo hardening item.
+- Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
+  ./cmd/cavalier-operator`, and `git diff --check`.

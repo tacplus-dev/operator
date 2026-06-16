@@ -47,9 +47,20 @@ type DeployConfigs struct {
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
 // per-service configs, and returns them in a DeployConfigs struct.
 func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
+	return buildDeployConfigs(cfgDir, nil)
+}
+
+func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployConfigs, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if pkiOverride != nil {
+		pki, ok := proto.Clone(pkiOverride).(*protoOperator.PKI)
+		if !ok {
+			return nil, fmt.Errorf("cloning cached pki")
+		}
+		cfg.Pki = pki
 	}
 
 	if cfg.Topology == nil {
@@ -493,13 +504,21 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 // BuildDeployConfigs(cfgDir) on each invocation. If cfgDir is empty or the
 // config directory is not yet fully initialized, it returns nil values (no override).
 func NewServiceConfigProvider(cfgDir string) func() (map[string]interface{}, error) {
+	var pkiCache *protoOperator.PKI
 	return func() (map[string]interface{}, error) {
 		if cfgDir == "" {
 			return nil, nil
 		}
-		dc, err := BuildDeployConfigs(cfgDir)
+		dc, err := buildDeployConfigs(cfgDir, pkiCache)
 		if err != nil {
 			return nil, err
+		}
+		if dc.Cfg != nil && dc.Cfg.Pki != nil {
+			pki, ok := proto.Clone(dc.Cfg.Pki).(*protoOperator.PKI)
+			if !ok {
+				return nil, fmt.Errorf("cloning pki cache")
+			}
+			pkiCache = pki
 		}
 		return ServiceConfigValues(dc), nil
 	}
