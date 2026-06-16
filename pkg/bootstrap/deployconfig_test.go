@@ -1,6 +1,9 @@
 package bootstrap
 
 import (
+	"fmt"
+	"os"
+	"syscall"
 	"testing"
 
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
@@ -112,5 +115,19 @@ func TestKernelTLSNeedsRegenerationAcceptsCanonicalSpiffeSAN(t *testing.T) {
 	}
 	if KernelTLSNeedsRegeneration(cfg, 1, 0, canonical) {
 		t.Fatal("canonical kernel SPIFFE SAN should not require TLS regeneration")
+	}
+}
+
+func TestReadOnlyConfigWriteErrorMatchesWrappedEROFSError(t *testing.T) {
+	err := fmt.Errorf("saving crypto: %w", &os.PathError{
+		Op:   "open",
+		Path: "/config/crypto.yaml",
+		Err:  syscall.EROFS,
+	})
+	if !isReadOnlyConfigWriteError(err) {
+		t.Fatal("wrapped EROFS error should be treated as read-only config write")
+	}
+	if isReadOnlyConfigWriteError(fmt.Errorf("saving crypto: disk full")) {
+		t.Fatal("unrelated save errors must not be treated as read-only config writes")
 	}
 }

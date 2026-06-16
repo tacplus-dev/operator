@@ -1,9 +1,11 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
@@ -83,7 +85,9 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 			return nil, fmt.Errorf("generating crypto material: %w", err)
 		}
 		if err := SaveCrypto(cfgDir, cfg); err != nil {
-			return nil, fmt.Errorf("saving crypto: %w", err)
+			if !isReadOnlyConfigWriteError(err) {
+				return nil, fmt.Errorf("saving crypto: %w", err)
+			}
 		}
 	}
 
@@ -341,6 +345,10 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
 	}, nil
+}
+
+func isReadOnlyConfigWriteError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
 
 func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {

@@ -39,3 +39,12 @@
   certs.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
   ./cmd/cavalier-operator`, and `git diff --check`.
+- Redeploy follow-up: the in-cluster operator hit the rotation path but failed
+  before applying because `/config/crypto.yaml` is mounted read-only.
+- Change: deploy-config building now treats read-only/permission failures from
+  `SaveCrypto` as non-fatal after in-memory crypto regeneration, while other
+  save errors still fail. CLI/init paths keep strict persistence.
+- Regression coverage: wrapped `EROFS` handling is tested so only read-only
+  config-write failures are ignored.
+- Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
+  ./cmd/cavalier-operator`, and `git diff --check`.
