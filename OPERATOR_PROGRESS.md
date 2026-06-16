@@ -9,3 +9,19 @@
 - Entitlement-shape follow-up: default bootstrap OPA policy now emits flat
   `token_entitlements.grants` strings instead of service-keyed maps.
 - Verification passed: `go test ./...`.
+
+## 2026-06-16
+
+- Demo redeploy blocker: new `argus` and `gateway` pods crash-looped at boot
+  because generated service ConfigMaps still emitted the retired
+  `spiffe_prefix: local/dev` field and omitted `spiffe_trust_domain`.
+- Root cause: generated Rust service-manager code now fails closed when
+  `grpcconfig.Config.spiffe_trust_domain` is empty, but operator backend config
+  rendering still used the old field name.
+- Change: backend service config rendering now derives the canonical
+  `spiffe_trust_domain` and `location_path` from the kernel bootstrap config
+  defaults and emits those fields for every service ConfigMap.
+- Regression coverage: `TestBuildBackendFieldsEmitsCanonicalSpiffeConfig`
+  asserts the new fields are emitted and the retired `spiffe_prefix` key is not.
+- Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, and
+  `go build ./cmd/cavalier-operator`.

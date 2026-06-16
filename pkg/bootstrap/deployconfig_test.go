@@ -1,6 +1,10 @@
 package bootstrap
 
-import "testing"
+import (
+	"testing"
+
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+)
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
 	fields := map[string]any{}
@@ -25,5 +29,37 @@ func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
 	}
 	if fields["logger"] == nil {
 		t.Fatal("logger default was not set")
+	}
+}
+
+func TestBuildBackendFieldsEmitsCanonicalSpiffeConfig(t *testing.T) {
+	_, privateKey, err := GenerateCredPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certChain, err := GenerateTLSCertChain()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fields, err := BuildBackendFields(
+		privateKey,
+		certChain.Chain,
+		[]*protoHost.Host{{Host: "kernel-0.kernel", Port: 5000}},
+		"local.dev",
+		"aws/us-east-1/cluster-a",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := fields["spiffe_prefix"]; ok {
+		t.Fatalf("spiffe_prefix should not be emitted: %#v", fields["spiffe_prefix"])
+	}
+	if got := fields["spiffe_trust_domain"]; got != "local.dev" {
+		t.Fatalf("spiffe_trust_domain = %v, want local.dev", got)
+	}
+	if got := fields["location_path"]; got != "aws/us-east-1/cluster-a" {
+		t.Fatalf("location_path = %v, want aws/us-east-1/cluster-a", got)
 	}
 }

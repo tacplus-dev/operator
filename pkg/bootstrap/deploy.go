@@ -87,6 +87,9 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building kernel config: %w", err)
 	}
+	protoKernel.ConfigDefaults(kernelConfig)
+	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
+	spiffeLocationPath := kernelConfig.GetLocationPath()
 
 	if cfg.Pki.ClusterCa != nil {
 		kernelConfig.ClusterCa = cfg.Pki.ClusterCa.Chain
@@ -148,7 +151,7 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 		if err != nil {
 			return nil, fmt.Errorf("loading %s key: %w", name, err)
 		}
-		fields, err := BuildBackendFields(key, trustedCAs, kernelEndpoints, cfg.SpiffePrefix)
+		fields, err := BuildBackendFields(key, trustedCAs, kernelEndpoints, spiffeTrustDomain, spiffeLocationPath)
 		if err != nil {
 			return nil, fmt.Errorf("building %s config: %w", name, err)
 		}

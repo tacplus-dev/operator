@@ -71,12 +71,11 @@ func normalizeBase64Field(m map[string]any) error {
 }
 
 // BuildBackendFields returns the backend connection YAML map fields
-// (endpoints, private_key, trusted_cas, spiffe_prefix) for services
-// connecting to kernel. `spiffePrefix` is the cluster's SPIFFE trust-domain
-// prefix; it MUST match the value seeded into kernel's bootstrap so all
-// workloads agree on the trust domain at boot. Empty values are omitted —
-// the service-side SM defaults to "local/dev" if absent.
-func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host, spiffePrefix string) (map[string]any, error) {
+// (endpoints, private_key, trusted_cas, spiffe_trust_domain, location_path) for
+// services connecting to kernel. The SPIFFE values must match kernel's
+// bootstrap config so services can build canonical SPIFFE identities before
+// fetching runtime config from ServiceConfigState.
+func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host, spiffeTrustDomain, locationPath string) (map[string]any, error) {
 	privateKeyYAML, err := protoKey.KeyToYAML(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling private_key: %w", err)
@@ -118,8 +117,11 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 		"private_key": privateKeyMap,
 		"trusted_cas": trustedCAsSlice,
 	}
-	if spiffePrefix != "" {
-		out["spiffe_prefix"] = spiffePrefix
+	if spiffeTrustDomain != "" {
+		out["spiffe_trust_domain"] = spiffeTrustDomain
+	}
+	if locationPath != "" {
+		out["location_path"] = locationPath
 	}
 	return out, nil
 }
@@ -137,10 +139,11 @@ func BuildGatewayServiceConfig(
 	privateKey *protoKey.Key,
 	trustedCAs []*protoX509.X509Cert,
 	opts GatewayOptions,
-	spiffePrefix string,
+	spiffeTrustDomain string,
+	locationPath string,
 	endpoints ...*protoHost.Host,
 ) ([]byte, error) {
-	config, err := BuildBackendFields(privateKey, trustedCAs, endpoints, spiffePrefix)
+	config, err := BuildBackendFields(privateKey, trustedCAs, endpoints, spiffeTrustDomain, locationPath)
 	if err != nil {
 		return nil, err
 	}
