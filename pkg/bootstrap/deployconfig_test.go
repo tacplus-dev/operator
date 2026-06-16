@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -61,5 +62,55 @@ func TestBuildBackendFieldsEmitsCanonicalSpiffeConfig(t *testing.T) {
 	}
 	if got := fields["location_path"]; got != "aws/us-east-1/cluster-a" {
 		t.Fatalf("location_path = %v, want aws/us-east-1/cluster-a", got)
+	}
+}
+
+func TestKernelServiceSpiffeURIIsCanonical(t *testing.T) {
+	got, err := KernelServiceSpiffeURI("local.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "spiffe://local.dev/system/services/kernel" {
+		t.Fatalf("KernelServiceSpiffeURI = %q, want canonical kernel service URI", got)
+	}
+}
+
+func TestKernelTLSNeedsRegenerationForLegacySpiffeSAN(t *testing.T) {
+	cfg := &protoOperator.Config{Pki: &protoOperator.PKI{}}
+	caKey, caCert, err := GenerateRootCA(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyChain, err := generateSignedCertChain(
+		caKey,
+		caCert,
+		[]string{"kernel-0", "kernel0", "kernel-0.kernel", "kernel"},
+		"spiffe://local/dev/kernel",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Pki.NodeTls = append(cfg.Pki.NodeTls, legacyChain)
+
+	canonical, err := KernelServiceSpiffeURI("local.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !KernelTLSNeedsRegeneration(cfg, 1, 0, canonical) {
+		t.Fatal("legacy kernel SPIFFE SAN should require TLS regeneration")
+	}
+}
+
+func TestKernelTLSNeedsRegenerationAcceptsCanonicalSpiffeSAN(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := KernelServiceSpiffeURI("local.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if KernelTLSNeedsRegeneration(cfg, 1, 0, canonical) {
+		t.Fatal("canonical kernel SPIFFE SAN should not require TLS regeneration")
 	}
 }

@@ -64,9 +64,22 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 
 	nodeCount := int(t.KernelNodes)
 
-	// Generate crypto if the cluster has no TLS certs yet.
-	if cfg.Pki == nil || len(cfg.Pki.NodeTls) == 0 {
-		if err := GenerateCrypto(cfg, nodeCount, 0, cfg.Fqdn); err != nil {
+	kernelConfig, err := BuildKernelConfigProto(cfgDir)
+	if err != nil {
+		return nil, fmt.Errorf("building kernel config: %w", err)
+	}
+	protoKernel.ConfigDefaults(kernelConfig)
+	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
+	spiffeLocationPath := kernelConfig.GetLocationPath()
+	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate or rotate crypto if the cluster has no TLS certs yet, or if
+	// existing kernel certs predate the canonical SPIFFE service URI.
+	if KernelTLSNeedsRegeneration(cfg, nodeCount, 0, kernelSpiffeURI) {
+		if err := GenerateCrypto(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
 			return nil, fmt.Errorf("generating crypto material: %w", err)
 		}
 		if err := SaveCrypto(cfgDir, cfg); err != nil {
@@ -82,14 +95,6 @@ func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
 	// read-only config dir so the write may fail, but the cert is still returned
 	// in DeployConfigs.CACertPEM for callers that need it.
 	_ = os.WriteFile(filepath.Join(cfgDir, "ca.pem"), caCertPEM, 0644)
-
-	kernelConfig, err := BuildKernelConfigProto(cfgDir)
-	if err != nil {
-		return nil, fmt.Errorf("building kernel config: %w", err)
-	}
-	protoKernel.ConfigDefaults(kernelConfig)
-	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
-	spiffeLocationPath := kernelConfig.GetLocationPath()
 
 	if cfg.Pki.ClusterCa != nil {
 		kernelConfig.ClusterCa = cfg.Pki.ClusterCa.Chain

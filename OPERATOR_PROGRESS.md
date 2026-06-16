@@ -25,3 +25,17 @@
   asserts the new fields are emitted and the retired `spiffe_prefix` key is not.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, and
   `go build ./cmd/cavalier-operator`.
+- Follow-up blocker: new `opa` and `stratum` pods started with canonical
+  configs but could not establish startup S2S connections to kernel. Their
+  generated clients now verify kernel by canonical service SPIFFE URI
+  (`spiffe://local.dev/system/services/kernel`), while operator-minted kernel
+  node certs still carried the legacy URI SAN (`spiffe://local/dev/kernel`).
+- Change: kernel node/edge TLS cert generation now uses generated
+  `libs/spiffe` to build the canonical kernel URI SAN, and deploy config
+  building regenerates stored kernel TLS material when existing certs lack that
+  URI.
+- Regression coverage: kernel SPIFFE URI tests assert canonical output,
+  stale legacy SAN detection, and acceptance of freshly generated canonical
+  certs.
+- Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
+  ./cmd/cavalier-operator`, and `git diff --check`.

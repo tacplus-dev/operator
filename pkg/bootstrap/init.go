@@ -11,10 +11,10 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // --- run (default) ---
@@ -278,7 +278,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	if nodeCount == 0 {
 		nodeCount = 1
 	}
-	if err := GenerateCrypto(cfg, nodeCount, 0, initClusterFQDN); err != nil {
+	if err := GenerateCrypto(cfg, nodeCount, 0, initClusterFQDN, "local.dev"); err != nil {
 		return fmt.Errorf("generating cluster PKI: %w", err)
 	}
 
