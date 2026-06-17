@@ -423,6 +423,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		{"opa", func(m map[string]any) error {
 			delete(m, "entitlements_policy")
 			delete(m, "backend_token_policy")
+			delete(m, "proxy_policy")
 
 			cfg := &protoOpa.Config{}
 			if err := unmarshalMapToProto(m, cfg); err != nil {
@@ -457,6 +458,11 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 				}
 				opaBundle := DefaultOPABundle(idpIssuers)
 				cfg.EntitlementsPolicy = BuildOpaPolicy("data.entitlements.eval", opaBundle)
+			}
+			if policy, err := LoadOptionalOPAPolicy(ProxyPolicyDir(cfgDir), "data.proxypolicy.eval"); err != nil {
+				return fmt.Errorf("loading OPA proxy policy: %w", err)
+			} else if policy != nil {
+				cfg.ProxyPolicy = policy
 			}
 
 			holder.OpaConfig = cfg

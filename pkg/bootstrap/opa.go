@@ -108,6 +108,17 @@ func LoadOPAPolicy(regoDir, entryPoint string) (*protoOpa.OpaPolicy, error) {
 	}, nil
 }
 
+// LoadOptionalOPAPolicy loads an OPA policy directory when it exists.
+func LoadOptionalOPAPolicy(regoDir, entryPoint string) (*protoOpa.OpaPolicy, error) {
+	if _, err := os.Stat(regoDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("OPA policy directory %q: %w", regoDir, err)
+	}
+	return LoadOPAPolicy(regoDir, entryPoint)
+}
+
 const defaultMainRego = `# Entry point for the entitlements policy.
 # Combines roles from idp/ (IDP claim-derived) and grants/ (static), then
 # maps the resulting role set to service entitlements in the cavalier token.

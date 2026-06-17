@@ -98,6 +98,19 @@
   config-write failures are ignored.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
   ./cmd/cavalier-operator`, and `git diff --check`.
+
+## 2026-06-17 proxy-policy bootstrap
+
+- Live blocker: real Claude CLI calls reached the local Cavalier proxy but
+  failed external-token minting because OPA had no evaluator for
+  `data.proxypolicy.eval`; only the entitlement policy was loaded.
+- Root cause: operator already had `ProxyPolicyDir()` but
+  `BuildKernelConfigProto` never loaded `services/opa-proxy-policy/` into
+  `opa.Config.proxy_policy`, so the deployed OPA config omitted the bundle.
+- Change: operator now loads an optional `services/opa-proxy-policy/` bundle
+  into `cfg.ProxyPolicy` with entry point `data.proxypolicy.eval`.
+- Regression coverage: optional OPA policy loading now has a focused unit test.
+- Verification passed: `go test ./pkg/bootstrap` and `go test ./...`.
 - Live follow-up: `.200` successfully reached apply, but because the read-only
   config volume still contained stale certs, each 30-second reconcile
   regenerated a fresh PKI and produced repeated Helm upgrades.
