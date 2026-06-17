@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -31,5 +32,14 @@ func TestLoadOPAPolicyIsStable(t *testing.T) {
 	}
 	if !proto.Equal(first, second) {
 		t.Fatalf("loading the same OPA policy twice produced different protos:\nfirst=%v\nsecond=%v", first, second)
+	}
+}
+
+func TestDefaultOPAPolicyUsesGeneratedGrantNames(t *testing.T) {
+	if !strings.Contains(defaultMainRego, `"ANTHROPIC_ANY"`) {
+		t.Fatalf("defaultMainRego missing ANTHROPIC_ANY")
+	}
+	if strings.Contains(defaultMainRego, "_RPCS_ANY") {
+		t.Fatalf("defaultMainRego contains legacy *_RPCS_ANY grants")
 	}
 }

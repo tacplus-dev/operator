@@ -126,21 +126,14 @@ default eval := {"token_entitlements": {}}
 
 eval := {"token_entitlements": {
 	"grants": [
-		"SENTINEL_RPCS_ANY",
-		"GATEWAY_RPCS_ANY",
-		"MCP_RPCS_ANY",
-		"EVENTBUS_RPCS_ANY",
-		"OAUTH_RPCS_ANY",
-		"ANTHROPIC_RPCS_ANY",
-		"GITHUB_RPCS_ANY",
-		"GITLAB_RPCS_ANY",
-		"OPENAI_RPCS_ANY",
-		"ARGUS_RPCS_ANY",
-		"SAML_RPCS_ANY",
-		"CONFIG_RPCS_ANY",
-		"CLAUDESENSOR_RPCS_ANY",
-		"SCMSENSOR_RPCS_ANY",
-		"LLMSENSOR_RPCS_ANY",
+		"SENTINEL_ANY",
+		"MCP_ANY",
+		"ANTHROPIC_ANY",
+		"GITHUB_ANY",
+		"GITLAB_ANY",
+		"OPENAI_ANY",
+		"ARGUS_ANY",
+		"KERNEL_ANY",
 	],
 }} if {
 	roles["admin"]
@@ -148,9 +141,8 @@ eval := {"token_entitlements": {
 
 eval := {"token_entitlements": {
 	"grants": [
-		"OPENAI_RPCS_ANY",
-		"ANTHROPIC_RPCS_ANY",
-		"CLAUDESENSOR_RPCS_ANY",
+		"OPENAI_ANY",
+		"ANTHROPIC_ANY",
 	],
 }} if {
 	roles["user"]
