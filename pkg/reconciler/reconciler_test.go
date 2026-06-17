@@ -3,8 +3,11 @@ package reconciler
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
+	helmrelease "helm.sh/helm/v3/pkg/release"
+	helmtime "helm.sh/helm/v3/pkg/time"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -123,6 +126,54 @@ func TestRemoveKernelHotfixDriftSkipsNonHelmStatefulSet(t *testing.T) {
 	}
 	if len(got.Spec.Template.Spec.Containers[0].Args) == 0 {
 		t.Fatal("expected non-Helm StatefulSet to be left unchanged")
+	}
+}
+
+func TestIsStalePendingRelease(t *testing.T) {
+	now := time.Date(2026, 6, 17, 22, 0, 0, 0, time.UTC)
+
+	rel := &helmrelease.Release{
+		Info: &helmrelease.Info{
+			Status:       helmrelease.StatusPendingUpgrade,
+			LastDeployed: helmtime.Time{Time: now.Add(-StalePendingReleaseAge)},
+		},
+	}
+	stale, age := isStalePendingRelease(rel, now)
+	if !stale {
+		t.Fatal("expected pending release at timeout to be stale")
+	}
+	if age != StalePendingReleaseAge {
+		t.Fatalf("unexpected age: %s", age)
+	}
+}
+
+func TestIsStalePendingReleaseSkipsFreshPendingRelease(t *testing.T) {
+	now := time.Date(2026, 6, 17, 22, 0, 0, 0, time.UTC)
+
+	rel := &helmrelease.Release{
+		Info: &helmrelease.Info{
+			Status:       helmrelease.StatusPendingUpgrade,
+			LastDeployed: helmtime.Time{Time: now.Add(-StalePendingReleaseAge + time.Second)},
+		},
+	}
+	stale, _ := isStalePendingRelease(rel, now)
+	if stale {
+		t.Fatal("expected fresh pending release not to be stale")
+	}
+}
+
+func TestIsStalePendingReleaseSkipsDeployedRelease(t *testing.T) {
+	now := time.Date(2026, 6, 17, 22, 0, 0, 0, time.UTC)
+
+	rel := &helmrelease.Release{
+		Info: &helmrelease.Info{
+			Status:       helmrelease.StatusDeployed,
+			LastDeployed: helmtime.Time{Time: now.Add(-StalePendingReleaseAge)},
+		},
+	}
+	stale, _ := isStalePendingRelease(rel, now)
+	if stale {
+		t.Fatal("expected deployed release not to be stale")
 	}
 }
 

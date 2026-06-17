@@ -28,6 +28,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
+	helmrelease "helm.sh/helm/v3/pkg/release"
 	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -50,6 +51,10 @@ import (
 // ReconcileInterval is how often the reconciler re-checks cluster state
 // even when no watch events fire.
 const ReconcileInterval = 30 * time.Second
+
+// StalePendingReleaseAge is the minimum age before the reconciler treats a
+// pending Helm release as abandoned by a crashed or replaced operator.
+const StalePendingReleaseAge = 5 * time.Minute
 
 const releaseName = "cavalier"
 
@@ -310,9 +315,7 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 		return fmt.Errorf("loading helm chart from memory: %w", err)
 	}
 
-	histAction := action.NewHistory(actionCfg)
-	histAction.Max = 1
-	_, histErr := histAction.Run(releaseName)
+	latest, histErr := actionCfg.Releases.Last(releaseName)
 
 	if svcValues == nil {
 		svcValues = map[string]interface{}{}
@@ -324,11 +327,77 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 	case histErr != nil:
 		return fmt.Errorf("querying helm release history: %w", histErr)
 	default:
+		if recovered, err := r.recoverStalePendingRelease(actionCfg, latest); err != nil {
+			return err
+		} else if recovered {
+			return nil
+		}
 		if err := r.removeKernelHotfixDrift(ctx, ns); err != nil {
 			return fmt.Errorf("removing kernel hotfix drift: %w", err)
 		}
 		return r.helmUpgrade(actionCfg, ch, svcValues)
 	}
+}
+
+func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, latest *helmrelease.Release) (bool, error) {
+	if latest == nil || latest.Info == nil || !latest.Info.Status.IsPending() {
+		return false, nil
+	}
+
+	stale, age := isStalePendingRelease(latest, time.Now())
+	if !stale {
+		return false, fmt.Errorf("helm release %s revision %d is %s for %s; waiting before recovery",
+			latest.Name,
+			latest.Version,
+			latest.Info.Status,
+			age.Truncate(time.Second),
+		)
+	}
+
+	deployed, err := cfg.Releases.Deployed(releaseName)
+	if err != nil {
+		return false, fmt.Errorf("helm release %s revision %d is stale %s but no deployed revision is available: %w",
+			latest.Name,
+			latest.Version,
+			latest.Info.Status,
+			err,
+		)
+	}
+
+	r.log.Warn("recovering stale pending Helm release",
+		zap.String("release", latest.Name),
+		zap.Int("pending_revision", latest.Version),
+		zap.String("pending_status", latest.Info.Status.String()),
+		zap.Duration("age", age.Truncate(time.Second)),
+		zap.Int("rollback_revision", deployed.Version),
+	)
+
+	rollback := action.NewRollback(cfg)
+	rollback.Version = deployed.Version
+	rollback.MaxHistory = 10
+	rollback.Timeout = 5 * time.Minute
+	rollback.CleanupOnFail = true
+	if err := rollback.Run(releaseName); err != nil {
+		return false, fmt.Errorf("recovering stale pending Helm release by rolling back to revision %d: %w", deployed.Version, err)
+	}
+
+	r.log.Info("stale pending Helm release recovered; desired chart will apply on next reconcile",
+		zap.String("release", latest.Name),
+		zap.Int("recovered_revision", latest.Version),
+		zap.Int("rollback_revision", deployed.Version),
+	)
+	return true, nil
+}
+
+func isStalePendingRelease(rel *helmrelease.Release, now time.Time) (bool, time.Duration) {
+	if rel == nil || rel.Info == nil || !rel.Info.Status.IsPending() {
+		return false, 0
+	}
+	if rel.Info.LastDeployed.IsZero() {
+		return false, 0
+	}
+	age := now.Sub(rel.Info.LastDeployed.Time)
+	return age >= StalePendingReleaseAge, age
 }
 
 func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, vals map[string]interface{}) error {
