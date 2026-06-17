@@ -60,6 +60,17 @@
 - Regression coverage: reconciler tests assert that the targeted cleanup removes
   kernel hotfix command/volume drift while preserving normal bootstrap/data
   mounts and skips non-Helm StatefulSets.
+- Live blocker follow-up: after a mock operator redeploy, the inner `cavalier`
+  Helm release was left at revision `2938` in `pending-upgrade`, so every
+  reconcile failed with Helm's operation-in-progress lock.
+- Change: the in-cluster reconciler now detects stale pending inner Helm
+  releases. If the latest release has been pending for at least five minutes and
+  a deployed revision exists, it rolls back to the deployed revision and lets the
+  next reconcile apply the desired generated chart.
+- Regression coverage: reconciler tests cover stale pending detection, fresh
+  pending releases, and non-pending releases.
+- Verification passed: `go test ./pkg/reconciler`, `go test ./...`, and
+  `git diff --check`.
 
 ## 2026-06-16 demo-readiness follow-up
 
