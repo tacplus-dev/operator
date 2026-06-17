@@ -42,9 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // ReconcileInterval is how often the reconciler re-checks cluster state
@@ -253,7 +253,6 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	return nil
 }
 
-
 // schedulableNodeCount returns the number of Ready, non-tainted worker nodes.
 func (r *Reconciler) schedulableNodeCount(ctx context.Context) (int, error) {
 	var nodeList corev1.NodeList
@@ -281,7 +280,7 @@ func (r *Reconciler) schedulableNodeCount(ctx context.Context) (int, error) {
 // apply installs or upgrades the "cavalier" Helm release using the in-memory
 // chart files produced by the generator. svcValues overrides values.yaml defaults
 // (typically per-service config YAML strings); nil is treated as an empty map.
-func (r *Reconciler) apply(_ context.Context, charts *helm.Charts, svcValues map[string]interface{}) error {
+func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues map[string]interface{}) error {
 	ns := r.namespace()
 
 	getter := &inClusterGetter{
@@ -325,6 +324,9 @@ func (r *Reconciler) apply(_ context.Context, charts *helm.Charts, svcValues map
 	case histErr != nil:
 		return fmt.Errorf("querying helm release history: %w", histErr)
 	default:
+		if err := r.removeKernelHotfixDrift(ctx, ns); err != nil {
+			return fmt.Errorf("removing kernel hotfix drift: %w", err)
+		}
 		return r.helmUpgrade(actionCfg, ch, svcValues)
 	}
 }
@@ -350,9 +352,6 @@ func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart,
 func (r *Reconciler) helmUpgrade(cfg *action.Configuration, ch *helmchart.Chart, vals map[string]interface{}) error {
 	upgrade := action.NewUpgrade(cfg)
 	upgrade.Wait = false
-	// Reconciliation must make workloads match the generated chart, including
-	// removing any out-of-band pod command/volume mutations.
-	upgrade.Force = true
 	upgrade.MaxHistory = 10
 
 	rel, err := upgrade.Run(releaseName, ch, vals)
@@ -364,6 +363,93 @@ func (r *Reconciler) helmUpgrade(cfg *action.Configuration, ch *helmchart.Chart,
 		zap.Int("version", rel.Version),
 	)
 	return nil
+}
+
+func (r *Reconciler) removeKernelHotfixDrift(ctx context.Context, ns string) error {
+	var st appsv1.StatefulSet
+	if err := r.client.Get(ctx, types.NamespacedName{Namespace: ns, Name: "kernel"}, &st); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	if st.Labels["app.kubernetes.io/managed-by"] != "Helm" {
+		return nil
+	}
+
+	changed := false
+	for i := range st.Spec.Template.Spec.Containers {
+		container := &st.Spec.Template.Spec.Containers[i]
+		if container.Name != "kernel" {
+			continue
+		}
+		if containsKernelHotfix(container.Command) || containsKernelHotfix(container.Args) {
+			container.Command = nil
+			container.Args = nil
+			changed = true
+		}
+		mounts, removed := filterHotfixVolumeMounts(container.VolumeMounts)
+		if removed {
+			container.VolumeMounts = mounts
+			changed = true
+		}
+	}
+
+	volumes, removed := filterHotfixVolumes(st.Spec.Template.Spec.Volumes)
+	if removed {
+		st.Spec.Template.Spec.Volumes = volumes
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	if r.log != nil {
+		r.log.Warn("removing kernel hotfix drift from StatefulSet before helm upgrade",
+			zap.String("namespace", ns),
+		)
+	}
+	return r.client.Update(ctx, &st)
+}
+
+func containsKernelHotfix(values []string) bool {
+	for _, value := range values {
+		if strings.Contains(value, "/hotfix") ||
+			strings.Contains(value, "kernel-261.jar") ||
+			strings.Contains(value, "/opt/cavalier-hotfix") {
+			return true
+		}
+	}
+	return false
+}
+
+func filterHotfixVolumeMounts(mounts []corev1.VolumeMount) ([]corev1.VolumeMount, bool) {
+	filtered := mounts[:0]
+	removed := false
+	for _, mount := range mounts {
+		if strings.EqualFold(mount.Name, "kernel-hotfix") ||
+			strings.Contains(strings.ToLower(mount.Name), "hotfix") ||
+			mount.MountPath == "/hotfix" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, mount)
+	}
+	return filtered, removed
+}
+
+func filterHotfixVolumes(volumes []corev1.Volume) ([]corev1.Volume, bool) {
+	filtered := volumes[:0]
+	removed := false
+	for _, volume := range volumes {
+		if strings.EqualFold(volume.Name, "kernel-hotfix") ||
+			strings.Contains(strings.ToLower(volume.Name), "hotfix") ||
+			(volume.HostPath != nil && volume.HostPath.Path == "/opt/cavalier-hotfix") {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, volume)
+	}
+	return filtered, removed
 }
 
 // pruneStaleDeployments deletes Deployments in the cavalier namespace that are

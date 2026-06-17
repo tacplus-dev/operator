@@ -48,8 +48,18 @@
 - Root cause: the live StatefulSet had out-of-band command/volume drift not
   present in the generated Helm manifest; normal Helm upgrade reconciliation
   preserved the extra fields.
-- Change: in-cluster cavalier release upgrades now use Helm force replacement so
-  generated source state replaces drifted workload specs.
+- First attempted change: in-cluster cavalier release upgrades used Helm force
+  replacement so generated source state replaced drifted workload specs.
+- Follow-up finding: global Helm force also tries to replace bound PVCs for
+  eventbus/graphdb/stratum/timedb, which Kubernetes correctly rejects because
+  PVC `volumeName` and `storageClassName` are immutable after binding.
+- Corrected change: global Helm force is removed again; the operator now
+  performs a targeted source-level cleanup of Helm-managed kernel StatefulSet
+  hotfix drift (`/hotfix/kernel-261.jar`, `/hotfix` mounts, and
+  `/opt/cavalier-hotfix` hostPath volumes) before normal Helm upgrade.
+- Regression coverage: reconciler tests assert that the targeted cleanup removes
+  kernel hotfix command/volume drift while preserving normal bootstrap/data
+  mounts and skips non-Helm StatefulSets.
 
 ## 2026-06-16 demo-readiness follow-up
 
