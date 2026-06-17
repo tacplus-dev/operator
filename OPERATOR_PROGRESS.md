@@ -40,6 +40,17 @@
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
   ./cmd/cavalier-operator`, and `git diff --check`.
 
+## 2026-06-17 demo-readiness drift cleanup
+
+- Live blocker: kernel pods advertised the `.266` image but were still running
+  `java -jar /hotfix/kernel-261.jar` from a hostPath mount, so the fixed image
+  could not expose `kernel.Mint/MintX509Cert`.
+- Root cause: the live StatefulSet had out-of-band command/volume drift not
+  present in the generated Helm manifest; normal Helm upgrade reconciliation
+  preserved the extra fields.
+- Change: in-cluster cavalier release upgrades now use Helm force replacement so
+  generated source state replaces drifted workload specs.
+
 ## 2026-06-16 demo-readiness follow-up
 
 - Live blocker: OPA v187 pods could not verify kernel because the operator had

@@ -350,6 +350,9 @@ func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart,
 func (r *Reconciler) helmUpgrade(cfg *action.Configuration, ch *helmchart.Chart, vals map[string]interface{}) error {
 	upgrade := action.NewUpgrade(cfg)
 	upgrade.Wait = false
+	// Reconciliation must make workloads match the generated chart, including
+	// removing any out-of-band pod command/volume mutations.
+	upgrade.Force = true
 	upgrade.MaxHistory = 10
 
 	rel, err := upgrade.Run(releaseName, ch, vals)
