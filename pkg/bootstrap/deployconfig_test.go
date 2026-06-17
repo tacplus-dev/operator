@@ -118,6 +118,68 @@ func TestKernelTLSNeedsRegenerationAcceptsCanonicalSpiffeSAN(t *testing.T) {
 	}
 }
 
+func TestGenerateCryptoPreservesExistingClusterCA(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	clusterCertID := cfg.Pki.ClusterCa.Chain[0].Id
+	clusterKeyID := cfg.Pki.ClusterCa.Key.Id
+
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := cfg.Pki.ClusterCa.Chain[0].Id; got != clusterCertID {
+		t.Fatalf("cluster CA cert id changed from %q to %q", clusterCertID, got)
+	}
+	if got := cfg.Pki.ClusterCa.Key.Id; got != clusterKeyID {
+		t.Fatalf("cluster CA key id changed from %q to %q", clusterKeyID, got)
+	}
+}
+
+func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	clusterCertID := cfg.Pki.ClusterCa.Chain[0].Id
+	clusterKeyID := cfg.Pki.ClusterCa.Key.Id
+	signingCertID := cfg.Pki.NodeSigningCa[0].Chain[0].Id
+	signingKeyID := cfg.Pki.NodeSigningCa[0].Key.Id
+	oldLeafID := cfg.Pki.NodeTls[0].Chain[0].Id
+
+	if err := GenerateKernelTLS(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := cfg.Pki.ClusterCa.Chain[0].Id; got != clusterCertID {
+		t.Fatalf("cluster CA cert id changed from %q to %q", clusterCertID, got)
+	}
+	if got := cfg.Pki.ClusterCa.Key.Id; got != clusterKeyID {
+		t.Fatalf("cluster CA key id changed from %q to %q", clusterKeyID, got)
+	}
+	if got := cfg.Pki.NodeSigningCa[0].Chain[0].Id; got != signingCertID {
+		t.Fatalf("node signing cert id changed from %q to %q", signingCertID, got)
+	}
+	if got := cfg.Pki.NodeSigningCa[0].Key.Id; got != signingKeyID {
+		t.Fatalf("node signing key id changed from %q to %q", signingKeyID, got)
+	}
+	if got := cfg.Pki.NodeTls[0].Chain[0].Id; got == oldLeafID {
+		t.Fatalf("kernel TLS leaf id did not change: %q", got)
+	}
+	if got := cfg.Pki.NodeTls[0].Chain[1].Base64; got != cfg.Pki.ClusterCa.Chain[0].Base64 {
+		t.Fatalf("kernel TLS chain issuer cert does not match preserved cluster CA %q", clusterCertID)
+	}
+	canonical, err := KernelServiceSpiffeURI("local.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !certChainHasURI(cfg.Pki.NodeTls[0], canonical) {
+		t.Fatalf("regenerated kernel TLS cert missing canonical SPIFFE URI %q", canonical)
+	}
+}
+
 func TestReadOnlyConfigWriteErrorMatchesWrappedEROFSError(t *testing.T) {
 	err := fmt.Errorf("saving crypto: %w", &os.PathError{
 		Op:   "open",

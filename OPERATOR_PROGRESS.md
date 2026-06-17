@@ -39,6 +39,35 @@
   certs.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
   ./cmd/cavalier-operator`, and `git diff --check`.
+
+## 2026-06-16 demo-readiness follow-up
+
+- Live blocker: OPA v187 pods could not verify kernel because the operator had
+  regenerated a new `cluster-ca` in memory while the durable
+  `cavalier-operator-crypto` Secret still held the old `cluster-ca`. Old OPA pods
+  stayed "ready" but failed S2S calls; new pods received a different trust
+  bundle.
+- Root cause: the canonical SPIFFE migration reused `GenerateCrypto`, which
+  always minted a new cluster intermediate CA. The later in-process PKI cache
+  made this stable for one operator pod lifetime, but it still changed the
+  trust anchor instead of rotating only the kernel TLS leaf certs.
+- Change: existing cluster CA material is now preserved during generation, and
+  the deploy-time canonical SPIFFE migration calls a targeted
+  `GenerateKernelTLS` path when a cluster CA key already exists. This rotates
+  only kernel node/edge TLS certs and keeps signing CAs/trust anchors stable.
+- Live blocker: the operator also patched its own Deployment image from the
+  pullable `services/operator/cavalier-operator:v1.2.187-main.202` image to
+  non-pullable `services/operator/cavalier-operator:v1.2.27-main.4`.
+- Root cause: self-upgrade resolved operator tags from
+  `cavalier/cavalier/cavalier-operator` instead of the deployable
+  `cavalier/services/operator/cavalier-operator` registry repository.
+- Change: operator self-upgrade now resolves tags from the deployable
+  `services/operator` namespace.
+- Regression coverage: tests now pin cluster CA preservation, targeted kernel
+  TLS regeneration under the preserved CA, signing CA preservation, and the
+  operator registry repository path.
+- Verification passed: `go test ./pkg/bootstrap ./pkg/upgrade`, `go test ./...`,
+  and `git diff --check`.
 - Redeploy follow-up: the in-cluster operator hit the rotation path but failed
   before applying because `/config/crypto.yaml` is mounted read-only.
 - Change: deploy-config building now treats read-only/permission failures from

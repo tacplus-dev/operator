@@ -92,7 +92,11 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	// Generate or rotate crypto if the cluster has no TLS certs yet, or if
 	// existing kernel certs predate the canonical SPIFFE service URI.
 	if KernelTLSNeedsRegeneration(cfg, nodeCount, 0, kernelSpiffeURI) {
-		if err := GenerateCrypto(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
+		if hasClusterCAKey(cfg) {
+			if err := GenerateKernelTLS(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
+				return nil, fmt.Errorf("regenerating kernel TLS material: %w", err)
+			}
+		} else if err := GenerateCrypto(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
 			return nil, fmt.Errorf("generating crypto material: %w", err)
 		}
 		if err := SaveCrypto(cfgDir, cfg); err != nil {
@@ -360,6 +364,14 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 
 func isReadOnlyConfigWriteError(err error) bool {
 	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS)
+}
+
+func hasClusterCAKey(cfg *protoOperator.Config) bool {
+	return cfg != nil &&
+		cfg.Pki != nil &&
+		cfg.Pki.ClusterCa != nil &&
+		len(cfg.Pki.ClusterCa.Chain) > 0 &&
+		cfg.Pki.ClusterCa.Key != nil
 }
 
 func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {

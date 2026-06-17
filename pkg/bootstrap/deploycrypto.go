@@ -126,50 +126,9 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 		return err
 	}
 
-	// Cluster intermediate CA (signed by root)
-	clusterCAKey, err := wrapperKey.NewEC384Key()
+	clusterCAImmKey, clusterCACert, err := ensureClusterCA(cfg, caImmKey, caCert)
 	if err != nil {
-		return fmt.Errorf("generating cluster CA key: %w", err)
-	}
-	clusterCAKey.Created = time.Now().Unix()
-
-	clusterCAImmKey, err := wrapperKey.NewImmutableKey(clusterCAKey)
-	if err != nil {
-		return fmt.Errorf("creating immutable cluster CA key: %w", err)
-	}
-
-	now := time.Now()
-	clusterCATemplate := &stdx509.Certificate{
-		SerialNumber:          wrapperX509.GenerateSerialNumber(),
-		Subject:               utf8CN("cluster-ca"),
-		NotBefore:             now,
-		NotAfter:              now.Add(caTTL),
-		KeyUsage:              stdx509.KeyUsageCertSign | stdx509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            1,
-	}
-
-	clusterCACertDER, err := stdx509.CreateCertificate(rand.Reader, clusterCATemplate, caCert, clusterCAImmKey.PublicKey(), caImmKey.PrivateKey())
-	if err != nil {
-		return fmt.Errorf("creating cluster CA certificate: %w", err)
-	}
-
-	clusterCACertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clusterCACertDER})
-	clusterCACertProto, err := wrapperX509.NewX509Cert(clusterCACertPEM)
-	if err != nil {
-		return fmt.Errorf("wrapping cluster CA cert: %w", err)
-	}
-	clusterCACertProto.Id = clusterCAKey.Id
-
-	cfg.Pki.ClusterCa = &protoX509.X509CertChain{
-		Chain: []*protoX509.X509Cert{clusterCACertProto},
-		Key:   clusterCAKey,
-	}
-
-	clusterCACert, err := stdx509.ParseCertificate(clusterCACertDER)
-	if err != nil {
-		return fmt.Errorf("parsing cluster CA certificate: %w", err)
+		return err
 	}
 
 	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
@@ -235,6 +194,122 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 		cfg.Pki.EdgeSigningCa[i], err = generateSigningCACertChain(clusterCAImmKey, clusterCACert, nodeName)
 		if err != nil {
 			return fmt.Errorf("generating %s signing CA: %w", nodeName, err)
+		}
+	}
+
+	return nil
+}
+
+func ensureClusterCA(cfg *protoOperator.Config, rootKey *wrapperKey.ImmutableKey, rootCert *stdx509.Certificate) (*wrapperKey.ImmutableKey, *stdx509.Certificate, error) {
+	if cfg.Pki.ClusterCa != nil && len(cfg.Pki.ClusterCa.Chain) > 0 && cfg.Pki.ClusterCa.Key != nil {
+		clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("loading existing cluster CA key: %w", err)
+		}
+		cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+		if err != nil {
+			return nil, nil, fmt.Errorf("loading existing cluster CA cert: %w", err)
+		}
+		return clusterCAImmKey, cc.Leaf().X509Certificate(), nil
+	}
+
+	// Cluster intermediate CA (signed by root)
+	clusterCAKey, err := wrapperKey.NewEC384Key()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating cluster CA key: %w", err)
+	}
+	clusterCAKey.Created = time.Now().Unix()
+
+	clusterCAImmKey, err := wrapperKey.NewImmutableKey(clusterCAKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating immutable cluster CA key: %w", err)
+	}
+
+	now := time.Now()
+	clusterCATemplate := &stdx509.Certificate{
+		SerialNumber:          wrapperX509.GenerateSerialNumber(),
+		Subject:               utf8CN("cluster-ca"),
+		NotBefore:             now,
+		NotAfter:              now.Add(caTTL),
+		KeyUsage:              stdx509.KeyUsageCertSign | stdx509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+
+	clusterCACertDER, err := stdx509.CreateCertificate(rand.Reader, clusterCATemplate, rootCert, clusterCAImmKey.PublicKey(), rootKey.PrivateKey())
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating cluster CA certificate: %w", err)
+	}
+
+	clusterCACertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clusterCACertDER})
+	clusterCACertProto, err := wrapperX509.NewX509Cert(clusterCACertPEM)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wrapping cluster CA cert: %w", err)
+	}
+	clusterCACertProto.Id = clusterCAKey.Id
+
+	cfg.Pki.ClusterCa = &protoX509.X509CertChain{
+		Chain: []*protoX509.X509Cert{clusterCACertProto},
+		Key:   clusterCAKey,
+	}
+
+	clusterCACert, err := stdx509.ParseCertificate(clusterCACertDER)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing cluster CA certificate: %w", err)
+	}
+
+	return clusterCAImmKey, clusterCACert, nil
+}
+
+// GenerateKernelTLS regenerates only kernel node/edge TLS leaf certificates
+// under the existing cluster CA. It preserves the cluster CA and signing CAs so
+// trust anchors remain stable during canonical SPIFFE SAN migrations.
+func GenerateKernelTLS(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, spiffeTrustDomain string) error {
+	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
+		return fmt.Errorf("pki.cluster_ca with private key is required")
+	}
+	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
+	if err != nil {
+		return fmt.Errorf("loading cluster CA key: %w", err)
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		return fmt.Errorf("loading cluster CA cert: %w", err)
+	}
+	clusterCACert := cc.Leaf().X509Certificate()
+
+	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
+	if err != nil {
+		return err
+	}
+
+	cfg.Pki.NodeTls = make([]*protoX509.X509CertChain, coreCount)
+	for i := range coreCount {
+		var nodeName string
+		if edgeCount == 0 {
+			nodeName = fmt.Sprintf("kernel-%d", i)
+		} else {
+			nodeName = fmt.Sprintf("kernel-core-%d", i)
+		}
+		noHyphen := fmt.Sprintf("kernel%d", i)
+		stsName := fmt.Sprintf("%s.kernel", nodeName)
+		dnsNames := []string{nodeName, noHyphen, stsName, "kernel"}
+		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
+			dnsNames = append(dnsNames, fqdn)
+		}
+		cfg.Pki.NodeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, dnsNames, kernelSpiffeURI)
+		if err != nil {
+			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
+		}
+	}
+
+	cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
+	for i := range edgeCount {
+		nodeName := fmt.Sprintf("kernel-edge-%d", i)
+		cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
+		if err != nil {
+			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
 		}
 	}
 

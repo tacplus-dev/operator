@@ -35,7 +35,7 @@ import (
 const (
 	registryHost   = "registry.gitlab.com"
 	registryBase   = "secondstarcavalier/schematic/platform/services"
-	operatorBase   = "secondstarcavalier/schematic/platform/cavalier"
+	operatorBase   = registryBase + "/operator"
 	gitlabTokenURL = "https://gitlab.com/jwt/auth"
 
 	PollInterval    = 60 * time.Second
@@ -246,7 +246,7 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 	}
 
 	// Resolve the operator itself.
-	opRepo := fmt.Sprintf("%s/cavalier-operator", operatorBase)
+	opRepo := operatorRepo()
 	opV, err := c.resolveRepo(ctx, opRepo, creds)
 	if err != nil {
 		c.log.Warn("auto-upgrade: failed to resolve operator image", zap.Error(err))
@@ -255,6 +255,10 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 	}
 
 	return result, nil
+}
+
+func operatorRepo() string {
+	return fmt.Sprintf("%s/cavalier-operator", operatorBase)
 }
 
 // resolveRepo queries a registry repo and returns the best version

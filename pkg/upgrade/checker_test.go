@@ -30,3 +30,10 @@ func TestSelectLatestAllowsUnboundedProtoPatch(t *testing.T) {
 		t.Fatalf("selectLatest() = %+v, want %+v", got, want)
 	}
 }
+
+func TestOperatorRepoUsesDeployableServiceNamespace(t *testing.T) {
+	want := "secondstarcavalier/schematic/platform/services/operator/cavalier-operator"
+	if got := operatorRepo(); got != want {
+		t.Fatalf("operatorRepo() = %q, want %q", got, want)
+	}
+}
