@@ -25,6 +25,7 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 		"serviceAccountName: kernel",
 		"automountServiceAccountToken: false",
 		"- name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token",
+		"- name: KERNEL_K8S_TOKEN_AUDIENCE\n          value: cavalier-kernel",
 		"- name: kmaker-token\n          mountPath: /var/run/secrets/cavalier/kmaker\n          readOnly: true",
 		"- name: kmaker-token\n        projected:",
 		"path: token",

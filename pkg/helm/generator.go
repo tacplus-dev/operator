@@ -362,6 +362,10 @@ func kmakerTokenAudience(cfg *protoOperator.Config) string {
 	return "kmaker"
 }
 
+func kernelTokenAudience() string {
+	return "cavalier-kernel"
+}
+
 func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.Topology {
 	t := cfg.GetTopology()
 	if t == nil {
@@ -478,8 +482,12 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 				},
 			},
 			TokenReviewRBAC: true,
-			ExtraEnvVars:    "        - name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token\n",
-			MemRequest:      "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+			ExtraEnvVars: fmt.Sprintf(`        - name: KMAKER_K8S_TOKEN_FILE
+          value: /var/run/secrets/cavalier/kmaker/token
+        - name: KERNEL_K8S_TOKEN_AUDIENCE
+          value: %s
+`, kernelTokenAudience()),
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
 		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
 			ServiceAccountName:           "kmaker",
 			AutomountServiceAccountToken: falsePtr(),
