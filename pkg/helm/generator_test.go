@@ -10,7 +10,7 @@ import (
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
-func TestGenerateKernelProjectedKmakerToken(t *testing.T) {
+func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "cavalier",
 		Topology: &protoOperator.Topology{
@@ -30,9 +30,28 @@ func TestGenerateKernelProjectedKmakerToken(t *testing.T) {
 		"path: token",
 		"audience: custom-kmaker",
 		"expirationSeconds: 600",
+		"- name: kubernetes-api-token\n          mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n          readOnly: true",
+		"- name: kubernetes-api-token\n        projected:",
+		"expirationSeconds: 3600",
+		"name: kube-root-ca.crt",
+		"path: ca.crt",
+		"- downwardAPI:",
+		"path: namespace",
+		"fieldPath: metadata.namespace",
 	} {
 		if !strings.Contains(statefulSet, want) {
 			t.Fatalf("kernel StatefulSet missing %q\n--- statefulset ---\n%s", want, statefulSet)
+		}
+	}
+
+	tokenReviewRBAC := chartFile(t, charts, "templates/kernel/tokenreview-rbac.yaml")
+	for _, want := range []string{
+		"resources: [\"tokenreviews\"]",
+		"verbs: [\"create\"]",
+		"name: kernel",
+	} {
+		if !strings.Contains(tokenReviewRBAC, want) {
+			t.Fatalf("kernel TokenReview RBAC missing %q\n--- rbac ---\n%s", want, tokenReviewRBAC)
 		}
 	}
 }

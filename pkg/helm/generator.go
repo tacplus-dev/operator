@@ -158,6 +158,8 @@ type serviceSpec struct {
 	AutomountServiceAccountToken *bool
 	// ServiceAccountTokenProjection, if non-nil, mounts an explicit projected Kubernetes token.
 	ServiceAccountTokenProjection *serviceAccountTokenProjection
+	// ServiceAccountTokenProjections mounts additional explicit projected Kubernetes tokens.
+	ServiceAccountTokenProjections []*serviceAccountTokenProjection
 	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
 	TokenReviewRBAC bool
 	// PodReadRBAC grants the service account namespace-scoped permission to read Pods.
@@ -222,18 +224,40 @@ func automountServiceAccountTokenLine(svc serviceSpec) string {
 }
 
 func projectedServiceAccountTokenMount(svc serviceSpec) string {
-	proj := svc.ServiceAccountTokenProjection
-	if proj == nil {
-		return ""
-	}
-	return fmt.Sprintf(`        - name: %s
+	var b bytes.Buffer
+	for _, proj := range serviceAccountTokenProjections(svc) {
+		if proj == nil {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(`        - name: %s
           mountPath: %s
           readOnly: true
-`, proj.VolumeName, proj.MountPath)
+`, proj.VolumeName, proj.MountPath))
+	}
+	return b.String()
 }
 
 func projectedServiceAccountTokenVolume(svc serviceSpec) string {
-	proj := svc.ServiceAccountTokenProjection
+	var b bytes.Buffer
+	for _, proj := range serviceAccountTokenProjections(svc) {
+		if proj == nil {
+			continue
+		}
+		b.WriteString(projectedServiceAccountTokenProjectionVolume(proj))
+	}
+	return b.String()
+}
+
+func serviceAccountTokenProjections(svc serviceSpec) []*serviceAccountTokenProjection {
+	projections := make([]*serviceAccountTokenProjection, 0, len(svc.ServiceAccountTokenProjections)+1)
+	if svc.ServiceAccountTokenProjection != nil {
+		projections = append(projections, svc.ServiceAccountTokenProjection)
+	}
+	projections = append(projections, svc.ServiceAccountTokenProjections...)
+	return projections
+}
+
+func projectedServiceAccountTokenProjectionVolume(proj *serviceAccountTokenProjection) string {
 	if proj == nil {
 		return ""
 	}
@@ -436,15 +460,26 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
-			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
-				VolumeName:        "kmaker-token",
-				MountPath:         "/var/run/secrets/cavalier/kmaker",
-				TokenPath:         "token",
-				Audience:          kmakerTokenAudience(cfg),
-				ExpirationSeconds: 600,
+			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
+				{
+					VolumeName:        "kmaker-token",
+					MountPath:         "/var/run/secrets/cavalier/kmaker",
+					TokenPath:         "token",
+					Audience:          kmakerTokenAudience(cfg),
+					ExpirationSeconds: 600,
+				},
+				{
+					VolumeName:        "kubernetes-api-token",
+					MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
+					TokenPath:         "token",
+					ExpirationSeconds: 3600,
+					IncludeKubeRootCA: true,
+					IncludeNamespace:  true,
+				},
 			},
-			ExtraEnvVars: "        - name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token\n",
-			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+			TokenReviewRBAC: true,
+			ExtraEnvVars:    "        - name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token\n",
+			MemRequest:      "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
 		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
 			ServiceAccountName:           "kmaker",
 			AutomountServiceAccountToken: falsePtr(),
