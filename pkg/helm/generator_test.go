@@ -173,6 +173,8 @@ func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
 		"- rolebindings",
 		"- clusterroles",
 		"- clusterrolebindings",
+		"- pods",
+		"verbs: [\"get\"]",
 	} {
 		if !strings.Contains(clusterRole, want) {
 			t.Fatalf("operator ClusterRole missing %q\n--- clusterrole ---\n%s", want, clusterRole)
