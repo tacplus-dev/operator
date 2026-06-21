@@ -362,8 +362,33 @@ func kmakerTokenAudience(cfg *protoOperator.Config) string {
 	return "kmaker"
 }
 
+const (
+	kernelServiceTokenMountPath = "/var/run/secrets/cavalier/kernel"
+	kernelServiceTokenFile      = kernelServiceTokenMountPath + "/token"
+)
+
 func kernelTokenAudience() string {
 	return "cavalier-kernel"
+}
+
+func withKernelServiceAuth(svc serviceSpec) serviceSpec {
+	if svc.ServiceAccountName == "" {
+		svc.ServiceAccountName = svc.Name
+	}
+	if svc.AutomountServiceAccountToken == nil {
+		svc.AutomountServiceAccountToken = falsePtr()
+	}
+	svc.ServiceAccountTokenProjections = append(svc.ServiceAccountTokenProjections, &serviceAccountTokenProjection{
+		VolumeName:        "kernel-token",
+		MountPath:         kernelServiceTokenMountPath,
+		TokenPath:         "token",
+		Audience:          kernelTokenAudience(),
+		ExpirationSeconds: 3600,
+	})
+	svc.ExtraEnvVars += fmt.Sprintf(`        - name: KERNEL_K8S_TOKEN_FILE
+          value: %s
+`, kernelServiceTokenFile)
+	return svc
 }
 
 func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.Topology {
@@ -502,37 +527,37 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			TokenReviewRBAC: true, PodReadRBAC: true,
 			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
 			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
-		{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
-		{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
-		{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"},
-		{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
-		{Name: "argus", Replicas: topo.ArgusNodes, Image: g.imageRef("argus"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"},
-		{Name: "timedb", Replicas: topo.TimedbNodes, Image: g.imageRefProj("timedb", "timedb"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443, NodeModes: timedbNodeModes(topo.TimedbNodes),
-			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m"},
-		{Name: "graphdb", Replicas: topo.GraphdbNodes, Image: g.imageRef("graphdb"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
-			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m", GoMemLimit: "800MiB"},
-		{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
+		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
+		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
+		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
+		withKernelServiceAuth(serviceSpec{Name: "argus", Replicas: topo.ArgusNodes, Image: g.imageRef("argus"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
+		withKernelServiceAuth(serviceSpec{Name: "timedb", Replicas: topo.TimedbNodes, Image: g.imageRefProj("timedb", "timedb"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443, NodeModes: timedbNodeModes(topo.TimedbNodes),
+			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m"}),
+		withKernelServiceAuth(serviceSpec{Name: "graphdb", Replicas: topo.GraphdbNodes, Image: g.imageRef("graphdb"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
+			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m", GoMemLimit: "800MiB"}),
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443,
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
-	svcs = append(svcs, serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef("oauth"), HasGRPC: true, ListenPort: 8443,
-		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"})
+	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef("oauth"), HasGRPC: true, ListenPort: 8443,
+		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
-		svcs = append(svcs, serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef("saml"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef("saml"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 	}
 
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
 	if cfg.GetTls().GetLetsencrypt() {
-		svcs = append(svcs, serviceSpec{
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
 			Name:             "letsencrypt",
 			Replicas:         1,
 			Image:            g.imageRef("letsencrypt"),
@@ -542,28 +567,28 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			SkipProbes:       true,
 			ExtraEnvVars:     "        - name: SERVICE_CONFIG\n          value: /data/service.yaml\n",
 			HasServiceConfig: true,
-		})
+		}))
 	}
 
 	// Proxy services — one replica per gateway node when enabled.
 	if opt.GetAnthropic() {
-		svcs = append(svcs, serviceSpec{Name: "anthropic", Replicas: topo.GatewayNodes, Image: g.imageRefProj("anthropic-proxy", "anthropic"), HasGRPC: true, ListenPort: 8443})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "anthropic", Replicas: topo.GatewayNodes, Image: g.imageRefProj("anthropic-proxy", "anthropic"), HasGRPC: true, ListenPort: 8443}))
 	}
 	if opt.GetOpenai() {
-		svcs = append(svcs, serviceSpec{Name: "openai", Replicas: topo.GatewayNodes, Image: g.imageRefProj("openai-proxy", "openai"), HasGRPC: true, ListenPort: 8443})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "openai", Replicas: topo.GatewayNodes, Image: g.imageRefProj("openai-proxy", "openai"), HasGRPC: true, ListenPort: 8443}))
 	}
 
 	// MCP server — one replica when enabled.
 	if opt.GetMcp() {
-		svcs = append(svcs, serviceSpec{Name: "mcp", Replicas: 1, Image: g.imageRef("mcp"), HasGRPC: true, ListenPort: 8443})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mcp", Replicas: 1, Image: g.imageRef("mcp"), HasGRPC: true, ListenPort: 8443}))
 	}
 
 	// On hold — only deployed when explicitly set above zero.
 	if topo.ColddbNodes > 0 {
-		svcs = append(svcs, serviceSpec{Name: "colddb", Replicas: topo.ColddbNodes, Image: g.imageRef("colddb"), HasGRPC: true, HasPVC: true, Storage: "10Gi", ListenPort: 8443})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "colddb", Replicas: topo.ColddbNodes, Image: g.imageRef("colddb"), HasGRPC: true, HasPVC: true, Storage: "10Gi", ListenPort: 8443}))
 	}
 	if topo.MsggatewayNodes > 0 {
-		svcs = append(svcs, serviceSpec{Name: "msggateway", Replicas: topo.MsggatewayNodes, Image: g.imageRef("msggateway"), HasGRPC: true, ListenPort: 8443})
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "msggateway", Replicas: topo.MsggatewayNodes, Image: g.imageRef("msggateway"), HasGRPC: true, ListenPort: 8443}))
 	}
 
 	// Filter zero-replica services.

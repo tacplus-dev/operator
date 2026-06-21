@@ -24,6 +24,7 @@ import (
 	protoMsggateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/msggateway"
 	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
 )
 
@@ -49,9 +50,17 @@ type TLSSourceConfig struct {
 
 // SourceDelegate represents a delegate in the source config format.
 type SourceDelegate struct {
-	Name               string            `yaml:"name"`
-	AuthorizedServices []string          `yaml:"authorized_services,omitempty"`
-	CustomClaims       map[string]string `yaml:"custom_claims,omitempty"`
+	Name                      string                           `yaml:"name"`
+	AuthorizedServices        []string                         `yaml:"authorized_services,omitempty"`
+	KubernetesServiceAccounts []SourceKubernetesServiceAccount `yaml:"kubernetes_service_accounts,omitempty"`
+	CustomClaims              map[string]string                `yaml:"custom_claims,omitempty"`
+}
+
+// SourceKubernetesServiceAccount maps a Kubernetes service account to a
+// kernel delegate in the human-editable kernel.yaml source format.
+type SourceKubernetesServiceAccount struct {
+	KubernetesNamespace      string `yaml:"kubernetes_namespace"`
+	KubernetesServiceAccount string `yaml:"kubernetes_service_account"`
 }
 
 // LoadKernelSourceConfig reads and parses the combined kernel.yaml source file.
@@ -314,6 +323,12 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		return nil, err
 	}
 
+	opCfg, err := LoadConfig(cfgDir)
+	if err != nil {
+		opCfg = nil
+	}
+	kubernetesNamespace := operatorKubernetesNamespace(opCfg)
+
 	// 2. Validate TLS key if present
 	if kernelCfg.TLS != nil && kernelCfg.TLS.Key != "" {
 		keyYAML, err := base64.StdEncoding.DecodeString(kernelCfg.TLS.Key)
@@ -336,6 +351,12 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		delegate := &protoKernel.Delegate{
 			Name:               sd.Name,
 			AuthorizedServices: authSvcs,
+		}
+		for _, sa := range sd.KubernetesServiceAccounts {
+			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)
+		}
+		if isKernelAuthenticatedService(sd.Name) {
+			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, sd.Name)
 		}
 		// Find cred pair (Jwk) for this delegate
 		credDir := filepath.Join(cfgDir, "creds", sd.Name)
@@ -494,12 +515,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		}
 	}
 
-	// 5. Load operator config for FQDN/issuer
-	opCfg, err := LoadConfig(cfgDir)
-	if err != nil {
-		opCfg = nil
-	}
-
+	// 5. Load operator-derived FQDN/issuer.
 	fqdn := ""
 	issuer := ""
 	if opCfg != nil {
@@ -521,6 +537,28 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 	}
 
 	return kernelConfig, nil
+}
+
+func operatorKubernetesNamespace(cfg *protoOperator.Config) string {
+	if ns := cfg.GetNamespace(); ns != "" {
+		return ns
+	}
+	return "cavalier"
+}
+
+func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, namespace, serviceAccount string) {
+	if delegate == nil || namespace == "" || serviceAccount == "" {
+		return
+	}
+	for _, existing := range delegate.KubernetesServiceAccounts {
+		if existing.GetKubernetesNamespace() == namespace && existing.GetKubernetesServiceAccount() == serviceAccount {
+			return
+		}
+	}
+	delegate.KubernetesServiceAccounts = append(delegate.KubernetesServiceAccounts, &protoKernel.KubernetesServiceAccountMatcher{
+		KubernetesNamespace:      namespace,
+		KubernetesServiceAccount: serviceAccount,
+	})
 }
 
 // loadServiceConfigFile reads a per-service YAML config file into a map.

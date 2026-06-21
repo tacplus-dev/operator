@@ -13,6 +13,7 @@ import (
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
+	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -72,6 +73,47 @@ func TestBuildBackendFieldsEmitsCanonicalSpiffeConfig(t *testing.T) {
 	}
 	if got := fields["location_path"]; got != "aws/us-east-1/cluster-a" {
 		t.Fatalf("location_path = %v, want aws/us-east-1/cluster-a", got)
+	}
+}
+
+func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveSettings(dir, &protoOperator.Config{Namespace: "workloads"}); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	kernelYAML := []byte(`delegates:
+- name: sentinel
+  authorized_services: [sentinel]
+- name: external-client
+  authorized_services: [gateway]
+`)
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), kernelYAML, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := BuildKernelConfigProto(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sentinel := findDelegate(t, cfg.Delegates, "sentinel")
+	if len(sentinel.KubernetesServiceAccounts) != 1 {
+		t.Fatalf("sentinel KubernetesServiceAccounts = %d, want 1", len(sentinel.KubernetesServiceAccounts))
+	}
+	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesNamespace(); got != "workloads" {
+		t.Fatalf("sentinel Kubernetes namespace = %q, want workloads", got)
+	}
+	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesServiceAccount(); got != "sentinel" {
+		t.Fatalf("sentinel Kubernetes service account = %q, want sentinel", got)
+	}
+
+	external := findDelegate(t, cfg.Delegates, "external-client")
+	if len(external.KubernetesServiceAccounts) != 0 {
+		t.Fatalf("external-client should not get a default Kubernetes matcher: %#v", external.KubernetesServiceAccounts)
 	}
 }
 
@@ -320,6 +362,17 @@ func writeTestServiceKeys(t *testing.T, cfgDir string, services ...string) {
 			t.Fatalf("writing key for %s: %v", service, err)
 		}
 	}
+}
+
+func findDelegate(t *testing.T, delegates []*protoKernel.Delegate, name string) *protoKernel.Delegate {
+	t.Helper()
+	for _, delegate := range delegates {
+		if delegate.GetName() == name {
+			return delegate
+		}
+	}
+	t.Fatalf("delegate %q not found", name)
+	return nil
 }
 
 func TestEnsureKmakerSigningCABackfillsExistingClusterCrypto(t *testing.T) {

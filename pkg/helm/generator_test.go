@@ -107,7 +107,7 @@ func TestGenerateKmakerProjectedKubernetesAPITokenAndRBAC(t *testing.T) {
 	}
 }
 
-func TestGeneratedWorkloadsDisableAmbientServiceAccountTokenByDefault(t *testing.T) {
+func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "cavalier",
 		Topology: &protoOperator.Topology{
@@ -116,11 +116,19 @@ func TestGeneratedWorkloadsDisableAmbientServiceAccountTokenByDefault(t *testing
 	})
 
 	deployment := chartFile(t, charts, "templates/sentinel/deployment.yaml")
-	if !strings.Contains(deployment, "automountServiceAccountToken: false") {
-		t.Fatalf("sentinel Deployment should disable ambient service account token\n--- deployment ---\n%s", deployment)
-	}
-	if strings.Contains(deployment, "serviceAccountToken:") {
-		t.Fatalf("sentinel Deployment should not mount a projected service account token\n--- deployment ---\n%s", deployment)
+	for _, want := range []string{
+		"serviceAccountName: sentinel",
+		"automountServiceAccountToken: false",
+		"- name: KERNEL_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kernel/token",
+		"- name: kernel-token\n          mountPath: /var/run/secrets/cavalier/kernel\n          readOnly: true",
+		"- name: kernel-token\n        projected:",
+		"path: token",
+		"audience: cavalier-kernel",
+		"expirationSeconds: 3600",
+	} {
+		if !strings.Contains(deployment, want) {
+			t.Fatalf("sentinel Deployment missing %q\n--- deployment ---\n%s", want, deployment)
+		}
 	}
 }
 
