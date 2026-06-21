@@ -4,6 +4,7 @@ import (
 	stdx509 "crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/key"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -240,6 +242,83 @@ func TestBuildKmakerConfigRejectsBroadClusterSigningCAOverride(t *testing.T) {
 
 	if _, err := BuildKmakerConfig(cfg); err == nil {
 		t.Fatal("expected broad cluster CA override to be rejected")
+	}
+}
+
+func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "console.secondstarcavalier.cloud",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestServiceKeys(t, dir,
+		"sentinel", "gateway", "oauth", "eventbus", "opa",
+		"anthropic", "openai", "stratum", "argus", "timedb", "graphdb",
+	)
+
+	bundle, err := BuildBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kmakerYAML := bundle.Services["kmaker"]
+	if kmakerYAML == "" {
+		t.Fatalf("bundle services missing kmaker: %#v", bundle.Services)
+	}
+	kmakerConfig, err := protoKmaker.ConfigFromBytes([]byte(kmakerYAML))
+	if err != nil {
+		t.Fatalf("parsing bundled kmaker config: %v", err)
+	}
+	if got := kmakerConfig.GetTokenAudience(); got != "kmaker" {
+		t.Fatalf("bundled kmaker token audience = %q, want kmaker", got)
+	}
+	if kmakerConfig.GetSigningCa() == nil {
+		t.Fatal("bundled kmaker config missing signing CA")
+	}
+	values := BundleServiceValues(bundle)
+	if entry, ok := values["kmaker"].(map[string]interface{}); !ok || entry["config"] == "" {
+		t.Fatalf("bundle service values missing kmaker config: %#v", values["kmaker"])
+	}
+}
+
+func writeTestServiceKeys(t *testing.T, cfgDir string, services ...string) {
+	t.Helper()
+	for _, service := range services {
+		_, privateKey, err := GenerateCredPair()
+		if err != nil {
+			t.Fatalf("generating key for %s: %v", service, err)
+		}
+		keyBytes, err := protoKey.KeyToYAML(privateKey)
+		if err != nil {
+			t.Fatalf("marshaling key for %s: %v", service, err)
+		}
+		credDir := filepath.Join(cfgDir, "creds", service)
+		if err := os.MkdirAll(credDir, 0755); err != nil {
+			t.Fatalf("creating cred dir for %s: %v", service, err)
+		}
+		if err := os.WriteFile(filepath.Join(credDir, "key.yaml"), keyBytes, 0600); err != nil {
+			t.Fatalf("writing key for %s: %v", service, err)
+		}
 	}
 }
 

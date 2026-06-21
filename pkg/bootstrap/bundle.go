@@ -80,6 +80,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"timedb", dc.TimedbConfig},
 		{"graphdb", dc.GraphdbConfig},
 		{"colddb", dc.ColddbConfig},
+		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {
 		if len(pair.data) > 0 {

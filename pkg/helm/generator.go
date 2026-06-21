@@ -154,6 +154,10 @@ type serviceSpec struct {
 	SkipProbes bool
 	// ServiceAccountName, if non-empty, creates and uses a dedicated service account.
 	ServiceAccountName string
+	// AutomountServiceAccountToken, when set, controls ambient Kubernetes token automounting.
+	AutomountServiceAccountToken *bool
+	// ServiceAccountTokenProjection, if non-nil, mounts an explicit projected Kubernetes token.
+	ServiceAccountTokenProjection *serviceAccountTokenProjection
 	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
 	TokenReviewRBAC bool
 	// PodReadRBAC grants the service account namespace-scoped permission to read Pods.
@@ -183,11 +187,93 @@ type serviceSpec struct {
 	GoMemLimit string
 }
 
+type serviceAccountTokenProjection struct {
+	VolumeName        string
+	MountPath         string
+	TokenPath         string
+	Audience          string
+	ExpirationSeconds int32
+	IncludeKubeRootCA bool
+	IncludeNamespace  bool
+}
+
 func serviceAccountLine(svc serviceSpec) string {
 	if svc.ServiceAccountName == "" {
 		return ""
 	}
 	return fmt.Sprintf("      serviceAccountName: %s", svc.ServiceAccountName)
+}
+
+func podServiceAccountLines(svc serviceSpec) string {
+	var b bytes.Buffer
+	if line := serviceAccountLine(svc); line != "" {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString(automountServiceAccountTokenLine(svc))
+	return b.String()
+}
+
+func automountServiceAccountTokenLine(svc serviceSpec) string {
+	if svc.AutomountServiceAccountToken == nil {
+		return ""
+	}
+	return fmt.Sprintf("      automountServiceAccountToken: %t\n", *svc.AutomountServiceAccountToken)
+}
+
+func projectedServiceAccountTokenMount(svc serviceSpec) string {
+	proj := svc.ServiceAccountTokenProjection
+	if proj == nil {
+		return ""
+	}
+	return fmt.Sprintf(`        - name: %s
+          mountPath: %s
+          readOnly: true
+`, proj.VolumeName, proj.MountPath)
+}
+
+func projectedServiceAccountTokenVolume(svc serviceSpec) string {
+	proj := svc.ServiceAccountTokenProjection
+	if proj == nil {
+		return ""
+	}
+	tokenPath := proj.TokenPath
+	if tokenPath == "" {
+		tokenPath = "token"
+	}
+	expirationSeconds := proj.ExpirationSeconds
+	if expirationSeconds <= 0 {
+		expirationSeconds = 3600
+	}
+	var b bytes.Buffer
+	b.WriteString(fmt.Sprintf(`      - name: %s
+        projected:
+          defaultMode: 0400
+          sources:
+          - serviceAccountToken:
+              path: %s
+`, proj.VolumeName, tokenPath))
+	if proj.Audience != "" {
+		b.WriteString(fmt.Sprintf("              audience: %s\n", proj.Audience))
+	}
+	b.WriteString(fmt.Sprintf("              expirationSeconds: %d\n", expirationSeconds))
+	if proj.IncludeKubeRootCA {
+		b.WriteString(`          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+`)
+	}
+	if proj.IncludeNamespace {
+		b.WriteString(`          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace
+`)
+	}
+	return b.String()
 }
 
 // resourcesBlock returns the YAML `resources:` block for a container, indented
@@ -240,6 +326,18 @@ func goMemLimitEnv(svc serviceSpec) string {
 	return fmt.Sprintf("        - name: GOMEMLIMIT\n          value: \"%s\"\n", svc.GoMemLimit)
 }
 
+func falsePtr() *bool {
+	v := false
+	return &v
+}
+
+func kmakerTokenAudience(cfg *protoOperator.Config) string {
+	if cfg.GetKmaker().GetTokenAudience() != "" {
+		return cfg.GetKmaker().GetTokenAudience()
+	}
+	return "kmaker"
+}
+
 func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.Topology {
 	t := cfg.GetTopology()
 	if t == nil {
@@ -267,6 +365,7 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		ArgusNodes:      t.ArgusNodes,
 		StratumNodes:    t.StratumNodes,
 		SamlNodes:       t.SamlNodes,
+		KmakerNodes:     t.KmakerNodes,
 	}
 }
 
@@ -335,9 +434,29 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//     count + replication settings.
 	svcs := []serviceSpec{
 		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
-			ServiceAccountName: "kernel", MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+			ServiceAccountName:           "kernel",
+			AutomountServiceAccountToken: falsePtr(),
+			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
+				VolumeName:        "kmaker-token",
+				MountPath:         "/var/run/secrets/cavalier/kmaker",
+				TokenPath:         "token",
+				Audience:          kmakerTokenAudience(cfg),
+				ExpirationSeconds: 600,
+			},
+			ExtraEnvVars: "        - name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token\n",
+			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
 		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
-			ServiceAccountName: "kmaker", TokenReviewRBAC: true, PodReadRBAC: true,
+			ServiceAccountName:           "kmaker",
+			AutomountServiceAccountToken: falsePtr(),
+			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
+				VolumeName:        "kubernetes-api-token",
+				MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
+				TokenPath:         "token",
+				ExpirationSeconds: 3600,
+				IncludeKubeRootCA: true,
+				IncludeNamespace:  true,
+			},
+			TokenReviewRBAC: true, PodReadRBAC: true,
 			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
 			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
 		{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
@@ -701,6 +820,9 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 	if ns == "" {
 		ns = "cavalier"
 	}
+	if svc.AutomountServiceAccountToken == nil {
+		svc.AutomountServiceAccountToken = falsePtr()
+	}
 
 	if svc.ServiceAccountName != "" {
 		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
@@ -973,9 +1095,7 @@ spec:
 		ssBuf.WriteString(`    spec:
       {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
 `)
-		if svc.ServiceAccountName != "" {
-			ssBuf.WriteString(fmt.Sprintf("      serviceAccountName: %s\n", svc.ServiceAccountName))
-		}
+		ssBuf.WriteString(podServiceAccountLines(svc))
 		ssBuf.WriteString(`      initContainers:
       - name: config-select
         image: busybox:1.36
@@ -1029,6 +1149,7 @@ spec:
         - name: bootstrap
           mountPath: /bootstrap
 `)
+		ssBuf.WriteString(projectedServiceAccountTokenMount(svc))
 		if svc.HasPVC {
 			ssBuf.WriteString(`        - name: data
           mountPath: /app/data
@@ -1050,6 +1171,7 @@ spec:
       - name: bootstrap
         emptyDir: {}
 `)
+		ssBuf.WriteString(projectedServiceAccountTokenVolume(svc))
 		for i := range int(svc.Replicas) {
 			name := fmt.Sprintf("%s-%d", svc.Name, i)
 			ssBuf.WriteString(fmt.Sprintf(`      - name: config-%d
@@ -1118,7 +1240,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, serviceAccountLine(svc), name, name, svc.Name))
+`, podServiceAccountLines(svc), name, name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}
@@ -1180,6 +1302,7 @@ spec:
           mountPath: /app/data
 `)
 			}
+			deployBuf.WriteString(projectedServiceAccountTokenMount(svc))
 			if svc.WebAppHostPath != "" {
 				deployBuf.WriteString(`        - name: webapp
           mountPath: /web/app
@@ -1210,6 +1333,7 @@ spec:
           claimName: %s-data
 `, name))
 			}
+			deployBuf.WriteString(projectedServiceAccountTokenVolume(svc))
 			if svc.WebAppHostPath != "" {
 				deployBuf.WriteString(fmt.Sprintf(`      - name: webapp
         hostPath:
