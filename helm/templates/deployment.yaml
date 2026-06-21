@@ -90,7 +90,7 @@ spec:
       volumes:
       - name: kubernetes-api-token
         projected:
-          defaultMode: 0400
+          defaultMode: 0444
           sources:
           - serviceAccountToken:
               path: token

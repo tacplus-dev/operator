@@ -272,7 +272,7 @@ func projectedServiceAccountTokenProjectionVolume(proj *serviceAccountTokenProje
 	var b bytes.Buffer
 	b.WriteString(fmt.Sprintf(`      - name: %s
         projected:
-          defaultMode: 0400
+          defaultMode: 0444
           sources:
           - serviceAccountToken:
               path: %s
