@@ -1,12 +1,17 @@
 package bootstrap
 
 import (
+	stdx509 "crypto/x509"
 	"fmt"
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
+	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/key"
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -138,6 +143,121 @@ func TestGenerateCryptoPreservesExistingClusterCA(t *testing.T) {
 	}
 }
 
+func TestGenerateCryptoCreatesConstrainedKmakerSigningCA(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
+		t.Fatal("kmaker signing CA was not generated")
+	}
+	if got, cluster := cfg.Pki.KmakerSigningCa.Chain[0].Id, cfg.Pki.ClusterCa.Chain[0].Id; got == cluster {
+		t.Fatalf("kmaker signing CA reused broad cluster CA id %q", got)
+	}
+
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.KmakerSigningCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := cc.Leaf().X509Certificate()
+	if !cert.IsCA {
+		t.Fatal("kmaker signing certificate must be a CA")
+	}
+	if cert.MaxPathLen != 0 || !cert.MaxPathLenZero {
+		t.Fatalf("kmaker signing CA path length = %d zero=%v, want constrained zero", cert.MaxPathLen, cert.MaxPathLenZero)
+	}
+
+	kmakerConfig, err := BuildKmakerConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := kmakerConfig.SigningCa.Chain[0].Id, cfg.Pki.KmakerSigningCa.Chain[0].Id; got != want {
+		t.Fatalf("kmaker config signing CA id = %q, want dedicated kmaker signing CA %q", got, want)
+	}
+	if got, broad := kmakerConfig.SigningCa.Chain[0].Id, cfg.Pki.ClusterCa.Chain[0].Id; got == broad {
+		t.Fatalf("kmaker config signing CA reused broad cluster CA id %q", got)
+	}
+}
+
+func TestKmakerSigningCAChainsToRoot(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	signingKey, err := wrapperKey.NewImmutableKey(cfg.Pki.KmakerSigningCa.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signingChain, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.KmakerSigningCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafChain, err := generateSignedCertChain(
+		signingKey,
+		signingChain.Leaf().X509Certificate(),
+		[]string{"kernel-0"},
+		"spiffe://local/dev/kernel/kernel-0",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := wrapperX509.NewImmutableX509CertChain(leafChain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.RootCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	roots := stdx509.NewCertPool()
+	roots.AddCert(root.Leaf().X509Certificate())
+	intermediates := stdx509.NewCertPool()
+	intermediates.AddCert(signingChain.Leaf().X509Certificate())
+	intermediates.AddCert(cluster.Leaf().X509Certificate())
+	if _, err := leaf.Leaf().X509Certificate().Verify(stdx509.VerifyOptions{
+		DNSName:       "kernel-0",
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   time.Now(),
+		KeyUsages:     []stdx509.ExtKeyUsage{stdx509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		t.Fatalf("kmaker leaf did not verify to root through kmaker signing CA: %v", err)
+	}
+}
+
+func TestBuildKmakerConfigRejectsBroadClusterSigningCAOverride(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Kmaker = &protoKmaker.Config{SigningCa: cfg.Pki.ClusterCa}
+
+	if _, err := BuildKmakerConfig(cfg); err == nil {
+		t.Fatal("expected broad cluster CA override to be rejected")
+	}
+}
+
+func TestEnsureKmakerSigningCABackfillsExistingClusterCrypto(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Pki.KmakerSigningCa = nil
+
+	if err := ensureKmakerSigningCA(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
+		t.Fatal("kmaker signing CA was not backfilled")
+	}
+}
+
 func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	cfg := &protoOperator.Config{}
 	if err := GenerateCrypto(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
@@ -147,6 +267,8 @@ func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	clusterKeyID := cfg.Pki.ClusterCa.Key.Id
 	signingCertID := cfg.Pki.NodeSigningCa[0].Chain[0].Id
 	signingKeyID := cfg.Pki.NodeSigningCa[0].Key.Id
+	kmakerSigningCertID := cfg.Pki.KmakerSigningCa.Chain[0].Id
+	kmakerSigningKeyID := cfg.Pki.KmakerSigningCa.Key.Id
 	oldLeafID := cfg.Pki.NodeTls[0].Chain[0].Id
 
 	if err := GenerateKernelTLS(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
@@ -164,6 +286,12 @@ func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	}
 	if got := cfg.Pki.NodeSigningCa[0].Key.Id; got != signingKeyID {
 		t.Fatalf("node signing key id changed from %q to %q", signingKeyID, got)
+	}
+	if got := cfg.Pki.KmakerSigningCa.Chain[0].Id; got != kmakerSigningCertID {
+		t.Fatalf("kmaker signing cert id changed from %q to %q", kmakerSigningCertID, got)
+	}
+	if got := cfg.Pki.KmakerSigningCa.Key.Id; got != kmakerSigningKeyID {
+		t.Fatalf("kmaker signing key id changed from %q to %q", kmakerSigningKeyID, got)
 	}
 	if got := cfg.Pki.NodeTls[0].Chain[0].Id; got == oldLeafID {
 		t.Fatalf("kernel TLS leaf id did not change: %q", got)

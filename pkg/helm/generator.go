@@ -156,6 +156,8 @@ type serviceSpec struct {
 	ServiceAccountName string
 	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
 	TokenReviewRBAC bool
+	// PodReadRBAC grants the service account namespace-scoped permission to read Pods.
+	PodReadRBAC bool
 	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
@@ -335,7 +337,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
 			ServiceAccountName: "kernel", MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
 		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
-			ServiceAccountName: "kmaker", TokenReviewRBAC: true,
+			ServiceAccountName: "kmaker", TokenReviewRBAC: true, PodReadRBAC: true,
 			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
 			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
 		{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
@@ -732,6 +734,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: %s-tokenreview
+subjects:
+- kind: ServiceAccount
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+`, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
+	}
+	if svc.PodReadRBAC && svc.ServiceAccountName != "" {
+		charts.Files[fmt.Sprintf("templates/%s/pod-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: %s-pod-reader
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: %s-pod-reader
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "cavalier.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: %s-pod-reader
 subjects:
 - kind: ServiceAccount
   name: %s

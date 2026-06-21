@@ -130,6 +130,9 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 	if err != nil {
 		return err
 	}
+	if err := ensureKmakerSigningCAWithParent(cfg, clusterCAImmKey, clusterCACert); err != nil {
+		return err
+	}
 
 	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
 	if err != nil {
@@ -260,6 +263,50 @@ func ensureClusterCA(cfg *protoOperator.Config, rootKey *wrapperKey.ImmutableKey
 	}
 
 	return clusterCAImmKey, clusterCACert, nil
+}
+
+func kmakerSigningCANeedsGeneration(cfg *protoOperator.Config) bool {
+	return cfg == nil ||
+		cfg.Pki == nil ||
+		cfg.Pki.KmakerSigningCa == nil ||
+		len(cfg.Pki.KmakerSigningCa.Chain) == 0 ||
+		cfg.Pki.KmakerSigningCa.Key == nil
+}
+
+func ensureKmakerSigningCA(cfg *protoOperator.Config) error {
+	if !kmakerSigningCANeedsGeneration(cfg) {
+		return nil
+	}
+	if cfg == nil || cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
+		return fmt.Errorf("pki.cluster_ca with private key is required")
+	}
+	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
+	if err != nil {
+		return fmt.Errorf("loading cluster CA key: %w", err)
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		return fmt.Errorf("loading cluster CA cert: %w", err)
+	}
+	return ensureKmakerSigningCAWithParent(cfg, clusterCAImmKey, cc.Leaf().X509Certificate())
+}
+
+func ensureKmakerSigningCAWithParent(cfg *protoOperator.Config, clusterKey *wrapperKey.ImmutableKey, clusterCert *stdx509.Certificate) error {
+	if cfg == nil {
+		return fmt.Errorf("operator config is nil")
+	}
+	if cfg.Pki == nil {
+		cfg.Pki = &protoOperator.PKI{}
+	}
+	if !kmakerSigningCANeedsGeneration(cfg) {
+		return nil
+	}
+	chain, err := generateKmakerSigningCACertChain(clusterKey, clusterCert)
+	if err != nil {
+		return err
+	}
+	cfg.Pki.KmakerSigningCa = chain
+	return nil
 }
 
 // GenerateKernelTLS regenerates only kernel node/edge TLS leaf certificates
@@ -484,6 +531,62 @@ func generateSigningCACertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.
 	caCertProto, err := wrapperX509.NewX509Cert(caCertPEM)
 	if err != nil {
 		return nil, fmt.Errorf("wrapping CA cert for signing chain: %w", err)
+	}
+
+	return &protoX509.X509CertChain{
+		Chain: []*protoX509.X509Cert{certProto, caCertProto},
+		Key:   signingKey,
+	}, nil
+}
+
+func generateKmakerSigningCACertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.Certificate) (*protoX509.X509CertChain, error) {
+	signingKey, err := wrapperKey.NewEC384Key()
+	if err != nil {
+		return nil, fmt.Errorf("generating kmaker signing CA key: %w", err)
+	}
+	signingKey.Created = time.Now().Unix()
+
+	signingImmKey, err := wrapperKey.NewImmutableKey(signingKey)
+	if err != nil {
+		return nil, fmt.Errorf("creating immutable kmaker signing CA key: %w", err)
+	}
+
+	now := time.Now()
+	notAfter := now.Add(caTTL)
+	if caCert.NotAfter.Before(notAfter) {
+		notAfter = caCert.NotAfter
+	}
+	if !notAfter.After(now) {
+		return nil, fmt.Errorf("cluster CA is expired")
+	}
+	template := &stdx509.Certificate{
+		SerialNumber:          wrapperX509.GenerateSerialNumber(),
+		Subject:               utf8CN("kmaker-kernel-signing-ca"),
+		NotBefore:             now,
+		NotAfter:              notAfter,
+		KeyUsage:              stdx509.KeyUsageCertSign | stdx509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
+	}
+
+	certDER, err := stdx509.CreateCertificate(rand.Reader, template, caCert, signingImmKey.PublicKey(), caKey.PrivateKey())
+	if err != nil {
+		return nil, fmt.Errorf("creating kmaker signing CA certificate: %w", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certProto, err := wrapperX509.NewX509Cert(certPEM)
+	if err != nil {
+		return nil, fmt.Errorf("wrapping kmaker signing CA cert: %w", err)
+	}
+	certProto.Id = signingKey.Id
+
+	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+	caCertProto, err := wrapperX509.NewX509Cert(caCertPEM)
+	if err != nil {
+		return nil, fmt.Errorf("wrapping CA cert for kmaker signing chain: %w", err)
 	}
 
 	return &protoX509.X509CertChain{

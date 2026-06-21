@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
@@ -91,6 +92,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 
 	// Generate or rotate crypto if the cluster has no TLS certs yet, or if
 	// existing kernel certs predate the canonical SPIFFE service URI.
+	cryptoUpdated := false
 	if KernelTLSNeedsRegeneration(cfg, nodeCount, 0, kernelSpiffeURI) {
 		if hasClusterCAKey(cfg) {
 			if err := GenerateKernelTLS(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
@@ -99,6 +101,15 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		} else if err := GenerateCrypto(cfg, nodeCount, 0, cfg.Fqdn, spiffeTrustDomain); err != nil {
 			return nil, fmt.Errorf("generating crypto material: %w", err)
 		}
+		cryptoUpdated = true
+	}
+	if kmakerSigningCANeedsGeneration(cfg) {
+		if err := ensureKmakerSigningCA(cfg); err != nil {
+			return nil, fmt.Errorf("generating kmaker signing CA: %w", err)
+		}
+		cryptoUpdated = true
+	}
+	if cryptoUpdated {
 		if err := SaveCrypto(cfgDir, cfg); err != nil {
 			if !isReadOnlyConfigWriteError(err) {
 				return nil, fmt.Errorf("saving crypto: %w", err)
@@ -409,7 +420,13 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 		kmakerConfig.ClusterCa = append(kmakerConfig.ClusterCa, cfg.Pki.ClusterCa.Chain...)
 	}
 	if kmakerConfig.SigningCa == nil {
-		kmakerConfig.SigningCa = cfg.Pki.ClusterCa
+		if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
+			return nil, fmt.Errorf("pki.kmaker_signing_ca with private key is required")
+		}
+		kmakerConfig.SigningCa = cfg.Pki.KmakerSigningCa
+	}
+	if err := validateKmakerSigningCA(kmakerConfig.SigningCa, cfg.Pki.ClusterCa); err != nil {
+		return nil, err
 	}
 	if kmakerConfig.SpiffePrefix == "" {
 		kmakerConfig.SpiffePrefix = cfg.SpiffePrefix
@@ -435,6 +452,38 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 	}
 
 	return kmakerConfig, nil
+}
+
+func validateKmakerSigningCA(signingCA, clusterCA *protoX509.X509CertChain) error {
+	if signingCA == nil || len(signingCA.Chain) == 0 || signingCA.Key == nil {
+		return fmt.Errorf("pki.kmaker_signing_ca with private key is required")
+	}
+	if clusterCA == nil || len(clusterCA.Chain) == 0 {
+		return fmt.Errorf("pki.cluster_ca certificate is required")
+	}
+	if signingCA.Chain[0].Base64 == clusterCA.Chain[0].Base64 {
+		return fmt.Errorf("kmaker signing_ca must not reuse the broad cluster_ca")
+	}
+
+	signingChain, err := wrapperX509.NewImmutableX509CertChain(signingCA)
+	if err != nil {
+		return fmt.Errorf("loading kmaker signing CA: %w", err)
+	}
+	clusterChain, err := wrapperX509.NewImmutableX509CertChain(clusterCA)
+	if err != nil {
+		return fmt.Errorf("loading cluster CA: %w", err)
+	}
+	signingCert := signingChain.Leaf().X509Certificate()
+	if !signingCert.IsCA {
+		return fmt.Errorf("kmaker signing_ca must be a CA")
+	}
+	if signingCert.MaxPathLen != 0 || !signingCert.MaxPathLenZero {
+		return fmt.Errorf("kmaker signing_ca must have path length zero")
+	}
+	if err := signingCert.CheckSignatureFrom(clusterChain.Leaf().X509Certificate()); err != nil {
+		return fmt.Errorf("kmaker signing_ca must be signed by cluster_ca: %w", err)
+	}
+	return nil
 }
 
 // FilterTopology zeros out node counts for services not in the allowed set.
