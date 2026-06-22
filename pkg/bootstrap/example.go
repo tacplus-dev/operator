@@ -14,7 +14,6 @@ import (
 
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/jwk"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoAnthropic "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/anthropic"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
@@ -230,89 +229,6 @@ func InitOPA(cfgDir string) error {
 	return nil
 }
 
-// WriteCreds generates credential pairs for all services and registers delegates.
-func WriteCreds(cfgDir string) error {
-	credsDir := filepath.Join(cfgDir, "creds")
-	if err := os.MkdirAll(credsDir, 0755); err != nil {
-		return fmt.Errorf("creating creds directory: %w", err)
-	}
-
-	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
-
-	for _, name := range FrontendServiceNames {
-		if err := writeCredPairAndDelegate(credsDir, kernelPath, name, name); err != nil {
-			return err
-		}
-		if err := AddDelegate(kernelPath, name, "any", nil); err != nil {
-			return fmt.Errorf("adding delegate for %s: %w", name, err)
-		}
-	}
-
-	// Gateway — HTTP gateway, needs S2S access to backend services
-	if err := writeCredPairAndDelegate(credsDir, kernelPath, "gateway", "any"); err != nil {
-		return err
-	}
-
-	// TimeDB — needs S2S access (state registration)
-	if err := writeCredPairAndDelegate(credsDir, kernelPath, "timedb", "any"); err != nil {
-		return err
-	}
-
-	// Graphdb — graph database needs S2S access (state registration)
-	if err := writeCredPairAndDelegate(credsDir, kernelPath, "graphdb", "any"); err != nil {
-		return err
-	}
-
-	// Stratum — Supervisor LLM stateful SQL workspace, needs S2S access (state registration)
-	if err := writeCredPairAndDelegate(credsDir, kernelPath, "stratum", "any"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// writeCredPairAndDelegate generates a cred pair for a service, writes it to disk,
-// and adds a delegate entry to kernel.yaml.
-func writeCredPairAndDelegate(credsDir, kernelPath, service, targetService string) error {
-	credDir := filepath.Join(credsDir, service)
-	if _, err := os.Stat(credDir); err == nil {
-		fmt.Printf("  (exists, skipped) creds/%s/\n", service)
-		return nil
-	}
-
-	if err := os.MkdirAll(credDir, 0755); err != nil {
-		return fmt.Errorf("creating cred dir for %s: %w", service, err)
-	}
-
-	credPair, privateKey, err := GenerateCredPair()
-	if err != nil {
-		return fmt.Errorf("generating cred pair for %s: %w", service, err)
-	}
-
-	credBytes, err := protoJwk.JwkToYAML(credPair)
-	if err != nil {
-		return fmt.Errorf("marshaling cred pair for %s: %w", service, err)
-	}
-	if err := os.WriteFile(filepath.Join(credDir, "creds.yaml"), credBytes, 0644); err != nil {
-		return fmt.Errorf("writing creds for %s: %w", service, err)
-	}
-
-	keyBytes, err := protoKey.KeyToYAML(privateKey)
-	if err != nil {
-		return fmt.Errorf("marshaling key for %s: %w", service, err)
-	}
-	if err := os.WriteFile(filepath.Join(credDir, "key.yaml"), keyBytes, 0600); err != nil {
-		return fmt.Errorf("writing key for %s: %w", service, err)
-	}
-
-	if err := AddDelegate(kernelPath, service, targetService, nil); err != nil {
-		return fmt.Errorf("adding delegate for %s: %w", service, err)
-	}
-
-	fmt.Printf("  creds/%s/ (delegate → %s)\n", service, targetService)
-	return nil
-}
-
 // BuildKernelConfigProto reads the config directory and assembles the kernel Config proto.
 func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 	servicesDir := filepath.Join(cfgDir, "services")
@@ -341,7 +257,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		}
 	}
 
-	// 3. Build delegates from source config + cred pairs.
+	// 3. Build delegates from source config + Kubernetes service-account matchers.
 	var delegates []*protoKernel.Delegate
 	for _, sd := range kernelCfg.Delegates {
 		var authSvcs []protoServices.ServiceName
@@ -357,18 +273,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		}
 		if isKernelAuthenticatedService(sd.Name) {
 			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, sd.Name)
-		}
-		// Find cred pair (Jwk) for this delegate
-		credDir := filepath.Join(cfgDir, "creds", sd.Name)
-		for _, ext := range []string{".yaml", ".json"} {
-			p := filepath.Join(credDir, "creds"+ext)
-			if data, err := os.ReadFile(p); err == nil {
-				jwk, err := protoJwk.JwkFromBytes(data)
-				if err == nil && jwk != nil {
-					delegate.CredPairs = append(delegate.CredPairs, jwk)
-				}
-				break
-			}
 		}
 		delegates = append(delegates, delegate)
 	}

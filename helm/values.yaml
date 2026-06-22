@@ -31,7 +31,7 @@ config:
   # crypto.yaml content (PKI material). Stored as a Secret.
   # Populate via: helm install ... --set-file config.crypto=./build/crypto.yaml
   crypto: ""
-  # Base64-encoded tar.gz of the services/ and creds/ directories.
+  # Base64-encoded tar.gz of the services/ directory.
   # Populate via: just pack  (outputs build/config-bundle.tar.gz.b64)
   # Then: helm install ... --set-string config.bundle=$(cat build/config-bundle.tar.gz.b64)
   bundle: ""

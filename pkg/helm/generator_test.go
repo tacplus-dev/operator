@@ -113,25 +113,72 @@ func TestGenerateKmakerProjectedKubernetesAPITokenAndRBAC(t *testing.T) {
 func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "cavalier",
+		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
-			SentinelNodes: 1,
+			SentinelNodes:   1,
+			EventbusNodes:   1,
+			GatewayNodes:    1,
+			OauthNodes:      1,
+			MsggatewayNodes: 1,
+			OpaNodes:        1,
+			TimedbNodes:     1,
+			GraphdbNodes:    1,
+			ColddbNodes:     1,
+			ArgusNodes:      1,
+			StratumNodes:    1,
+			SamlNodes:       1,
+		},
+		OptionalServices: &protoOperator.OptionalServices{
+			Anthropic: true,
+			Openai:    true,
+			Mcp:       true,
+			Saml:      true,
+			Oauth:     true,
 		},
 	})
 
-	deployment := chartFile(t, charts, "templates/sentinel/deployment.yaml")
-	for _, want := range []string{
-		"serviceAccountName: sentinel",
-		"automountServiceAccountToken: false",
-		"- name: KERNEL_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kernel/token",
-		"- name: kernel-token\n          mountPath: /var/run/secrets/cavalier/kernel\n          readOnly: true",
-		"- name: kernel-token\n        projected:",
-		"defaultMode: 0444",
-		"path: token",
-		"audience: cavalier-kernel",
-		"expirationSeconds: 3600",
-	} {
-		if !strings.Contains(deployment, want) {
-			t.Fatalf("sentinel Deployment missing %q\n--- deployment ---\n%s", want, deployment)
+	services := []string{
+		"sentinel",
+		"eventbus",
+		"gateway",
+		"opa",
+		"argus",
+		"timedb",
+		"graphdb",
+		"stratum",
+		"oauth",
+		"saml",
+		"letsencrypt",
+		"anthropic",
+		"openai",
+		"mcp",
+		"colddb",
+		"msggateway",
+	}
+	for _, service := range services {
+		t.Run(service, func(t *testing.T) {
+			deployment := chartFile(t, charts, "templates/"+service+"/deployment.yaml")
+			for _, want := range []string{
+				"serviceAccountName: " + service,
+				"automountServiceAccountToken: false",
+				"- name: KERNEL_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kernel/token",
+				"- name: kernel-token\n          mountPath: /var/run/secrets/cavalier/kernel\n          readOnly: true",
+				"- name: kernel-token\n        projected:",
+				"defaultMode: 0444",
+				"path: token",
+				"audience: cavalier-kernel",
+				"expirationSeconds: 3600",
+			} {
+				if !strings.Contains(deployment, want) {
+					t.Fatalf("%s Deployment missing %q\n--- deployment ---\n%s", service, want, deployment)
+				}
+			}
+		})
+	}
+	for _, service := range services {
+		rbac := chartFile(t, charts, "templates/"+service+"/serviceaccount.yaml")
+		if !strings.Contains(rbac, "name: "+service) {
+			t.Fatalf("%s ServiceAccount missing service name\n--- serviceaccount ---\n%s", service, rbac)
 		}
 	}
 }

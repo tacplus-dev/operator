@@ -1,11 +1,8 @@
 package bootstrap
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 )
 
 // ResolveConfigDirSmart determines the bootstrap directory using smart detection:
@@ -26,26 +23,4 @@ func ResolveConfigDirSmart() string {
 		}
 	}
 	return OperatorBootstrapDir
-}
-
-// LoadPrivateKey reads a Key proto from a YAML or JSON file in a cred pair directory.
-func LoadPrivateKey(credPairDir string) (*protoKey.Key, error) {
-	var keyPath string
-	for _, ext := range []string{".yaml", ".json"} {
-		p := filepath.Join(credPairDir, "key"+ext)
-		if _, err := os.Stat(p); err == nil {
-			keyPath = p
-			break
-		}
-	}
-	if keyPath == "" {
-		return nil, fmt.Errorf("no key file found in %s", credPairDir)
-	}
-
-	data, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return protoKey.KeyFromBytes(data)
 }

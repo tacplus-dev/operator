@@ -432,28 +432,13 @@ func runMerge(cmd *cobra.Command, args []string) error {
 
 var addCredsCmd = &cobra.Command{
 	Use:   "add-creds <name>",
-	Short: "Generate credential pair for a service and add kernel delegate",
-	Long: `Generates an EC credential pair for a service and registers it as a
-kernel delegate with authorized access to all services ("any").
-
-Idempotent: skips if creds/<name>/ already exists.
-
-Example:
-  cavalier-operator add-creds letsencrypt`,
+	Short: "Deprecated: service cred_pairs are no longer generated",
+	Long: `Service-to-service bootstrap now uses projected Kubernetes service-account
+tokens and Delegate.kubernetes_service_accounts matchers. Static service
+cred_pairs are no longer generated.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := resolveConfigDir()
-		name := args[0]
-		credsDir := filepath.Join(dir, "creds")
-		kernelPath := filepath.Join(dir, "services", "kernel.yaml")
-		if err := os.MkdirAll(credsDir, 0755); err != nil {
-			return fmt.Errorf("creating creds directory: %w", err)
-		}
-		if err := writeCredPairAndDelegate(credsDir, kernelPath, name, "any"); err != nil {
-			return err
-		}
-		fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
-		return nil
+		return fmt.Errorf("service cred_pairs are removed; configure Kubernetes service-account matchers instead")
 	},
 }
 

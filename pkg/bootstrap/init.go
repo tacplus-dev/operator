@@ -282,13 +282,9 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generating cluster PKI: %w", err)
 	}
 
-	// Write services/ and creds/ — idempotent per file (skips existing files).
+	// Write services/ — idempotent per file (skips existing files).
 	fmt.Println("Writing services/...")
 	if err := WriteServices(dir); err != nil {
-		return err
-	}
-	fmt.Println("Writing creds/...")
-	if err := WriteCreds(dir); err != nil {
 		return err
 	}
 
@@ -335,7 +331,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  stratum:    %d\n", topo.StratumNodes)
 	fmt.Printf("  saml:       %s\n", samlStatus)
 	fmt.Printf("  services/   editable service configs\n")
-	fmt.Printf("  creds/      credential pairs\n")
 	fmt.Printf("  ca.pem      CA cert for host trust\n")
 	fmt.Printf("\nEdit services/*.yaml, then run:\n")
 	fmt.Printf("  cavalier-operator generate\n")

@@ -9,7 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
@@ -71,23 +70,10 @@ func normalizeBase64Field(m map[string]any) error {
 }
 
 // BuildBackendFields returns the backend connection YAML map fields
-// (endpoints, private_key, trusted_cas, spiffe_trust_domain, location_path) for
-// services connecting to kernel. The SPIFFE values must match kernel's
-// bootstrap config so services can build canonical SPIFFE identities before
-// fetching runtime config from ServiceConfigState.
-func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host, spiffeTrustDomain, locationPath string) (map[string]any, error) {
-	privateKeyYAML, err := protoKey.KeyToYAML(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling private_key: %w", err)
-	}
-	var privateKeyMap map[string]any
-	if err := yaml.Unmarshal(privateKeyYAML, &privateKeyMap); err != nil {
-		return nil, fmt.Errorf("unmarshaling private_key YAML: %w", err)
-	}
-	if err := normalizeBase64Field(privateKeyMap); err != nil {
-		return nil, fmt.Errorf("normalizing private_key.base64: %w", err)
-	}
-
+// (endpoints, trusted_cas, spiffe_trust_domain, location_path) for services
+// connecting to kernel. Service bootstrap now uses projected Kubernetes tokens,
+// so no service cred_pair private key is emitted into bootstrap config.
+func BuildBackendFields(trustedCAs []*protoX509.X509Cert, endpoints []*protoHost.Host, spiffeTrustDomain, locationPath string) (map[string]any, error) {
 	var trustedCAsSlice []any
 	for _, ca := range trustedCAs {
 		caYAML, err := protoX509.X509CertToYAML(ca)
@@ -114,7 +100,6 @@ func BuildBackendFields(privateKey *protoKey.Key, trustedCAs []*protoX509.X509Ce
 
 	out := map[string]any{
 		"endpoints":   endpointsSlice,
-		"private_key": privateKeyMap,
 		"trusted_cas": trustedCAsSlice,
 	}
 	if spiffeTrustDomain != "" {
@@ -136,14 +121,13 @@ type GatewayOptions struct {
 
 // BuildGatewayServiceConfig generates the serviceconfig YAML for gateway.
 func BuildGatewayServiceConfig(
-	privateKey *protoKey.Key,
 	trustedCAs []*protoX509.X509Cert,
 	opts GatewayOptions,
 	spiffeTrustDomain string,
 	locationPath string,
 	endpoints ...*protoHost.Host,
 ) ([]byte, error) {
-	config, err := BuildBackendFields(privateKey, trustedCAs, endpoints, spiffeTrustDomain, locationPath)
+	config, err := BuildBackendFields(trustedCAs, endpoints, spiffeTrustDomain, locationPath)
 	if err != nil {
 		return nil, err
 	}

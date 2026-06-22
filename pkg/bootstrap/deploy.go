@@ -182,11 +182,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	}
 
 	buildSvc := func(name string, extra func(map[string]any)) ([]byte, error) {
-		key, err := LoadPrivateKey(filepath.Join(cfgDir, "creds", name))
-		if err != nil {
-			return nil, fmt.Errorf("loading %s key: %w", name, err)
-		}
-		fields, err := BuildBackendFields(key, trustedCAs, kernelEndpoints, spiffeTrustDomain, spiffeLocationPath)
+		fields, err := BuildBackendFields(trustedCAs, kernelEndpoints, spiffeTrustDomain, spiffeLocationPath)
 		if err != nil {
 			return nil, fmt.Errorf("building %s config: %w", name, err)
 		}

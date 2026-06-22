@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/key"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -45,17 +45,12 @@ func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
 }
 
 func TestBuildBackendFieldsEmitsCanonicalSpiffeConfig(t *testing.T) {
-	_, privateKey, err := GenerateCredPair()
-	if err != nil {
-		t.Fatal(err)
-	}
 	certChain, err := GenerateTLSCertChain()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	fields, err := BuildBackendFields(
-		privateKey,
 		certChain.Chain,
 		[]*protoHost.Host{{Host: "kernel-0.kernel", Port: 5000}},
 		"local.dev",
@@ -67,6 +62,9 @@ func TestBuildBackendFieldsEmitsCanonicalSpiffeConfig(t *testing.T) {
 
 	if _, ok := fields["spiffe_prefix"]; ok {
 		t.Fatalf("spiffe_prefix should not be emitted: %#v", fields["spiffe_prefix"])
+	}
+	if _, ok := fields["private_key"]; ok {
+		t.Fatalf("private_key should not be emitted: %#v", fields["private_key"])
 	}
 	if got := fields["spiffe_trust_domain"]; got != "local.dev" {
 		t.Fatalf("spiffe_trust_domain = %v, want local.dev", got)
@@ -110,10 +108,16 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesServiceAccount(); got != "sentinel" {
 		t.Fatalf("sentinel Kubernetes service account = %q, want sentinel", got)
 	}
+	if len(sentinel.CredPairs) != 0 {
+		t.Fatalf("sentinel CredPairs = %d, want 0", len(sentinel.CredPairs))
+	}
 
 	external := findDelegate(t, cfg.Delegates, "external-client")
 	if len(external.KubernetesServiceAccounts) != 0 {
 		t.Fatalf("external-client should not get a default Kubernetes matcher: %#v", external.KubernetesServiceAccounts)
+	}
+	if len(external.CredPairs) != 0 {
+		t.Fatalf("external-client CredPairs = %d, want 0", len(external.CredPairs))
 	}
 }
 
@@ -314,14 +318,14 @@ func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	writeTestServiceKeys(t, dir,
-		"sentinel", "gateway", "oauth", "eventbus", "opa",
-		"anthropic", "openai", "stratum", "argus", "timedb", "graphdb",
-	)
-
 	bundle, err := BuildBundle(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for name, serviceYAML := range bundle.Services {
+		if strings.Contains(serviceYAML, "private_key:") {
+			t.Fatalf("bundle service %s contains private_key:\n%s", name, serviceYAML)
+		}
 	}
 	kmakerYAML := bundle.Services["kmaker"]
 	if kmakerYAML == "" {
@@ -340,27 +344,6 @@ func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 	values := BundleServiceValues(bundle)
 	if entry, ok := values["kmaker"].(map[string]interface{}); !ok || entry["config"] == "" {
 		t.Fatalf("bundle service values missing kmaker config: %#v", values["kmaker"])
-	}
-}
-
-func writeTestServiceKeys(t *testing.T, cfgDir string, services ...string) {
-	t.Helper()
-	for _, service := range services {
-		_, privateKey, err := GenerateCredPair()
-		if err != nil {
-			t.Fatalf("generating key for %s: %v", service, err)
-		}
-		keyBytes, err := protoKey.KeyToYAML(privateKey)
-		if err != nil {
-			t.Fatalf("marshaling key for %s: %v", service, err)
-		}
-		credDir := filepath.Join(cfgDir, "creds", service)
-		if err := os.MkdirAll(credDir, 0755); err != nil {
-			t.Fatalf("creating cred dir for %s: %v", service, err)
-		}
-		if err := os.WriteFile(filepath.Join(credDir, "key.yaml"), keyBytes, 0600); err != nil {
-			t.Fatalf("writing key for %s: %v", service, err)
-		}
 	}
 }
 
