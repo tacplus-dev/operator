@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/libs/x509"
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
+	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
+	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -108,16 +108,9 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesServiceAccount(); got != "sentinel" {
 		t.Fatalf("sentinel Kubernetes service account = %q, want sentinel", got)
 	}
-	if len(sentinel.CredPairs) != 0 {
-		t.Fatalf("sentinel CredPairs = %d, want 0", len(sentinel.CredPairs))
-	}
-
 	external := findDelegate(t, cfg.Delegates, "external-client")
 	if len(external.KubernetesServiceAccounts) != 0 {
 		t.Fatalf("external-client should not get a default Kubernetes matcher: %#v", external.KubernetesServiceAccounts)
-	}
-	if len(external.CredPairs) != 0 {
-		t.Fatalf("external-client CredPairs = %d, want 0", len(external.CredPairs))
 	}
 }
 

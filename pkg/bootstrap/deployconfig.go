@@ -8,8 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/host"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/x509"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"

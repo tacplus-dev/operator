@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/filesystem"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/opalib"
+	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/filesystem"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/opalib"
 )
 
 // Minimum accepted by the generated OPA policy validators.

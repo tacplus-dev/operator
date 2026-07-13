@@ -14,7 +14,7 @@ import (
 
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/libs/key"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
 	protoAnthropic "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/anthropic"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
