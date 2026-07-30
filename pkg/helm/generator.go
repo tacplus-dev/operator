@@ -20,6 +20,7 @@
 package helm
 
 import (
+	"strings"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -456,7 +457,13 @@ func (g *Generator) imageRefProj(proj, svc string) string {
 	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
 	// docker-desktop clusters where k8s shares the docker daemon, so
 	// IfNotPresent resolves the local tag without a registry.
-	if os.Getenv("CAVALIER_LOCAL_IMAGES") != "" {
+	if v := os.Getenv("CAVALIER_LOCAL_IMAGES"); v != "" {
+		// A value containing a host (slash/colon) is a registry prefix, e.g.
+		// CAVALIER_LOCAL_IMAGES=localhost:5001 -> localhost:5001/schematic/<proj>:local.
+		// Any other non-empty value uses the bare local tag (shared image store).
+		if strings.ContainsAny(v, "/:") {
+			return fmt.Sprintf("%s/schematic/%s:local", v, proj)
+		}
 		return fmt.Sprintf("schematic/%s:local", proj)
 	}
 	tag := g.resolveTag(proj, svc)
