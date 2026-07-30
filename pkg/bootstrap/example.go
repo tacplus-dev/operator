@@ -466,15 +466,22 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 }
 
 // EnsureServiceDelegates ensures kernel.yaml contains a delegate entry for
-// every deployed kernel-authenticated service. Each delegate authorizes the
-// service for itself. Existing delegates (including user-added ones like
-// oauth API-key delegates) are preserved — only missing entries are added.
+// every deployed kernel-authenticated service. Each delegate's authorized_services
+// is derived from the tacplus registry dependency graph: boundary tags (state/config
+// hosting), s2s client dependencies, and event publish/watch broker tags.
+// Existing delegates (including user-added ones like oauth API-key delegates)
+// are preserved — only missing entries are added or backfilled.
 // The function is idempotent: re-running it produces no changes.
 func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
 	kernelCfg, err := LoadKernelSourceConfig(kernelPath)
 	if err != nil {
 		return fmt.Errorf("loading kernel config: %w", err)
+	}
+
+	sd, err := loadServiceDeps()
+	if err != nil {
+		return fmt.Errorf("loading service dependencies: %w", err)
 	}
 
 	existing := make(map[string]int, len(kernelCfg.Delegates))
@@ -486,30 +493,16 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 	changed := false
 
 	for _, svc := range deployed {
+		required := sd.authorizedServicesFor(svc)
 		if idx, ok := existing[svc]; ok {
-			// Delegate exists — ensure it authorizes itself.
-			hasOwn := false
+			// Delegate exists — ensure all required services are authorized.
+			have := make(map[string]bool, len(kernelCfg.Delegates[idx].AuthorizedServices))
 			for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
-				if as == svc {
-					hasOwn = true
-					break
-				}
+				have[as] = true
 			}
-			if !hasOwn {
-				kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, svc)
-				changed = true
-			}
-			// Ensure the delegate may request a token for kernel (idempotent).
-			if svc != kernelServiceName {
-				hasKernel := false
-				for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
-					if as == kernelServiceName {
-						hasKernel = true
-						break
-					}
-				}
-				if !hasKernel {
-					kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, kernelServiceName)
+			for _, req := range required {
+				if !have[req] {
+					kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, req)
 					changed = true
 				}
 			}
@@ -532,20 +525,12 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			}
 			continue
 		}
-		// New delegate — authorize for itself only, and bind it to the
-		// Kubernetes service account the helm generator assigns this service
-		// (same name as the service, in the cluster namespace). Without this
-		// matcher kernel rejects phase-1 token exchange with "no delegate
-		// authorizes Kubernetes service account <ns>/<svc>" and NO service can
-		// start.
+		// New delegate — authorized_services derived from the registry
+		// dependency graph. Fail-closed: only declared deps, never
+		// SERVICE_NAME_ANY.
 		kernelCfg.Delegates = append(kernelCfg.Delegates, SourceDelegate{
 			Name:               svc,
-			// Every platform service must obtain a token FOR kernel (state,
-			// mint, runtime config) in addition to its own identity — phase-2
-			// token exchange fails with "delegate ... not authorized for
-			// service kernel" otherwise. Still fail-closed: self + kernel, not
-			// SERVICE_NAME_ANY.
-			AuthorizedServices: authorizedServicesFor(svc),
+			AuthorizedServices: required,
 			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
 				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
 				KubernetesServiceAccount: svc,
