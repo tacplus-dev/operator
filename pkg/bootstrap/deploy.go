@@ -13,7 +13,9 @@ import (
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
+	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
+	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -217,6 +219,31 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		if cfg.Pki.RootCa != nil {
 			gatewayOpts.RootCAs = cfg.Pki.RootCa.Chain
 		}
+	}
+
+	// Propagate operator-derived gateway TLS fields into kernel's services
+	// holder so that kernel serves the complete gateway config at runtime.
+	// BuildKernelConfigProto only loads the sparse services/gateway.yaml
+	// (enable_tcp/enable_quic); the external TLS fields are computed here
+	// from the operator's PKI and must be injected before kernel serializes.
+	{
+		if kernelConfig.Configs == nil {
+			kernelConfig.Configs = &protoServicesConfig.Services{}
+		}
+		if kernelConfig.Configs.GatewayConfig == nil {
+			kernelConfig.Configs.GatewayConfig = &protoGateway.Config{}
+			protoGateway.ConfigDefaults(kernelConfig.Configs.GatewayConfig)
+		}
+		gwCfg := kernelConfig.Configs.GatewayConfig
+		if gatewayOpts.LetsEncrypt {
+			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_LETSENCRYPT
+		} else {
+			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN
+		}
+		gwCfg.ExternalHostnames = gatewayOpts.Hostnames
+		gwCfg.ExternalCertPem = gatewayOpts.ExternalCertPEM
+		gwCfg.ExternalKeyPem = gatewayOpts.ExternalKeyPEM
+		gwCfg.RootCa = gatewayOpts.RootCAs
 	}
 
 	// Save crypto after all mutations (kernel TLS, kmaker signing CA, gateway external TLS).

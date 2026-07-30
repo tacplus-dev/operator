@@ -13,6 +13,7 @@ import (
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
+	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -742,5 +743,82 @@ func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
 	}
 	if strings.Contains(gwCfg, "external_cert_pem:") {
 		t.Fatalf("letsencrypt mode gateway should not have external_cert_pem:\n%s", gwCfg)
+	}
+}
+
+func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "cavalier.localtest.me",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "gateway.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Parse the first kernel bootstrap YAML back to proto and verify the
+	// gateway config inside kernel's services holder carries TLS fields.
+	if len(dc.BootstrapYAMLs) == 0 {
+		t.Fatal("no kernel bootstrap YAMLs generated")
+	}
+	kernelCfg, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
+	if err != nil {
+		t.Fatalf("parsing kernel bootstrap YAML: %v", err)
+	}
+	if kernelCfg.Configs == nil {
+		t.Fatal("kernel config has no services holder (Configs is nil)")
+	}
+	gwInKernel := kernelCfg.Configs.GatewayConfig
+	if gwInKernel == nil {
+		t.Fatal("kernel config has no GatewayConfig in services holder")
+	}
+	if gwInKernel.ExternalTlsMode != protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN {
+		t.Fatalf("kernel gateway config external_tls_mode = %v, want CERT_CHAIN", gwInKernel.ExternalTlsMode)
+	}
+	if len(gwInKernel.ExternalHostnames) == 0 || gwInKernel.ExternalHostnames[0] != "cavalier.localtest.me" {
+		t.Fatalf("kernel gateway config external_hostnames = %v, want [cavalier.localtest.me]", gwInKernel.ExternalHostnames)
+	}
+	if gwInKernel.ExternalCertPem == "" {
+		t.Fatal("kernel gateway config external_cert_pem is empty")
+	}
+	if !strings.Contains(gwInKernel.ExternalCertPem, "BEGIN CERTIFICATE") {
+		t.Fatalf("kernel gateway config external_cert_pem not PEM:\n%s", gwInKernel.ExternalCertPem)
+	}
+	if gwInKernel.ExternalKeyPem == "" {
+		t.Fatal("kernel gateway config external_key_pem is empty")
+	}
+	if !strings.Contains(gwInKernel.ExternalKeyPem, "PRIVATE KEY") {
+		t.Fatalf("kernel gateway config external_key_pem not PEM:\n%s", gwInKernel.ExternalKeyPem)
+	}
+	if len(gwInKernel.RootCa) == 0 {
+		t.Fatal("kernel gateway config root_ca is empty")
 	}
 }
