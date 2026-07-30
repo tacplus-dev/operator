@@ -709,7 +709,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	if err := valuesTmpl.Execute(&buf, map[string]any{
 		"Namespace":        ns,
 		"Services":         svcs,
-		"Dev":              cfg.Dev,
+		"Dev":              cfg.Dev || os.Getenv("CAVALIER_LOCAL_IMAGES") != "",
 		"PerReplicaConfigs": perReplica,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
