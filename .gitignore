@@ -27,3 +27,9 @@ target/
 cavalier-operator
 cavalier-operator-linux-arm64
 cavalier-operator-darwin-arm64
+cavalier-operator
+cavalier-operator-host
+cavalier-operator-linux
+cavalier-operator.bak-host
+target/
+bin/

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
+
+var bootstrapKeyRe = regexp.MustCompile(`^bootstrap(\d+)$`)
 
 // Bundle is the self-contained single-file deployment artifact produced by
 // 'operator build'. It embeds the operator config, PKI material, and all
@@ -149,12 +152,26 @@ func BundleConfig(b *Bundle) (*protoOperator.Config, error) {
 	return cfg, nil
 }
 
+// bundleKeyToValuesKey translates bundle service keys to Helm values keys.
+// The bundle stores per-kernel-replica configs as "bootstrap0", "bootstrap1", etc.
+// but the Helm chart templates reference .Values.kernel0.config, kernel1.config, etc.
+// All other service names pass through unchanged.
+func bundleKeyToValuesKey(bundleKey string) string {
+	if m := bootstrapKeyRe.FindStringSubmatch(bundleKey); m != nil {
+		return "kernel" + m[1]
+	}
+	return bundleKey
+}
+
 // BundleServiceValues converts a bundle's Services map to the Helm values
 // format expected by the reconciler/apply flow: map of name → {"config": yaml}.
+// Bundle stores kernel configs as "bootstrap0", "bootstrap1", etc. but Helm
+// templates reference .Values.kernel0.config, so we translate the keys.
 func BundleServiceValues(b *Bundle) map[string]interface{} {
 	vals := make(map[string]interface{}, len(b.Services))
 	for name, cfg := range b.Services {
-		vals[name] = map[string]interface{}{"config": cfg}
+		valKey := bundleKeyToValuesKey(name)
+		vals[valKey] = map[string]interface{}{"config": cfg}
 	}
 	for name, cfg := range b.ServiceConfigs {
 		entry, ok := vals[name].(map[string]interface{})

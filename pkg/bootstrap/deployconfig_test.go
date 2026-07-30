@@ -340,6 +340,121 @@ func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 	}
 }
 
+// TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs verifies that
+// BundleServiceValues translates bootstrap0..N keys to kernel0..N and that all
+// enabled services carry non-empty config values — the bug that caused pods to
+// start with empty configs in bundle-apply mode.
+func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "console.secondstarcavalier.cloud",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   2,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+			OauthNodes:    1,
+			OpaNodes:      1,
+			KmakerNodes:   1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 2, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, err := BuildBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify raw bundle has bootstrap0/bootstrap1 keys.
+	if _, ok := bundle.Services["bootstrap0"]; !ok {
+		t.Fatalf("bundle.Services missing bootstrap0: keys = %v", bundleKeys(bundle))
+	}
+	if _, ok := bundle.Services["bootstrap1"]; !ok {
+		t.Fatalf("bundle.Services missing bootstrap1: keys = %v", bundleKeys(bundle))
+	}
+
+	vals := BundleServiceValues(bundle)
+
+	// Kernel per-replica configs must be keyed as kernelN, not bootstrapN.
+	for i := range 2 {
+		key := fmt.Sprintf("kernel%d", i)
+		entry, ok := vals[key].(map[string]interface{})
+		if !ok {
+			t.Fatalf("BundleServiceValues missing %s: keys = %v", key, valKeys(vals))
+		}
+		cfg, _ := entry["config"].(string)
+		if cfg == "" {
+			t.Fatalf("%s.config is empty", key)
+		}
+		if !strings.Contains(cfg, "cluster_name") {
+			t.Fatalf("%s.config does not look like a kernel config:\n%s", key, cfg)
+		}
+	}
+	// bootstrapN keys must not leak into values.
+	for _, bad := range []string{"bootstrap0", "bootstrap1"} {
+		if _, ok := vals[bad]; ok {
+			t.Fatalf("BundleServiceValues must not contain %s — should be translated to kernelN", bad)
+		}
+	}
+
+	// Per-service configs must be present and non-empty.
+	for _, svc := range []string{"sentinel", "gateway", "eventbus", "oauth", "opa", "kmaker"} {
+		entry, ok := vals[svc].(map[string]interface{})
+		if !ok {
+			t.Fatalf("BundleServiceValues missing %s: keys = %v", svc, valKeys(vals))
+		}
+		cfg, _ := entry["config"].(string)
+		if cfg == "" {
+			t.Fatalf("%s.config is empty", svc)
+		}
+	}
+
+	// Compare with ServiceConfigValues to ensure parity.
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scv := ServiceConfigValues(dc)
+	for key := range scv {
+		if _, ok := vals[key]; !ok {
+			t.Errorf("ServiceConfigValues has key %q but BundleServiceValues does not", key)
+		}
+	}
+}
+
+func bundleKeys(b *Bundle) []string {
+	keys := make([]string, 0, len(b.Services))
+	for k := range b.Services {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func valKeys(vals map[string]interface{}) []string {
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func findDelegate(t *testing.T, delegates []*protoKernel.Delegate, name string) *protoKernel.Delegate {
 	t.Helper()
 	for _, delegate := range delegates {

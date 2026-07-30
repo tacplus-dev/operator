@@ -161,6 +161,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 		cfg.Topology.GatewayNodes = int32(applyGateways)
 	}
 
+	ns := cfg.GetNamespace()
+	if ns == "" {
+		ns = "cavalier"
+	}
+
 	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
@@ -168,15 +173,31 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	if applyDryRun {
-		for path, content := range charts.Files {
-			fmt.Printf("--- # %s\n%s\n", path, content)
+		buffered := make([]*helmloader.BufferedFile, 0, len(charts.Files))
+		for name, data := range charts.Files {
+			buffered = append(buffered, &helmloader.BufferedFile{
+				Name: name,
+				Data: data,
+			})
 		}
+		ch, err := helmloader.LoadFiles(buffered)
+		if err != nil {
+			return fmt.Errorf("loading helm chart for dry-run: %w", err)
+		}
+		if svcValues == nil {
+			svcValues = map[string]interface{}{}
+		}
+		install := action.NewInstall(new(action.Configuration))
+		install.ReleaseName = "cavalier"
+		install.Namespace = ns
+		install.DryRun = true
+		install.ClientOnly = true
+		rel, err := install.Run(ch, svcValues)
+		if err != nil {
+			return fmt.Errorf("helm dry-run: %w", err)
+		}
+		fmt.Print(rel.Manifest)
 		return nil
-	}
-
-	ns := cfg.GetNamespace()
-	if ns == "" {
-		ns = "cavalier"
 	}
 
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
