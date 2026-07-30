@@ -653,7 +653,17 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
   webappHostPath: {{ .WebAppHostPath }}
 {{- end }}
 {{- end }}
+{{- range .PerReplicaConfigs }}
+{{ . }}:
+  config: ""
+{{- end }}
 `))
+
+// perReplicaConfigKey holds the values.yaml key for one StatefulSet replica's config.
+// StatefulSet services need per-replica keys (e.g. kernel0, kernel1) in values.yaml
+// so that templates referencing .Values.kernel0.config don't fail with a nil-pointer
+// error when no runtime override is provided (e.g. during a dry-run).
+type perReplicaConfigKey = string
 
 func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, topo *protoOperator.Topology) error {
 	svcs := g.enabledServices(cfg, topo)
@@ -676,11 +686,24 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 		}
 	}
 
+	// StatefulSet services (kernel) use per-replica value keys (kernel0, kernel1, …)
+	// in their templates. Add placeholder entries so helm doesn't fail with a nil-pointer
+	// on .Values.kernel0.config when no runtime override is present.
+	var perReplica []perReplicaConfigKey
+	for _, s := range svcs {
+		if s.IsStatefulSet {
+			for i := range int(s.Replicas) {
+				perReplica = append(perReplica, fmt.Sprintf("%s%d", s.Name, i))
+			}
+		}
+	}
+
 	var buf bytes.Buffer
 	if err := valuesTmpl.Execute(&buf, map[string]any{
-		"Namespace": ns,
-		"Services":  svcs,
-		"Dev":       cfg.Dev,
+		"Namespace":        ns,
+		"Services":         svcs,
+		"Dev":              cfg.Dev,
+		"PerReplicaConfigs": perReplica,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
 	}

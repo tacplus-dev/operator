@@ -227,6 +227,41 @@ func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
 	}
 }
 
+// TestSingleNodeKernelValuesAndTemplates verifies that a 1-node kernel topology
+// produces a values.yaml with a kernel0 placeholder and templates that reference
+// .Values.kernel0.config — the combination that previously caused a nil-pointer
+// error during helm install dry-run.
+func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "cavalier",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+		},
+	})
+
+	// values.yaml must contain the per-replica key kernel0 (and no kernel1).
+	values := chartFile(t, charts, "values.yaml")
+	if !strings.Contains(values, "kernel0:") {
+		t.Fatalf("values.yaml missing kernel0 placeholder\n--- values.yaml ---\n%s", values)
+	}
+	if strings.Contains(values, "kernel1:") {
+		t.Fatalf("values.yaml unexpectedly contains kernel1 for a 1-node topology\n--- values.yaml ---\n%s", values)
+	}
+
+	// configmap-0.yaml must reference .Values.kernel0.config (not .Values.kernel.config).
+	cm := chartFile(t, charts, "templates/kernel/configmap-0.yaml")
+	if !strings.Contains(cm, ".Values.kernel0.config") {
+		t.Fatalf("kernel configmap-0 must reference .Values.kernel0.config\n--- configmap ---\n%s", cm)
+	}
+
+	// statefulset.yaml must checksum .Values.kernel0.config in its annotations.
+	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
+	if !strings.Contains(ss, ".Values.kernel0.config") {
+		t.Fatalf("kernel statefulset must reference .Values.kernel0.config\n--- statefulset ---\n%s", ss)
+	}
+}
+
 func generateTestChart(t *testing.T, cfg *protoOperator.Config) *Charts {
 	t.Helper()
 	charts, err := New("test", "1.2", nil).Generate(cfg, 1)
