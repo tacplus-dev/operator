@@ -113,10 +113,13 @@ func BuildBackendFields(trustedCAs []*protoX509.X509Cert, endpoints []*protoHost
 
 // GatewayOptions holds user-configurable gateway settings from services/gateway.yaml.
 type GatewayOptions struct {
-	EnableTCP   bool
-	EnableQUIC  bool
-	LetsEncrypt bool
-	Hostnames   []string
+	EnableTCP       bool
+	EnableQUIC      bool
+	LetsEncrypt     bool
+	Hostnames       []string
+	ExternalCertPEM string
+	ExternalKeyPEM  string
+	RootCAs         []*protoX509.X509Cert
 }
 
 // BuildGatewayServiceConfig generates the serviceconfig YAML for gateway.
@@ -148,6 +151,30 @@ func BuildGatewayServiceConfig(
 	if len(opts.Hostnames) > 0 {
 		config["external_hostnames"] = opts.Hostnames
 	}
+	if opts.ExternalCertPEM != "" {
+		config["external_cert_pem"] = opts.ExternalCertPEM
+	}
+	if opts.ExternalKeyPEM != "" {
+		config["external_key_pem"] = opts.ExternalKeyPEM
+	}
+	if len(opts.RootCAs) > 0 {
+		var rootCASlice []any
+		for _, ca := range opts.RootCAs {
+			caYAML, err := protoX509.X509CertToYAML(ca)
+			if err != nil {
+				return nil, fmt.Errorf("marshaling gateway root CA: %w", err)
+			}
+			var caMap map[string]any
+			if err := yaml.Unmarshal(caYAML, &caMap); err != nil {
+				return nil, fmt.Errorf("unmarshaling gateway root CA YAML: %w", err)
+			}
+			if err := normalizeBase64Field(caMap); err != nil {
+				return nil, fmt.Errorf("normalizing gateway root CA base64: %w", err)
+			}
+			rootCASlice = append(rootCASlice, caMap)
+		}
+		config["root_ca"] = rootCASlice
+	}
 
 	return yaml.Marshal(config)
 }
@@ -175,6 +202,11 @@ func LoadGatewayOptions(servicesDir string) GatewayOptions {
 	if v, ok := raw["enable_quic"]; ok {
 		if b, ok := v.(bool); ok {
 			opts.EnableQUIC = b
+		}
+	}
+	if v, ok := raw["letsencrypt"]; ok {
+		if b, ok := v.(bool); ok && b {
+			opts.LetsEncrypt = true
 		}
 	}
 	return opts

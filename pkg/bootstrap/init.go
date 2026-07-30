@@ -282,6 +282,11 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generating cluster PKI: %w", err)
 	}
 
+	// Generate gateway external TLS cert (CERT_CHAIN mode, signed by cluster CA).
+	if _, err := EnsureGatewayExternalTLS(cfg, initClusterFQDN); err != nil {
+		return fmt.Errorf("generating gateway external TLS: %w", err)
+	}
+
 	// Write services/ — idempotent per file (skips existing files).
 	fmt.Println("Writing services/...")
 	if err := WriteServices(dir); err != nil {

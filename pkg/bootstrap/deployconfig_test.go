@@ -544,3 +544,203 @@ func TestReadOnlyConfigWriteErrorMatchesWrappedEROFSError(t *testing.T) {
 		t.Fatal("unrelated save errors must not be treated as read-only config writes")
 	}
 }
+
+func TestGatewayExternalTLSProvisionedAfterGenerate(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "cavalier.localtest.me",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "gateway.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gateway config has external_tls_mode set.
+	gwCfg := string(dc.GatewayConfig)
+	if !strings.Contains(gwCfg, "external_tls_mode: EXTERNAL_TLS_MODE_CERT_CHAIN") {
+		t.Fatalf("gateway config missing external_tls_mode CERT_CHAIN:\n%s", gwCfg)
+	}
+
+	// Verify hostnames from FQDN.
+	if !strings.Contains(gwCfg, "cavalier.localtest.me") {
+		t.Fatalf("gateway config missing FQDN hostname:\n%s", gwCfg)
+	}
+
+	// Verify cert and key are present.
+	if !strings.Contains(gwCfg, "external_cert_pem:") {
+		t.Fatalf("gateway config missing external_cert_pem:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "external_key_pem:") {
+		t.Fatalf("gateway config missing external_key_pem:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "BEGIN CERTIFICATE") {
+		t.Fatalf("gateway config external_cert_pem not PEM:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "PRIVATE KEY") {
+		t.Fatalf("gateway config external_key_pem not PEM:\n%s", gwCfg)
+	}
+
+	// Verify root_ca is present.
+	if !strings.Contains(gwCfg, "root_ca:") {
+		t.Fatalf("gateway config missing root_ca:\n%s", gwCfg)
+	}
+}
+
+func TestGatewayExternalTLSIdempotent(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	// First generation.
+	generated, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !generated {
+		t.Fatal("first call should generate a cert")
+	}
+	firstCertID := cfg.Pki.EdgeTls[0].Chain[0].Id
+	firstKeyID := cfg.Pki.EdgeTls[0].Key.Id
+
+	// Second generation — should be idempotent.
+	generated, err = EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated {
+		t.Fatal("second call should skip (idempotent)")
+	}
+	if got := cfg.Pki.EdgeTls[0].Chain[0].Id; got != firstCertID {
+		t.Fatalf("cert id changed from %q to %q on idempotent run", firstCertID, got)
+	}
+	if got := cfg.Pki.EdgeTls[0].Key.Id; got != firstKeyID {
+		t.Fatalf("key id changed from %q to %q on idempotent run", firstKeyID, got)
+	}
+}
+
+func TestGatewayExternalTLSCertHasFQDNAndLocalhost(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me"); err != nil {
+		t.Fatal(err)
+	}
+
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.EdgeTls[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := cc.Leaf().X509Certificate()
+
+	hasFQDN := false
+	hasLocalhost := false
+	for _, dns := range cert.DNSNames {
+		if dns == "cavalier.localtest.me" {
+			hasFQDN = true
+		}
+		if dns == "localhost" {
+			hasLocalhost = true
+		}
+	}
+	if !hasFQDN {
+		t.Fatalf("gateway external TLS cert missing FQDN SAN: %v", cert.DNSNames)
+	}
+	if !hasLocalhost {
+		t.Fatalf("gateway external TLS cert missing localhost SAN: %v", cert.DNSNames)
+	}
+}
+
+func TestGatewayExternalTLSPEMExtraction(t *testing.T) {
+	cfg := &protoOperator.Config{}
+	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me"); err != nil {
+		t.Fatal(err)
+	}
+
+	certPEM, keyPEM, err := GatewayExternalTLSPEM(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(certPEM, "BEGIN CERTIFICATE") {
+		t.Fatalf("certPEM does not contain PEM certificate:\n%s", certPEM)
+	}
+	if !strings.Contains(keyPEM, "PRIVATE KEY") {
+		t.Fatalf("keyPEM does not contain PEM private key:\n%s", keyPEM)
+	}
+}
+
+func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "cavalier.localtest.me",
+		SpiffePrefix: "local.dev",
+		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gwCfg := string(dc.GatewayConfig)
+	if !strings.Contains(gwCfg, "EXTERNAL_TLS_MODE_LETSENCRYPT") {
+		t.Fatalf("letsencrypt mode gateway should have LETSENCRYPT mode:\n%s", gwCfg)
+	}
+	if strings.Contains(gwCfg, "external_cert_pem:") {
+		t.Fatalf("letsencrypt mode gateway should not have external_cert_pem:\n%s", gwCfg)
+	}
+}

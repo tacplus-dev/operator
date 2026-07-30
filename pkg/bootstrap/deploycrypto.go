@@ -5,6 +5,7 @@ import (
 	stdx509 "crypto/x509"
 	stdpkix "crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
 	wrapperSpiffe "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/spiffe"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -165,13 +167,16 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 		}
 	}
 
-	// Edge TLS certs (split mode only)
-	cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
-	for i := range edgeCount {
-		nodeName := fmt.Sprintf("kernel-edge-%d", i)
-		cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
-		if err != nil {
-			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
+	// Edge TLS certs (split mode only). Preserve existing EdgeTls entries
+	// (e.g. gateway external TLS at index 0) when edgeCount is 0.
+	if edgeCount > 0 {
+		cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
+		for i := range edgeCount {
+			nodeName := fmt.Sprintf("kernel-edge-%d", i)
+			cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
+			if err != nil {
+				return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
+			}
 		}
 	}
 
@@ -351,12 +356,15 @@ func GenerateKernelTLS(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn
 		}
 	}
 
-	cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
-	for i := range edgeCount {
-		nodeName := fmt.Sprintf("kernel-edge-%d", i)
-		cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
-		if err != nil {
-			return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
+	// Preserve existing EdgeTls entries (e.g. gateway external TLS) when edgeCount is 0.
+	if edgeCount > 0 {
+		cfg.Pki.EdgeTls = make([]*protoX509.X509CertChain, edgeCount)
+		for i := range edgeCount {
+			nodeName := fmt.Sprintf("kernel-edge-%d", i)
+			cfg.Pki.EdgeTls[i], err = generateSignedCertChain(clusterCAImmKey, clusterCACert, []string{nodeName}, kernelSpiffeURI)
+			if err != nil {
+				return fmt.Errorf("generating %s TLS cert: %w", nodeName, err)
+			}
 		}
 	}
 
@@ -593,4 +601,96 @@ func generateKmakerSigningCACertChain(caKey *wrapperKey.ImmutableKey, caCert *st
 		Chain: []*protoX509.X509Cert{certProto, caCertProto},
 		Key:   signingKey,
 	}, nil
+}
+
+// EnsureGatewayExternalTLS generates a gateway external TLS certificate signed
+// by the cluster CA if one does not already exist. The cert is stored in
+// cfg.Pki.EdgeTls[0] (the proto field designated for gateway/edge TLS).
+// The certificate's DNS SANs include fqdn and localhost for local access.
+// Returns true if a new cert was generated.
+func EnsureGatewayExternalTLS(cfg *protoOperator.Config, fqdn string) (bool, error) {
+	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
+		return false, fmt.Errorf("pki.cluster_ca with private key is required for gateway external TLS")
+	}
+
+	// Idempotent: skip if a gateway external TLS cert already exists.
+	if len(cfg.Pki.EdgeTls) > 0 && cfg.Pki.EdgeTls[0] != nil &&
+		len(cfg.Pki.EdgeTls[0].Chain) > 0 && cfg.Pki.EdgeTls[0].Key != nil {
+		return false, nil
+	}
+
+	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
+	if err != nil {
+		return false, fmt.Errorf("loading cluster CA key: %w", err)
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		return false, fmt.Errorf("loading cluster CA cert: %w", err)
+	}
+	clusterCACert := cc.Leaf().X509Certificate()
+
+	dnsNames := []string{fqdn}
+	if fqdn != "localhost" {
+		dnsNames = append(dnsNames, "localhost")
+	}
+
+	chain, err := generateSignedCertChain(clusterCAImmKey, clusterCACert, dnsNames, "")
+	if err != nil {
+		return false, fmt.Errorf("generating gateway external TLS cert: %w", err)
+	}
+
+	if len(cfg.Pki.EdgeTls) == 0 {
+		cfg.Pki.EdgeTls = []*protoX509.X509CertChain{chain}
+	} else {
+		cfg.Pki.EdgeTls[0] = chain
+	}
+
+	return true, nil
+}
+
+// GatewayExternalTLSPEM extracts PEM-encoded certificate chain and private key
+// from the gateway external TLS cert stored in cfg.Pki.EdgeTls[0].
+func GatewayExternalTLSPEM(cfg *protoOperator.Config) (certPEM string, keyPEM string, err error) {
+	if cfg.Pki == nil || len(cfg.Pki.EdgeTls) == 0 || cfg.Pki.EdgeTls[0] == nil {
+		return "", "", fmt.Errorf("no gateway external TLS cert in PKI")
+	}
+
+	chain := cfg.Pki.EdgeTls[0]
+	cc, err := wrapperX509.NewImmutableX509CertChain(chain)
+	if err != nil {
+		return "", "", fmt.Errorf("loading gateway external TLS cert chain: %w", err)
+	}
+
+	// Concatenate all cert PEMs in the chain.
+	var certBuf strings.Builder
+	for _, cert := range cc.Chain() {
+		certBuf.Write(cert.Bytes())
+	}
+
+	// The proto Key's Base64 field holds base64-encoded PEM bytes.
+	keyBytes, err := decodeKeyPEM(chain.Key)
+	if err != nil {
+		return "", "", fmt.Errorf("decoding gateway external TLS key: %w", err)
+	}
+
+	return certBuf.String(), string(keyBytes), nil
+}
+
+// decodeKeyPEM decodes the PEM-encoded private key from a proto Key's Base64 field.
+func decodeKeyPEM(k *protoKey.Key) ([]byte, error) {
+	if k == nil || k.Base64 == "" {
+		return nil, fmt.Errorf("key is nil or has no base64 data")
+	}
+	decoders := []func(string) ([]byte, error){
+		func(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(s) },
+		func(s string) ([]byte, error) { return base64.RawStdEncoding.DecodeString(s) },
+		func(s string) ([]byte, error) { return base64.URLEncoding.DecodeString(s) },
+		func(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) },
+	}
+	for _, dec := range decoders {
+		if b, err := dec(k.Base64); err == nil {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot decode key base64")
 }

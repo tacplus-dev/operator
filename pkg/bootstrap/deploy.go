@@ -108,13 +108,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		}
 		cryptoUpdated = true
 	}
-	if cryptoUpdated {
-		if err := SaveCrypto(cfgDir, cfg); err != nil {
-			if !isReadOnlyConfigWriteError(err) {
-				return nil, fmt.Errorf("saving crypto: %w", err)
-			}
-		}
-	}
+	// Defer crypto save until after all crypto mutations (including gateway external TLS).
 
 	caCertPEM, err := RootCACertPEM(cfg)
 	if err != nil {
@@ -204,7 +198,39 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	if cfg.Fqdn != "" {
 		gatewayOpts.Hostnames = []string{cfg.Fqdn}
 	}
-	gatewayConfigYAML, err := buildSvc("gateway", nil)
+
+	// For CERT_CHAIN mode, ensure gateway has an external TLS cert.
+	if !gatewayOpts.LetsEncrypt && cfg.Fqdn != "" {
+		gwTLSGenerated, err := EnsureGatewayExternalTLS(cfg, cfg.Fqdn)
+		if err != nil {
+			return nil, fmt.Errorf("ensuring gateway external TLS: %w", err)
+		}
+		if gwTLSGenerated {
+			cryptoUpdated = true
+		}
+		certPEM, keyPEM, err := GatewayExternalTLSPEM(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("extracting gateway external TLS PEM: %w", err)
+		}
+		gatewayOpts.ExternalCertPEM = certPEM
+		gatewayOpts.ExternalKeyPEM = keyPEM
+		if cfg.Pki.RootCa != nil {
+			gatewayOpts.RootCAs = cfg.Pki.RootCa.Chain
+		}
+	}
+
+	// Save crypto after all mutations (kernel TLS, kmaker signing CA, gateway external TLS).
+	if cryptoUpdated {
+		if err := SaveCrypto(cfgDir, cfg); err != nil {
+			if !isReadOnlyConfigWriteError(err) {
+				return nil, fmt.Errorf("saving crypto: %w", err)
+			}
+		}
+	}
+
+	gatewayConfigYAML, err := BuildGatewayServiceConfig(
+		trustedCAs, gatewayOpts, spiffeTrustDomain, spiffeLocationPath, kernelEndpoints...,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
 	}

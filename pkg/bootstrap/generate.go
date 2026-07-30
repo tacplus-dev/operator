@@ -76,6 +76,11 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ensuring service delegates: %w", err)
 	}
 
+	// Write rendered per-service configs to configs/ directory.
+	if err := BuildConfigOutput(dir); err != nil {
+		return fmt.Errorf("writing service configs: %w", err)
+	}
+
 	outDir := generateOutputDir
 	if outDir == "" {
 		outDir = cfg.OutputDir
