@@ -55,9 +55,6 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.GraphdbConfig) > 0 && t.GraphdbNodes > 0 {
 		serviceFiles["graphdb"] = dc.GraphdbConfig
 	}
-	if len(dc.ColddbConfig) > 0 && t.ColddbNodes > 0 {
-		serviceFiles["colddb"] = dc.ColddbConfig
-	}
 	if len(dc.KmakerConfig) > 0 && t.KmakerNodes > 0 {
 		serviceFiles["kmaker"] = dc.KmakerConfig
 	}

@@ -414,7 +414,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		OpaNodes:        t.OpaNodes,
 		TimedbNodes:     t.TimedbNodes,
 		GraphdbNodes:    t.GraphdbNodes,
-		ColddbNodes:     t.ColddbNodes,
 		ArgusNodes:      t.ArgusNodes,
 		StratumNodes:    t.StratumNodes,
 		SamlNodes:       t.SamlNodes,
@@ -453,6 +452,13 @@ func (g *Generator) imageRef(svc string) string {
 // imageRefProj builds an image reference where the GitLab registry project name
 // differs from the service name (e.g. "anthropic-proxy" project, "anthropic" image).
 func (g *Generator) imageRefProj(proj, svc string) string {
+	// Local-images mode (CAVALIER_LOCAL_IMAGES): reference locally-built images
+	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
+	// docker-desktop clusters where k8s shares the docker daemon, so
+	// IfNotPresent resolves the local tag without a registry.
+	if os.Getenv("CAVALIER_LOCAL_IMAGES") != "" {
+		return fmt.Sprintf("schematic/%s:local", proj)
+	}
 	tag := g.resolveTag(proj, svc)
 	return fmt.Sprintf(
 		"registry.gitlab.com/secondstarcavalier/schematic/platform/services/%s/%s-%s:%s",
@@ -584,9 +590,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	}
 
 	// On hold — only deployed when explicitly set above zero.
-	if topo.ColddbNodes > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "colddb", Replicas: topo.ColddbNodes, Image: g.imageRef("colddb"), HasGRPC: true, HasPVC: true, Storage: "10Gi", ListenPort: 8443}))
-	}
 	if topo.MsggatewayNodes > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "msggateway", Replicas: topo.MsggatewayNodes, Image: g.imageRef("msggateway"), HasGRPC: true, ListenPort: 8443}))
 	}

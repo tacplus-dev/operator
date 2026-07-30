@@ -79,7 +79,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"argus", dc.ArgusConfig},
 		{"timedb", dc.TimedbConfig},
 		{"graphdb", dc.GraphdbConfig},
-		{"colddb", dc.ColddbConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {

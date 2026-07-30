@@ -123,7 +123,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			OpaNodes:        1,
 			TimedbNodes:     1,
 			GraphdbNodes:    1,
-			ColddbNodes:     1,
 			ArgusNodes:      1,
 			StratumNodes:    1,
 			SamlNodes:       1,
@@ -152,7 +151,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		"anthropic",
 		"openai",
 		"mcp",
-		"colddb",
 		"msggateway",
 	}
 	for _, service := range services {

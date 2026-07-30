@@ -37,7 +37,6 @@ type DeployConfigs struct {
 	ArgusConfig              []byte
 	TimedbConfig             []byte
 	GraphdbConfig            []byte
-	ColddbConfig             []byte
 	KmakerConfig             []byte
 	LetsencryptConfig        []byte
 	LetsencryptServiceConfig []byte
@@ -272,14 +271,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		return nil, err
 	}
 
-	var colddbConfigYAML []byte
-	if t.ColddbNodes > 0 {
-		colddbConfigYAML, err = buildSvc("colddb", nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	var letsencryptConfigYAML []byte
 	var letsencryptServiceConfigYAML []byte
 	if cfg.GetTls().GetLetsencrypt() {
@@ -360,7 +351,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		ArgusConfig:              argusConfigYAML,
 		TimedbConfig:             timedbConfigYAML,
 		GraphdbConfig:            graphdbConfigYAML,
-		ColddbConfig:             colddbConfigYAML,
 		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
@@ -502,7 +492,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("opa", &t.OpaNodes)
 	check("timedb", &t.TimedbNodes)
 	check("graphdb", &t.GraphdbNodes)
-	check("colddb", &t.ColddbNodes)
 	check("argus", &t.ArgusNodes)
 	check("stratum", &t.StratumNodes)
 	check("saml", &t.SamlNodes)
@@ -537,7 +526,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"argus", dc.ArgusConfig},
 		{"timedb", dc.TimedbConfig},
 		{"graphdb", dc.GraphdbConfig},
-		{"colddb", dc.ColddbConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {

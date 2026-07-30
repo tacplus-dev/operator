@@ -15,7 +15,6 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"timedb":      true,
 	"graphdb":     true,
 	"stratum":     true,
-	"colddb":      true,
 	"msggateway":  true,
 }
 
