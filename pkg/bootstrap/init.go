@@ -295,6 +295,11 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Ensure kernel.yaml has delegates for all deployed services.
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		return fmt.Errorf("ensuring service delegates: %w", err)
+	}
+
 	// Write ca.pem for host trust.
 	caPEM, err := RootCACertPEM(cfg)
 	if err != nil {

@@ -71,6 +71,11 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("gateway_nodes must be set — use --gateways or set topology.gateway_nodes in operator.yaml")
 	}
 
+	// Ensure kernel.yaml has delegates for all deployed services.
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		return fmt.Errorf("ensuring service delegates: %w", err)
+	}
+
 	outDir := generateOutputDir
 	if outDir == "" {
 		outDir = cfg.OutputDir

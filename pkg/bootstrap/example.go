@@ -465,6 +465,87 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 	})
 }
 
+// EnsureServiceDelegates ensures kernel.yaml contains a delegate entry for
+// every deployed kernel-authenticated service. Each delegate authorizes the
+// service for itself. Existing delegates (including user-added ones like
+// oauth API-key delegates) are preserved — only missing entries are added.
+// The function is idempotent: re-running it produces no changes.
+func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
+	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
+	kernelCfg, err := LoadKernelSourceConfig(kernelPath)
+	if err != nil {
+		return fmt.Errorf("loading kernel config: %w", err)
+	}
+
+	existing := make(map[string]int, len(kernelCfg.Delegates))
+	for i, d := range kernelCfg.Delegates {
+		existing[d.Name] = i
+	}
+
+	deployed := DeployedKernelAuthServices(cfg)
+	changed := false
+
+	for _, svc := range deployed {
+		if idx, ok := existing[svc]; ok {
+			// Delegate exists — ensure it authorizes itself.
+			hasOwn := false
+			for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
+				if as == svc {
+					hasOwn = true
+					break
+				}
+			}
+			if !hasOwn {
+				kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, svc)
+				changed = true
+			}
+			// Backfill the Kubernetes service-account matcher if absent (idempotent).
+			hasKSA := false
+			for _, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
+				if k.KubernetesServiceAccount == svc {
+					hasKSA = true
+					break
+				}
+			}
+			if !hasKSA {
+				kernelCfg.Delegates[idx].KubernetesServiceAccounts = append(
+					kernelCfg.Delegates[idx].KubernetesServiceAccounts,
+					SourceKubernetesServiceAccount{
+						KubernetesNamespace:      operatorKubernetesNamespace(cfg),
+						KubernetesServiceAccount: svc,
+					})
+				changed = true
+			}
+			continue
+		}
+		// New delegate — authorize for itself only, and bind it to the
+		// Kubernetes service account the helm generator assigns this service
+		// (same name as the service, in the cluster namespace). Without this
+		// matcher kernel rejects phase-1 token exchange with "no delegate
+		// authorizes Kubernetes service account <ns>/<svc>" and NO service can
+		// start.
+		kernelCfg.Delegates = append(kernelCfg.Delegates, SourceDelegate{
+			Name:               svc,
+			AuthorizedServices: []string{svc},
+			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
+				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
+				KubernetesServiceAccount: svc,
+			}},
+		})
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	data, err := yaml.Marshal(kernelCfg)
+	if err != nil {
+		return fmt.Errorf("marshaling kernel config: %w", err)
+	}
+	return os.WriteFile(kernelPath, data, 0644)
+}
+
 // loadServiceConfigFile reads a per-service YAML config file into a map.
 func loadServiceConfigFile(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
