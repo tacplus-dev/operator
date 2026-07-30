@@ -499,6 +499,20 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 				kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, svc)
 				changed = true
 			}
+			// Ensure the delegate may request a token for kernel (idempotent).
+			if svc != kernelServiceName {
+				hasKernel := false
+				for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
+					if as == kernelServiceName {
+						hasKernel = true
+						break
+					}
+				}
+				if !hasKernel {
+					kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, kernelServiceName)
+					changed = true
+				}
+			}
 			// Backfill the Kubernetes service-account matcher if absent (idempotent).
 			hasKSA := false
 			for _, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
@@ -526,7 +540,12 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		// start.
 		kernelCfg.Delegates = append(kernelCfg.Delegates, SourceDelegate{
 			Name:               svc,
-			AuthorizedServices: []string{svc},
+			// Every platform service must obtain a token FOR kernel (state,
+			// mint, runtime config) in addition to its own identity — phase-2
+			// token exchange fails with "delegate ... not authorized for
+			// service kernel" otherwise. Still fail-closed: self + kernel, not
+			// SERVICE_NAME_ANY.
+			AuthorizedServices: authorizedServicesFor(svc),
 			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
 				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
 				KubernetesServiceAccount: svc,
@@ -678,3 +697,15 @@ const exampleSamlYAML = `# SAML service configuration.
 # Edit these, then run: cavalier-operator generate
 {}
 `
+
+// kernelServiceName is the service every delegate must be able to mint against.
+const kernelServiceName = "kernel"
+
+// authorizedServicesFor returns the minimum authorized-service set for a
+// platform service delegate: itself plus kernel (state/mint/config).
+func authorizedServicesFor(svc string) []string {
+	if svc == kernelServiceName {
+		return []string{svc}
+	}
+	return []string{svc, kernelServiceName}
+}

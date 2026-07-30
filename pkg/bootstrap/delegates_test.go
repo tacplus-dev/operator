@@ -92,10 +92,40 @@ func TestEnsureServiceDelegatesCreatesPerService(t *testing.T) {
 		}
 	}
 
-	// Each delegate authorizes itself.
+	// Each delegate authorizes itself AND kernel: phase-2 token exchange
+	// requires a token for kernel (state/mint/config), proven at runtime —
+	// without it services fail with "delegate ... not authorized for service
+	// kernel". Still fail-closed (no SERVICE_NAME_ANY).
 	for _, d := range delegates {
-		if len(d.AuthorizedServices) != 1 || d.AuthorizedServices[0] != d.Name {
-			t.Fatalf("delegate %q authorized_services = %v, want [%s]", d.Name, d.AuthorizedServices, d.Name)
+		hasSelf, hasKernel := false, false
+		for _, as := range d.AuthorizedServices {
+			if as == d.Name {
+				hasSelf = true
+			}
+			if as == "kernel" {
+				hasKernel = true
+			}
+			if as == "ANY" || as == "SERVICE_NAME_ANY" {
+				t.Fatalf("delegate %q must not be authorized for ANY: %v", d.Name, d.AuthorizedServices)
+			}
+		}
+		if !hasSelf {
+			t.Fatalf("delegate %q authorized_services %v missing itself", d.Name, d.AuthorizedServices)
+		}
+		if d.Name != "kernel" && !hasKernel {
+			t.Fatalf("delegate %q authorized_services %v missing kernel", d.Name, d.AuthorizedServices)
+		}
+	}
+
+	// Every delegate binds a Kubernetes service account (the field kernel
+	// actually authorizes phase-1 on).
+	for _, d := range delegates {
+		if len(d.KubernetesServiceAccounts) == 0 {
+			t.Fatalf("delegate %q has no kubernetes_service_accounts matcher", d.Name)
+		}
+		if d.KubernetesServiceAccounts[0].KubernetesServiceAccount != d.Name {
+			t.Fatalf("delegate %q KSA = %q, want %q", d.Name,
+				d.KubernetesServiceAccounts[0].KubernetesServiceAccount, d.Name)
 		}
 	}
 }
