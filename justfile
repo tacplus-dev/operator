@@ -17,4 +17,7 @@ generate:
   #!/usr/bin/env bash
   set -euo pipefail
   {{TACPLUS}} build --tag latest
+  # pkg/bootstrap embeds the registry so the binary is self-contained; model/ is
+  # gitignored and absent in-cluster, and Go embed cannot reach a parent dir.
+  cp model/registry.json pkg/bootstrap/registry.json
   go mod tidy

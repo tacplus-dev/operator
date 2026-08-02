@@ -33,3 +33,6 @@ cavalier-operator-linux
 cavalier-operator.bak-host
 target/
 bin/
+
+# Copied from model/ by `just generate` (26MB, regenerated artifact)
+pkg/bootstrap/registry.json

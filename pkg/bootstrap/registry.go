@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	types "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model"
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.
@@ -66,7 +65,7 @@ type registryEventPub struct {
 // Never emits SERVICE_NAME_ANY.
 func loadServiceDeps() (*serviceDeps, error) {
 	var root registryNode
-	if err := json.Unmarshal(types.RegistryJSON, &root); err != nil {
+	if err := json.Unmarshal(registryJSON, &root); err != nil {
 		return nil, fmt.Errorf("parsing registry.json: %w", err)
 	}
 
