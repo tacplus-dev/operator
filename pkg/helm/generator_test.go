@@ -279,3 +279,24 @@ func chartFile(t *testing.T, charts *Charts, path string) string {
 	}
 	return string(data)
 }
+
+// TestPVCDeploymentsUseRecreateStrategy guards a deadlock: a Deployment that owns a
+// ReadWriteOnce PVC must use strategy Recreate. With the default RollingUpdate, k8s
+// starts the replacement pod before terminating the old one; on a single node both
+// mount the same volume and the old pod still holds the data-dir lock, so the new pod
+// never becomes Ready and the old one is never torn down. Observed live on eventbus,
+// whose replacement pod CrashLooped on Kafka's data-dir lock for hours while the old
+// pod kept serving.
+func TestPVCDeploymentsUseRecreateStrategy(t *testing.T) {
+	src, err := os.ReadFile("generator.go")
+	if err != nil {
+		t.Fatalf("read generator.go: %v", err)
+	}
+	body := string(src)
+	if !strings.Contains(body, `strategy = "  strategy:\n    type: Recreate\n"`) {
+		t.Error("PVC-owning Deployments must set strategy: Recreate — the RollingUpdate default deadlocks on a ReadWriteOnce volume")
+	}
+	if !strings.Contains(body, "if svc.HasPVC {") {
+		t.Error("the Recreate strategy must be gated on svc.HasPVC")
+	}
+}

@@ -1297,6 +1297,17 @@ spec:
 		var deployBuf bytes.Buffer
 		for i := range int(svc.Replicas) {
 			name := fmt.Sprintf("%s%d", svc.Name, i)
+			// A Deployment that owns a ReadWriteOnce PVC must NOT surge a second
+			// pod: the default RollingUpdate starts the new pod before the old one
+			// terminates, both mount the same volume on this single node, and the
+			// old pod still holds the data-dir lock. The new pod then fails to
+			// start, never becomes Ready, so the old pod is never torn down — a
+			// deadlock. Observed on eventbus: the new pod CrashLooped on Kafka's
+			// data-dir lock while the old pod kept serving.
+			strategy := ""
+			if svc.HasPVC {
+				strategy = "  strategy:\n    type: Recreate\n"
+			}
 			deployBuf.WriteString(fmt.Sprintf(`---
 apiVersion: apps/v1
 kind: Deployment
@@ -1307,7 +1318,7 @@ metadata:
     {{- include "cavalier.labels" . | nindent 4 }}
 spec:
   replicas: 1
-  selector:
+%s  selector:
     matchLabels:
       app: %s
   template:
@@ -1317,7 +1328,7 @@ spec:
         {{- include "cavalier.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ .Values.%s.config | sha256sum | quote }}
-`, name, name, name, svc.Name))
+`, name, strategy, name, name, svc.Name))
 			if svc.HasServiceConfig {
 				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ .Values.%s.serviceConfig | sha256sum | quote }}
 `, svc.Name))
