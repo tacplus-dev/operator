@@ -746,60 +746,43 @@ Init container that waits for sentinel0:8443.
 {{- end }}
 
 {{/*
-Readiness/liveness probe querying grpc.health.v1 on the plaintext health port.
-
-These MUST target 8444, not the service port. The kubelet's gRPC probe speaks
-PLAINTEXT only — it cannot do TLS — so probing 5000/8443 times out on every
-request (that mistake once restarted all 12 services). tacplus serves
-grpc.health.v1, and nothing else, on a separate plaintext listener on 8444.
-
-They must also be a gRPC probe rather than tcpSocket: a TCP accept stays true
-while a service's guts are dead, which is precisely how a wedged eventbus sat
-1/1 Ready through drill 7. Only the health RPC reflects handler health.
-
-timeoutSeconds is 5, NOT the k8s default of 1. A 1s budget is fine for a TCP
-accept (kernel-level, cheap even mid-GC) but too tight for a health RPC that
-the application must actually answer: at 1s the JVM services flapped, killed
-3 times in 28 minutes by spurious liveness failures.
+Standard gRPC readiness/liveness probe on port 5000 (kernel/Java).
 */}}
 {{- define "cavalier.grpcProbe5000" -}}
-grpc:
-  port: 8444
+tcpSocket:
+  port: 5000
 initialDelaySeconds: 10
 periodSeconds: 10
-timeoutSeconds: 5
 failureThreshold: 3
 {{- end }}
 
 {{- define "cavalier.startupProbe5000" -}}
-grpc:
-  port: 8444
+tcpSocket:
+  port: 5000
 periodSeconds: 5
-timeoutSeconds: 5
 failureThreshold: 60
 {{- end }}
 
+{{/*
+Standard gRPC readiness/liveness probe on port 8443 (Rust/Tacplus services).
+*/}}
 {{- define "cavalier.grpcProbe8443" -}}
-grpc:
-  port: 8444
+tcpSocket:
+  port: 8443
 initialDelaySeconds: 10
 periodSeconds: 10
-timeoutSeconds: 5
 failureThreshold: 3
 {{- end }}
 
 {{/*
 Startup probe for services that depend on kernel. Gives up to 5 minutes
 for kernel to come up and the service to complete init before k8s kills it.
-Once the startup probe passes, the liveness probe takes over. The health
-endpoint reports NOT_SERVING until bootstrap completes, so this gates on real
-readiness rather than merely on the port being bound.
+Once the startup probe passes, the liveness probe takes over.
 */}}
 {{- define "cavalier.startupProbe8443" -}}
-grpc:
-  port: 8444
+tcpSocket:
+  port: 8443
 periodSeconds: 5
-timeoutSeconds: 5
 failureThreshold: 60
 {{- end }}
 
