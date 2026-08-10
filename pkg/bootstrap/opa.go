@@ -66,7 +66,7 @@ func DefaultOPABundle(idpIssuers []string) *protoFilesystem.Directory {
 		},
 		Directories: []*protoFilesystem.Directory{
 			{
-				// idp/claims.rego — maps incoming IDP token claims to cavalier roles.
+				// idp/claims.rego — maps incoming IDP token claims to schematic roles.
 				// Seeded with trusted_issuer rules for each configured IDP issuer URL.
 				Name:       "idp",
 				Permission: perm755,
@@ -121,7 +121,7 @@ func LoadOptionalOPAPolicy(regoDir, entryPoint string) (*protoOpa.OpaPolicy, err
 
 const defaultMainRego = `# Entry point for the entitlements policy.
 # Combines roles from idp/ (IDP claim-derived) and grants/ (static), then
-# maps the resulting role set to service entitlements in the cavalier token.
+# maps the resulting role set to service entitlements in the schematic token.
 package entitlements
 
 import data.entitlements.idp
@@ -163,7 +163,7 @@ eval := {"token_entitlements": {
 
 // defaultIdpRegoTemplate is the generated IDP claims → roles policy.
 // %s is replaced with trusted_issuer rules derived from configured IDP issuers.
-const defaultIdpRegoTemplate = `# IDP claims → cavalier roles.
+const defaultIdpRegoTemplate = `# IDP claims → schematic roles.
 # Validates the incoming external IDP token and maps its claim attributes
 # (groups, sub) to the internal role set used by the entitlements policy.
 # trusted_issuer rules below are seeded from services/oauth.yaml providers.

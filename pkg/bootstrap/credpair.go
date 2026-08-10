@@ -6,12 +6,12 @@ import (
 )
 
 // ResolveConfigDirSmart determines the bootstrap directory using smart detection:
-// 1. If -c flag or $CAVALIER_OPERATOR_DIR is set → use that
+// 1. If -c flag or $SCHEMATIC_OPERATOR_DIR is set → use that
 // 2. If ./creds/ or ./services/ exists → cwd is the bootstrap dir
 // 3. If ./bootstrap/creds/ or ./bootstrap/services/ exists → use ./bootstrap
 // 4. Default to ./bootstrap
 func ResolveConfigDirSmart() string {
-	if env := os.Getenv("CAVALIER_OPERATOR_DIR"); env != "" {
+	if env := os.Getenv("SCHEMATIC_OPERATOR_DIR"); env != "" {
 		return env
 	}
 	for _, marker := range []string{"creds", "services"} {

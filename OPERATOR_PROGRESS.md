@@ -5,7 +5,7 @@
 - Fanout failure: pipeline `2598313538` on tag `v1.2.183-main.190` failed all build targets at `pkg/bootstrap/example.go` because `kernel.Config` no longer has `SpiffePrefix` when regenerated from proto `v1.2.183-main.183`.
 - Root cause: proto retired and reserved `kernel.Config.spiffe_prefix`; operator `main` still set the removed generated field in the kernel bootstrap config literal.
 - Change: removed the stale `SpiffePrefix` assignment from `BuildKernelConfig`.
-- Verification passed: temp CI-shape build in `/tmp/operator-proto-183-build` against proto tag `v1.2.183-main.183` with `tacplus build --src proto`, `go mod download`, and `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/cavalier-operator`.
+- Verification passed: temp CI-shape build in `/tmp/operator-proto-183-build` against proto tag `v1.2.183-main.183` with `tacplus build --src proto`, `go mod download`, and `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/schematic-operator`.
 - Entitlement-shape follow-up: default bootstrap OPA policy now emits flat
   `token_entitlements.grants` strings instead of service-keyed maps.
 - Verification passed: `go test ./...`.
@@ -24,7 +24,7 @@
 - Regression coverage: `TestBuildBackendFieldsEmitsCanonicalSpiffeConfig`
   asserts the new fields are emitted and the retired `spiffe_prefix` key is not.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, and
-  `go build ./cmd/cavalier-operator`.
+  `go build ./cmd/schematic-operator`.
 - Follow-up blocker: new `opa` and `stratum` pods started with canonical
   configs but could not establish startup S2S connections to kernel. Their
   generated clients now verify kernel by canonical service SPIFFE URI
@@ -38,7 +38,7 @@
   stale legacy SAN detection, and acceptance of freshly generated canonical
   certs.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
-  ./cmd/cavalier-operator`, and `git diff --check`.
+  ./cmd/schematic-operator`, and `git diff --check`.
 
 ## 2026-06-17 demo-readiness drift cleanup
 
@@ -48,7 +48,7 @@
 - Root cause: the live StatefulSet had out-of-band command/volume drift not
   present in the generated Helm manifest; normal Helm upgrade reconciliation
   preserved the extra fields.
-- First attempted change: in-cluster cavalier release upgrades used Helm force
+- First attempted change: in-cluster schematic release upgrades used Helm force
   replacement so generated source state replaced drifted workload specs.
 - Follow-up finding: global Helm force also tries to replace bound PVCs for
   eventbus/graphdb/stratum/timedb, which Kubernetes correctly rejects because
@@ -56,11 +56,11 @@
 - Corrected change: global Helm force is removed again; the operator now
   performs a targeted source-level cleanup of Helm-managed kernel StatefulSet
   hotfix drift (`/hotfix/kernel-261.jar`, `/hotfix` mounts, and
-  `/opt/cavalier-hotfix` hostPath volumes) before normal Helm upgrade.
+  `/opt/schematic-hotfix` hostPath volumes) before normal Helm upgrade.
 - Regression coverage: reconciler tests assert that the targeted cleanup removes
   kernel hotfix command/volume drift while preserving normal bootstrap/data
   mounts and skips non-Helm StatefulSets.
-- Live blocker follow-up: after a mock operator redeploy, the inner `cavalier`
+- Live blocker follow-up: after a mock operator redeploy, the inner `schematic`
   Helm release was left at revision `2938` in `pending-upgrade`, so every
   reconcile failed with Helm's operation-in-progress lock.
 - Change: the in-cluster reconciler now detects stale pending inner Helm
@@ -76,7 +76,7 @@
 
 - Live blocker: OPA v187 pods could not verify kernel because the operator had
   regenerated a new `cluster-ca` in memory while the durable
-  `cavalier-operator-crypto` Secret still held the old `cluster-ca`. Old OPA pods
+  `schematic-operator-crypto` Secret still held the old `cluster-ca`. Old OPA pods
   stayed "ready" but failed S2S calls; new pods received a different trust
   bundle.
 - Root cause: the canonical SPIFFE migration reused `GenerateCrypto`, which
@@ -88,11 +88,11 @@
   `GenerateKernelTLS` path when a cluster CA key already exists. This rotates
   only kernel node/edge TLS certs and keeps signing CAs/trust anchors stable.
 - Live blocker: the operator also patched its own Deployment image from the
-  pullable `services/operator/cavalier-operator:v1.2.187-main.202` image to
-  non-pullable `services/operator/cavalier-operator:v1.2.27-main.4`.
+  pullable `services/operator/schematic-operator:v1.2.187-main.202` image to
+  non-pullable `services/operator/schematic-operator:v1.2.27-main.4`.
 - Root cause: self-upgrade resolved operator tags from
-  `cavalier/cavalier/cavalier-operator` instead of the deployable
-  `cavalier/services/operator/cavalier-operator` registry repository.
+  `schematic/schematic/schematic-operator` instead of the deployable
+  `schematic/services/operator/schematic-operator` registry repository.
 - Change: operator self-upgrade now resolves tags from the deployable
   `services/operator` namespace.
 - Regression coverage: tests now pin cluster CA preservation, targeted kernel
@@ -108,11 +108,11 @@
 - Regression coverage: wrapped `EROFS` handling is tested so only read-only
   config-write failures are ignored.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
-  ./cmd/cavalier-operator`, and `git diff --check`.
+  ./cmd/schematic-operator`, and `git diff --check`.
 
 ## 2026-06-17 proxy-policy bootstrap
 
-- Live blocker: real Claude CLI calls reached the local Cavalier proxy but
+- Live blocker: real Claude CLI calls reached the local Schematic proxy but
   failed external-token minting because OPA had no evaluator for
   `data.proxypolicy.eval`; only the entitlement policy was loaded.
 - Root cause: operator already had `ProxyPolicyDir()` but
@@ -130,4 +130,4 @@
   rendered service configs stable for the operator pod lifetime. Durable
   writable Secret persistence remains a post-demo hardening item.
 - Verification passed: `go test ./pkg/bootstrap`, `go test ./...`, `go build
-  ./cmd/cavalier-operator`, and `git diff --check`.
+  ./cmd/schematic-operator`, and `git diff --check`.

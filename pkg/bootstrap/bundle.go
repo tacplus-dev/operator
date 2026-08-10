@@ -287,18 +287,18 @@ var buildCmd = &cobra.Command{
 (including OPA policies embedded in base64), and writes a single YAML bundle file.
 
 The bundle is the canonical deployment artifact. Use it with:
-  cavalier-operator apply --bundle <file>    deploy to Kubernetes
-  cavalier-operator bundle expand <file>     unpack to a directory
-  cavalier-operator generate --bundle <file> write Helm charts from the bundle
+  schematic-operator apply --bundle <file>    deploy to Kubernetes
+  schematic-operator bundle expand <file>     unpack to a directory
+  schematic-operator generate --bundle <file> write Helm charts from the bundle
 
 Examples:
-  cavalier-operator build
-  cavalier-operator build -o /tmp/release.yaml`,
+  schematic-operator build
+  schematic-operator build -o /tmp/release.yaml`,
 	RunE: runBuild,
 }
 
 func init() {
-	buildCmd.Flags().StringVarP(&buildOutputFile, "output", "o", "cavalier-bundle.yaml", "output bundle file path")
+	buildCmd.Flags().StringVarP(&buildOutputFile, "output", "o", "schematic-bundle.yaml", "output bundle file path")
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
@@ -317,7 +317,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  version:  %s\n", bundle.Version)
 	fmt.Printf("  services: %d\n", len(bundle.Services))
 	fmt.Printf("\nDeploy with:\n")
-	fmt.Printf("  cavalier-operator apply --bundle %s\n", buildOutputFile)
+	fmt.Printf("  schematic-operator apply --bundle %s\n", buildOutputFile)
 	return nil
 }
 
@@ -338,7 +338,7 @@ var bundleExpandCmd = &cobra.Command{
   configs/        — rendered per-service YAML configs
 
 Example:
-  cavalier-operator bundle expand cavalier-bundle.yaml ./expanded`,
+  schematic-operator bundle expand schematic-bundle.yaml ./expanded`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runBundleExpand,
 }
@@ -350,7 +350,7 @@ var bundlePackCmd = &cobra.Command{
 produces a single bundle YAML file.
 
 Example:
-  cavalier-operator bundle pack ./expanded cavalier-bundle.yaml`,
+  schematic-operator bundle pack ./expanded schematic-bundle.yaml`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runBundlePack,
 }
@@ -381,7 +381,7 @@ func runBundleExpand(cmd *cobra.Command, args []string) error {
 
 func runBundlePack(cmd *cobra.Command, args []string) error {
 	dir := args[0]
-	outFile := "cavalier-bundle.yaml"
+	outFile := "schematic-bundle.yaml"
 	if len(args) == 2 {
 		outFile = args[1]
 	}

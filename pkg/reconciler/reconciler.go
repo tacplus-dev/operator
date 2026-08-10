@@ -2,7 +2,7 @@
 //
 // When mode = IN_CLUSTER, the reconciler:
 //  1. Watches the Kubernetes node count (schedulable worker nodes).
-//  2. On node count change or periodic tick, regenerates the cavalier Helm chart.
+//  2. On node count change or periodic tick, regenerates the schematic Helm chart.
 //  3. Applies the chart to the cluster via Helm install/upgrade.
 //
 // Image selection uses the new versioning scheme:
@@ -56,14 +56,14 @@ const ReconcileInterval = 30 * time.Second
 // pending Helm release as abandoned by a crashed or replaced operator.
 const StalePendingReleaseAge = 5 * time.Minute
 
-const releaseName = "cavalier"
+const releaseName = "schematic"
 
 // ServiceConfigProvider returns per-service Helm values (map of service name →
 // {"config": yaml-string}) on each reconcile. It is called once per reconcile
 // loop iteration. Returning nil, nil means "no overrides — use chart defaults".
 type ServiceConfigProvider func() (map[string]interface{}, error)
 
-// Reconciler manages the cavalier Helm release inside the cluster.
+// Reconciler manages the schematic Helm release inside the cluster.
 type Reconciler struct {
 	cfg            *protoOperator.Config
 	configProvider ServiceConfigProvider
@@ -166,7 +166,7 @@ func (r *Reconciler) namespace() string {
 	if ns := r.cfg.GetNamespace(); ns != "" {
 		return ns
 	}
-	return "cavalier"
+	return "schematic"
 }
 
 // selfUpgrade checks whether the operator's own Deployment is running the
@@ -185,7 +185,7 @@ func (r *Reconciler) selfUpgrade(ctx context.Context) (bool, error) {
 	var dep appsv1.Deployment
 	if err := r.client.Get(ctx, types.NamespacedName{
 		Namespace: r.operatorNS,
-		Name:      "cavalier-operator",
+		Name:      "schematic-operator",
 	}, &dep); err != nil {
 		return false, fmt.Errorf("getting operator deployment: %w", err)
 	}
@@ -213,7 +213,7 @@ func (r *Reconciler) selfUpgrade(ctx context.Context) (bool, error) {
 	)
 
 	p := []byte(fmt.Sprintf(
-		`{"spec":{"template":{"spec":{"containers":[{"name":"cavalier-operator","image":%q}]}}}}`,
+		`{"spec":{"template":{"spec":{"containers":[{"name":"schematic-operator","image":%q}]}}}}`,
 		desiredImage,
 	))
 	if err := r.client.Patch(ctx, &dep, client.RawPatch(types.StrategicMergePatchType, p)); err != nil {
@@ -282,7 +282,7 @@ func (r *Reconciler) schedulableNodeCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// apply installs or upgrades the "cavalier" Helm release using the in-memory
+// apply installs or upgrades the "schematic" Helm release using the in-memory
 // chart files produced by the generator. svcValues overrides values.yaml defaults
 // (typically per-service config YAML strings); nil is treated as an empty map.
 func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues map[string]interface{}) error {
@@ -484,7 +484,7 @@ func containsKernelHotfix(values []string) bool {
 	for _, value := range values {
 		if strings.Contains(value, "/hotfix") ||
 			strings.Contains(value, "kernel-261.jar") ||
-			strings.Contains(value, "/opt/cavalier-hotfix") {
+			strings.Contains(value, "/opt/schematic-hotfix") {
 			return true
 		}
 	}
@@ -512,7 +512,7 @@ func filterHotfixVolumes(volumes []corev1.Volume) ([]corev1.Volume, bool) {
 	for _, volume := range volumes {
 		if strings.EqualFold(volume.Name, "kernel-hotfix") ||
 			strings.Contains(strings.ToLower(volume.Name), "hotfix") ||
-			(volume.HostPath != nil && volume.HostPath.Path == "/opt/cavalier-hotfix") {
+			(volume.HostPath != nil && volume.HostPath.Path == "/opt/schematic-hotfix") {
 			removed = true
 			continue
 		}
@@ -521,14 +521,14 @@ func filterHotfixVolumes(volumes []corev1.Volume) ([]corev1.Volume, bool) {
 	return filtered, removed
 }
 
-// pruneStaleDeployments deletes Deployments in the cavalier namespace that are
+// pruneStaleDeployments deletes Deployments in the schematic namespace that are
 // managed by the chart but no longer expected (e.g. after topology scale-down).
 func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) error {
 	expected := r.generator.ExpectedDeploymentNames(r.cfg, nodeCount)
 
 	ns := r.cfg.Namespace
 	if ns == "" {
-		ns = "cavalier"
+		ns = "schematic"
 	}
 
 	var deployList appsv1.DeploymentList
@@ -545,7 +545,7 @@ func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) e
 		if expected[name] {
 			continue
 		}
-		// Only delete deployments that belong to the cavalier helm release.
+		// Only delete deployments that belong to the schematic helm release.
 		if dep.Labels["app.kubernetes.io/instance"] != releaseName {
 			continue
 		}

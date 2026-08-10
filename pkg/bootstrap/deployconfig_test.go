@@ -153,7 +153,7 @@ func TestKernelTLSNeedsRegenerationForLegacySpiffeSAN(t *testing.T) {
 
 func TestKernelTLSNeedsRegenerationAcceptsCanonicalSpiffeSAN(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	canonical, err := KernelServiceSpiffeURI("local.dev")
@@ -167,13 +167,13 @@ func TestKernelTLSNeedsRegenerationAcceptsCanonicalSpiffeSAN(t *testing.T) {
 
 func TestGenerateCryptoPreservesExistingClusterCA(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	clusterCertID := cfg.Pki.ClusterCa.Chain[0].Id
 	clusterKeyID := cfg.Pki.ClusterCa.Key.Id
 
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,7 +187,7 @@ func TestGenerateCryptoPreservesExistingClusterCA(t *testing.T) {
 
 func TestGenerateCryptoCreatesConstrainedKmakerSigningCA(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
@@ -223,7 +223,7 @@ func TestGenerateCryptoCreatesConstrainedKmakerSigningCA(t *testing.T) {
 
 func TestKmakerSigningCAChainsToRoot(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,7 +275,7 @@ func TestKmakerSigningCAChainsToRoot(t *testing.T) {
 
 func TestBuildKmakerConfigRejectsBroadClusterSigningCAOverride(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Kmaker = &protoKmaker.Config{SigningCa: cfg.Pki.ClusterCa}
@@ -288,7 +288,7 @@ func TestBuildKmakerConfigRejectsBroadClusterSigningCAOverride(t *testing.T) {
 func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
+		Namespace:    "schematic",
 		Fqdn:         "console.secondstarcavalier.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
@@ -348,7 +348,7 @@ func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
+		Namespace:    "schematic",
 		Fqdn:         "console.secondstarcavalier.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
@@ -469,7 +469,7 @@ func findDelegate(t *testing.T, delegates []*protoKernel.Delegate, name string) 
 
 func TestEnsureKmakerSigningCABackfillsExistingClusterCrypto(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Pki.KmakerSigningCa = nil
@@ -484,7 +484,7 @@ func TestEnsureKmakerSigningCABackfillsExistingClusterCrypto(t *testing.T) {
 
 func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 2, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 	clusterCertID := cfg.Pki.ClusterCa.Chain[0].Id
@@ -495,7 +495,7 @@ func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	kmakerSigningKeyID := cfg.Pki.KmakerSigningCa.Key.Id
 	oldLeafID := cfg.Pki.NodeTls[0].Chain[0].Id
 
-	if err := GenerateKernelTLS(cfg, 2, 0, "console.cavalier.io", "local.dev"); err != nil {
+	if err := GenerateKernelTLS(cfg, 2, 0, "console.schematic.io", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -549,8 +549,8 @@ func TestReadOnlyConfigWriteErrorMatchesWrappedEROFSError(t *testing.T) {
 func TestGatewayExternalTLSProvisionedAfterGenerate(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
-		Fqdn:         "cavalier.localtest.me",
+		Namespace:    "schematic",
+		Fqdn:         "schematic.localtest.me",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
@@ -591,7 +591,7 @@ func TestGatewayExternalTLSProvisionedAfterGenerate(t *testing.T) {
 	}
 
 	// Verify hostnames from FQDN.
-	if !strings.Contains(gwCfg, "cavalier.localtest.me") {
+	if !strings.Contains(gwCfg, "schematic.localtest.me") {
 		t.Fatalf("gateway config missing FQDN hostname:\n%s", gwCfg)
 	}
 
@@ -617,12 +617,12 @@ func TestGatewayExternalTLSProvisionedAfterGenerate(t *testing.T) {
 
 func TestGatewayExternalTLSIdempotent(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
 
 	// First generation.
-	generated, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me")
+	generated, err := EnsureGatewayExternalTLS(cfg, "schematic.localtest.me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +633,7 @@ func TestGatewayExternalTLSIdempotent(t *testing.T) {
 	firstKeyID := cfg.Pki.EdgeTls[0].Key.Id
 
 	// Second generation — should be idempotent.
-	generated, err = EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me")
+	generated, err = EnsureGatewayExternalTLS(cfg, "schematic.localtest.me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,10 +650,10 @@ func TestGatewayExternalTLSIdempotent(t *testing.T) {
 
 func TestGatewayExternalTLSCertHasFQDNAndLocalhost(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me"); err != nil {
+	if _, err := EnsureGatewayExternalTLS(cfg, "schematic.localtest.me"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -666,7 +666,7 @@ func TestGatewayExternalTLSCertHasFQDNAndLocalhost(t *testing.T) {
 	hasFQDN := false
 	hasLocalhost := false
 	for _, dns := range cert.DNSNames {
-		if dns == "cavalier.localtest.me" {
+		if dns == "schematic.localtest.me" {
 			hasFQDN = true
 		}
 		if dns == "localhost" {
@@ -683,10 +683,10 @@ func TestGatewayExternalTLSCertHasFQDNAndLocalhost(t *testing.T) {
 
 func TestGatewayExternalTLSPEMExtraction(t *testing.T) {
 	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "cavalier.localtest.me", "local.dev"); err != nil {
+	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureGatewayExternalTLS(cfg, "cavalier.localtest.me"); err != nil {
+	if _, err := EnsureGatewayExternalTLS(cfg, "schematic.localtest.me"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -705,8 +705,8 @@ func TestGatewayExternalTLSPEMExtraction(t *testing.T) {
 func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
-		Fqdn:         "cavalier.localtest.me",
+		Namespace:    "schematic",
+		Fqdn:         "schematic.localtest.me",
 		SpiffePrefix: "local.dev",
 		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
@@ -749,8 +749,8 @@ func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
 func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
-		Fqdn:         "cavalier.localtest.me",
+		Namespace:    "schematic",
+		Fqdn:         "schematic.localtest.me",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
@@ -803,8 +803,8 @@ func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 	if gwInKernel.ExternalTlsMode != protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN {
 		t.Fatalf("kernel gateway config external_tls_mode = %v, want CERT_CHAIN", gwInKernel.ExternalTlsMode)
 	}
-	if len(gwInKernel.ExternalHostnames) == 0 || gwInKernel.ExternalHostnames[0] != "cavalier.localtest.me" {
-		t.Fatalf("kernel gateway config external_hostnames = %v, want [cavalier.localtest.me]", gwInKernel.ExternalHostnames)
+	if len(gwInKernel.ExternalHostnames) == 0 || gwInKernel.ExternalHostnames[0] != "schematic.localtest.me" {
+		t.Fatalf("kernel gateway config external_hostnames = %v, want [schematic.localtest.me]", gwInKernel.ExternalHostnames)
 	}
 	if gwInKernel.ExternalCertPem == "" {
 		t.Fatal("kernel gateway config external_cert_pem is empty")

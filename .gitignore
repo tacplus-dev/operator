@@ -24,13 +24,26 @@ charts/
 target/
 
 # Local built binaries
-cavalier-operator
-cavalier-operator-linux-arm64
-cavalier-operator-darwin-arm64
+schematic-operator
+schematic-operator-linux-arm64
+schematic-operator-darwin-arm64
+schematic-operator-host
+schematic-operator-linux
+schematic-operator.bak-host
+
+# Pre-rename binary names. The rename rewrote these patterns, which UN-IGNORED
+# ~400MB of built binaries still sitting in the working tree and got the push
+# rejected for blob size. They stay until the old artefacts are gone.
 cavalier-operator
 cavalier-operator-host
 cavalier-operator-linux
+cavalier-operator-linux-arm64
+cavalier-operator-darwin-arm64
 cavalier-operator.bak-host
+schematic-operator
+schematic-operator-host
+schematic-operator-linux
+schematic-operator.bak-host
 target/
 bin/
 

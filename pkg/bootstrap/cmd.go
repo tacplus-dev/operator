@@ -11,9 +11,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "cavalier-operator",
-	Short: "Cavalier cluster operator — deploy, manage, and operate a cavalier cluster",
-	Long: `cavalier-operator is the cavalier cluster lifecycle manager.
+	Use:   "schematic-operator",
+	Short: "Schematic cluster operator — deploy, manage, and operate a schematic cluster",
+	Long: `schematic-operator is the schematic cluster lifecycle manager.
 
 When run without subcommands it starts in the mode declared by operator.yaml
 (default: IN_CLUSTER — continuously reconciles the Kubernetes cluster state).
@@ -24,36 +24,36 @@ Modes:
   generate-only   Generate Helm charts to output_dir and exit. Does not talk to k8s.
 
 Bootstrap workflow:
-  cavalier-operator init ca                Initialize root CA → crypto.yaml
-  cavalier-operator init cluster           Initialize cluster PKI + operator.yaml
-  cavalier-operator init-opa               Generate OPA entitlements policy
-  cavalier-operator init config <name>     Apply named template from cavalier/config repo
-  cavalier-operator export config <name>   Pack config dir back into a template file
-  cavalier-operator build                  Build self-contained deployment bundle
-  cavalier-operator bundle expand <file>   Unpack bundle to directory
-  cavalier-operator bundle pack <dir>      Pack directory back to bundle
-  cavalier-operator generate               Generate Helm charts to disk
-  cavalier-operator apply                  Apply charts to Kubernetes (one-shot)
-  cavalier-operator apply --bundle <file>  Apply from pre-built bundle
+  schematic-operator init ca                Initialize root CA → crypto.yaml
+  schematic-operator init cluster           Initialize cluster PKI + operator.yaml
+  schematic-operator init-opa               Generate OPA entitlements policy
+  schematic-operator init config <name>     Apply named template from schematic/config repo
+  schematic-operator export config <name>   Pack config dir back into a template file
+  schematic-operator build                  Build self-contained deployment bundle
+  schematic-operator bundle expand <file>   Unpack bundle to directory
+  schematic-operator bundle pack <dir>      Pack directory back to bundle
+  schematic-operator generate               Generate Helm charts to disk
+  schematic-operator apply                  Apply charts to Kubernetes (one-shot)
+  schematic-operator apply --bundle <file>  Apply from pre-built bundle
 
 Management:
-  cavalier-operator set-image-tag <tag>    Update container image tag
-  cavalier-operator set-mode <mode>        Switch between in-cluster and generate-only
-  cavalier-operator set-web-root <path>    Set gateway web root host path
-  cavalier-operator unset-web-root         Remove web root (use embedded webapp)
-  cavalier-operator add-api-key <name>     Create an API key credential pair
-  cavalier-operator add-profile <id>       Create or update an entitlement profile
-  cavalier-operator set-deploy-list <file> Set the deploy list filter
-  cavalier-operator unset-deploy-list      Remove deploy list (deploy all)
-  cavalier-operator merge <svc> <file>     Deep-merge YAML into a service config
-  cavalier-operator gen-backend-tokens     Generate OPA backend token policy`,
+  schematic-operator set-image-tag <tag>    Update container image tag
+  schematic-operator set-mode <mode>        Switch between in-cluster and generate-only
+  schematic-operator set-web-root <path>    Set gateway web root host path
+  schematic-operator unset-web-root         Remove web root (use embedded webapp)
+  schematic-operator add-api-key <name>     Create an API key credential pair
+  schematic-operator add-profile <id>       Create or update an entitlement profile
+  schematic-operator set-deploy-list <file> Set the deploy list filter
+  schematic-operator unset-deploy-list      Remove deploy list (deploy all)
+  schematic-operator merge <svc> <file>     Deep-merge YAML into a service config
+  schematic-operator gen-backend-tokens     Generate OPA backend token policy`,
 	RunE: runOperator,
 }
 
 var configDir string
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&configDir, "dir", "c", "", "config directory (default: ./bootstrap or $CAVALIER_OPERATOR_DIR)")
+	rootCmd.PersistentFlags().StringVarP(&configDir, "dir", "c", "", "config directory (default: ./bootstrap or $SCHEMATIC_OPERATOR_DIR)")
 
 	rootCmd.AddCommand(initCmd)
 	initCmd.AddCommand(initCACmd)
@@ -110,10 +110,10 @@ the configured IDP providers from services/oauth.yaml.
 Each provider's issuer URL becomes a trusted_issuer rule in the ABAC policy.
 
 Edit services/opa/idp/claims.rego after generation to customize
-which IDP claims map to which cavalier roles.
+which IDP claims map to which schematic roles.
 
 Example:
-  cavalier-operator init-opa`,
+  schematic-operator init-opa`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return InitOPA(resolveConfigDir())
 	},
@@ -125,10 +125,10 @@ var setWebRootCmd = &cobra.Command{
 	Use:   "set-web-root [path]",
 	Short: "Set persistent web-root for gateway (read-only mount)",
 	Long: `Sets a host path to mount into the gateway container as /webapp (read-only).
-The setting persists across 'cavalier-operator generate' rebuilds.
+The setting persists across 'schematic-operator generate' rebuilds.
 
 Example:
-  cavalier-operator set-web-root /Users/jody/webapp/dist`,
+  schematic-operator set-web-root /Users/jody/webapp/dist`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetWebRoot,
 }
@@ -155,7 +155,7 @@ func runSetWebRoot(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Web root set: %s (ro)\n", path)
-	fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
+	fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
 	return nil
 }
 
@@ -176,7 +176,7 @@ var unsetWebRootCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Web root removed. Gateway will use embedded webapp.\n")
-		fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
+		fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
 		return nil
 	},
 }
@@ -197,8 +197,8 @@ Also adds an api_key entry to services/oauth.yaml and registers a
 kernel delegate so the key holder can exchange tokens.
 
 Example:
-  cavalier-operator add-api-key ci-bot --profile admin
-  cavalier-operator add-api-key monitoring --profile reader`,
+  schematic-operator add-api-key ci-bot --profile admin
+  schematic-operator add-api-key monitoring --profile reader`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAddApiKey,
 }
@@ -233,7 +233,7 @@ func runAddApiKey(cmd *cobra.Command, args []string) error {
 			fmt.Printf("    %s=%s\n", k, v)
 		}
 	}
-	fmt.Printf("\nRun 'cavalier-operator generate' to rebuild.\n")
+	fmt.Printf("\nRun 'schematic-operator generate' to rebuild.\n")
 	return nil
 }
 
@@ -256,9 +256,9 @@ fine-grained control.
 Idempotent: re-running with the same ID replaces existing grants.
 
 Examples:
-  cavalier-operator add-profile admin --all
-  cavalier-operator add-profile reader --grant sentinel=SENTINEL_SERVICE_RPCS_GET_DASHBOARD
-  cavalier-operator add-profile custom --all --grant echo=ECHO_ANY`,
+  schematic-operator add-profile admin --all
+  schematic-operator add-profile reader --grant sentinel=SENTINEL_SERVICE_RPCS_GET_DASHBOARD
+  schematic-operator add-profile custom --all --grant echo=ECHO_ANY`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAddProfile,
 }
@@ -294,7 +294,7 @@ func runAddProfile(cmd *cobra.Command, args []string) error {
 	for svc, rpcs := range grants {
 		fmt.Printf("  %s: %s\n", svc, strings.Join(rpcs, ", "))
 	}
-	fmt.Printf("\nRun 'cavalier-operator generate' to rebuild.\n")
+	fmt.Printf("\nRun 'schematic-operator generate' to rebuild.\n")
 	return nil
 }
 
@@ -308,7 +308,7 @@ Only services whose name (last path segment) appears in the file will
 be included in Helm output.
 
 Example:
-  cavalier-operator set-deploy-list /path/to/actually_deploy`,
+  schematic-operator set-deploy-list /path/to/actually_deploy`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetDeployList,
 }
@@ -345,7 +345,7 @@ func runSetDeployList(cmd *cobra.Command, args []string) error {
 	for _, n := range names {
 		fmt.Printf("  %s\n", n)
 	}
-	fmt.Printf("\nRun 'cavalier-operator generate' to rebuild.\n")
+	fmt.Printf("\nRun 'schematic-operator generate' to rebuild.\n")
 	return nil
 }
 
@@ -362,7 +362,7 @@ var unsetDeployListCmd = &cobra.Command{
 			return fmt.Errorf("removing deploy.list: %w", err)
 		}
 		fmt.Printf("Deploy list removed. All topology services will be deployed.\n")
-		fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
+		fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
 		return nil
 	},
 }
@@ -379,8 +379,8 @@ deep merge semantics: maps are merged recursively, scalars and lists
 from the source file override existing values.
 
 Examples:
-  cavalier-operator merge oauth static/oauth.yaml
-  cavalier-operator merge kernel overrides/kernel.yaml`,
+  schematic-operator merge oauth static/oauth.yaml
+  schematic-operator merge kernel overrides/kernel.yaml`,
 	Args: cobra.ExactArgs(2),
 	RunE: runMerge,
 }
@@ -393,7 +393,7 @@ func runMerge(cmd *cobra.Command, args []string) error {
 	dstPath := filepath.Join(dir, "services", service+".yaml")
 
 	if _, err := os.Stat(dstPath); os.IsNotExist(err) {
-		return fmt.Errorf("no services/%s.yaml found in %s — run 'cavalier-operator init cluster' first", service, dir)
+		return fmt.Errorf("no services/%s.yaml found in %s — run 'schematic-operator init cluster' first", service, dir)
 	}
 
 	srcData, err := os.ReadFile(srcPath)

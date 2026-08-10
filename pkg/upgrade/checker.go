@@ -1,9 +1,9 @@
-// Package upgrade implements automatic version detection for cavalier service images.
+// Package upgrade implements automatic version detection for schematic service images.
 //
 // Version tag format: v{MAJOR}.{MINOR}.{PROTO_PATCH}-{BRANCH}.{LOCAL_PATCH}
 // e.g. "v1.2.12-main.3"
 //
-// PROTO_PATCH: the patch level of the proto repo (cavalier/cavalier) at build time.
+// PROTO_PATCH: the patch level of the proto repo (schematic/schematic) at build time.
 // BRANCH: the git branch of the service repo at build time (e.g. "main", "v1-2").
 // LOCAL_PATCH: auto-incremented per-service build counter at the given proto patch.
 //
@@ -258,7 +258,7 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 }
 
 func operatorRepo() string {
-	return fmt.Sprintf("%s/cavalier-operator", operatorBase)
+	return fmt.Sprintf("%s/schematic-operator", operatorBase)
 }
 
 // resolveRepo queries a registry repo and returns the best version

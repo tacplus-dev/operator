@@ -1,16 +1,16 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cavalier-operator
+  name: schematic-operator
   labels:
-    {{- include "cavalier-operator.labels" . | nindent 4 }}
+    {{- include "schematic-operator.labels" . | nindent 4 }}
 rules:
   # Read nodes to determine gateway replica count.
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["list", "watch"]
 
-  # Manage all cavalier resources in the target namespace.
+  # Manage all schematic resources in the target namespace.
   - apiGroups: ["", "apps", "batch"]
     resources:
       - namespaces
@@ -23,7 +23,7 @@ rules:
       - persistentvolumeclaims
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
-  # Manage cluster-scoped RBAC emitted by the Cavalier service chart.
+  # Manage cluster-scoped RBAC emitted by the Schematic service chart.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources:
       - clusterroles

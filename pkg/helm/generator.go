@@ -1,11 +1,11 @@
-// Package helm generates Helm chart manifests for all cavalier services.
+// Package helm generates Helm chart manifests for all schematic services.
 //
 // The Generator produces a complete chart — Chart.yaml, values.yaml, and all
 // service templates — either entirely in memory or written to an output directory.
 //
 // Chart structure produced:
 //
-//	cavalier/
+//	schematic/
 //	  Chart.yaml
 //	  values.yaml
 //	  templates/
@@ -65,7 +65,7 @@ func New(series, versionLock string, resolver TagResolver) *Generator {
 	return &Generator{series: series, versionLock: versionLock, resolver: resolver}
 }
 
-// Generate produces the full cavalier Helm chart for the given config.
+// Generate produces the full schematic Helm chart for the given config.
 // nodeCount is the number of schedulable Kubernetes nodes; it is used to
 // set gateway_nodes when topology.gateway_nodes == 0.
 func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts, error) {
@@ -108,9 +108,9 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts,
 	return charts, nil
 }
 
-// WriteToDisk writes charts to outputDir/cavalier/.
+// WriteToDisk writes charts to outputDir/schematic/.
 func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
-	base := filepath.Join(outputDir, "cavalier")
+	base := filepath.Join(outputDir, "schematic")
 	for relPath, content := range charts.Files {
 		full := filepath.Join(base, relPath)
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
@@ -365,12 +365,12 @@ func kmakerTokenAudience(cfg *protoOperator.Config) string {
 }
 
 const (
-	kernelServiceTokenMountPath = "/var/run/secrets/cavalier/kernel"
+	kernelServiceTokenMountPath = "/var/run/secrets/schematic/kernel"
 	kernelServiceTokenFile      = kernelServiceTokenMountPath + "/token"
 )
 
 func kernelTokenAudience() string {
-	return "cavalier-kernel"
+	return "schematic-kernel"
 }
 
 func withKernelServiceAuth(svc serviceSpec) serviceSpec {
@@ -453,13 +453,13 @@ func (g *Generator) imageRef(svc string) string {
 // imageRefProj builds an image reference where the GitLab registry project name
 // differs from the service name.
 func (g *Generator) imageRefProj(proj, svc string) string {
-	// Local-images mode (CAVALIER_LOCAL_IMAGES): reference locally-built images
+	// Local-images mode (SCHEMATIC_LOCAL_IMAGES): reference locally-built images
 	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
 	// docker-desktop clusters where k8s shares the docker daemon, so
 	// IfNotPresent resolves the local tag without a registry.
-	if v := os.Getenv("CAVALIER_LOCAL_IMAGES"); v != "" {
+	if v := os.Getenv("SCHEMATIC_LOCAL_IMAGES"); v != "" {
 		// A value containing a host (slash/colon) is a registry prefix, e.g.
-		// CAVALIER_LOCAL_IMAGES=localhost:5001 -> localhost:5001/schematic/<proj>:local.
+		// SCHEMATIC_LOCAL_IMAGES=localhost:5001 -> localhost:5001/schematic/<proj>:local.
 		// Any other non-empty value uses the bare local tag (shared image store).
 		if strings.ContainsAny(v, "/:") {
 			return fmt.Sprintf("%s/schematic/%s:local", v, proj)
@@ -505,7 +505,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
 				{
 					VolumeName:        "kmaker-token",
-					MountPath:         "/var/run/secrets/cavalier/kmaker",
+					MountPath:         "/var/run/secrets/schematic/kmaker",
 					TokenPath:         "token",
 					Audience:          kmakerTokenAudience(cfg),
 					ExpirationSeconds: 600,
@@ -521,7 +521,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			},
 			TokenReviewRBAC: true,
 			ExtraEnvVars: fmt.Sprintf(`        - name: KMAKER_K8S_TOKEN_FILE
-          value: /var/run/secrets/cavalier/kmaker/token
+          value: /var/run/secrets/schematic/kmaker/token
         - name: KERNEL_K8S_TOKEN_AUDIENCE
           value: %s
 `, kernelTokenAudience()),
@@ -624,8 +624,8 @@ func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount
 func (g *Generator) addChartYAML(charts *Charts, cfg *protoOperator.Config) error {
 	tag := g.series
 	content := fmt.Sprintf(`apiVersion: v2
-name: cavalier
-description: Cavalier control plane — managed by cavalier-operator
+name: schematic
+description: Schematic control plane — managed by schematic-operator
 type: application
 version: 0.1.0
 appVersion: %q
@@ -673,7 +673,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	}
 	ns := cfg.Namespace
 	if ns == "" {
-		ns = "cavalier"
+		ns = "schematic"
 	}
 
 	// Annotate the gateway serviceSpec with port and webroot so it renders
@@ -702,7 +702,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	if err := valuesTmpl.Execute(&buf, map[string]any{
 		"Namespace":        ns,
 		"Services":         svcs,
-		"Dev":              cfg.Dev || os.Getenv("CAVALIER_LOCAL_IMAGES") != "",
+		"Dev":              cfg.Dev || os.Getenv("SCHEMATIC_LOCAL_IMAGES") != "",
 		"PerReplicaConfigs": perReplica,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
@@ -715,15 +715,15 @@ func (g *Generator) addHelpers(charts *Charts) error {
 	charts.Files["templates/_helpers.tpl"] = []byte(`{{/*
 Common labels applied to all resources.
 */}}
-{{- define "cavalier.labels" -}}
-app.kubernetes.io/managed-by: cavalier-operator
+{{- define "schematic.labels" -}}
+app.kubernetes.io/managed-by: schematic-operator
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end }}
 
 {{/*
 Init container that waits for kernel0:5000.
 */}}
-{{- define "cavalier.waitForKernel" -}}
+{{- define "schematic.waitForKernel" -}}
 - name: wait-for-kernel
   image: busybox:latest
   command: ["sh", "-c", "until nc -z kernel0 5000; do sleep 2; done"]
@@ -732,7 +732,7 @@ Init container that waits for kernel0:5000.
 {{/*
 Init container that waits for sentinel0:8443.
 */}}
-{{- define "cavalier.waitForSentinel" -}}
+{{- define "schematic.waitForSentinel" -}}
 - name: wait-for-sentinel
   image: busybox:latest
   command: ["sh", "-c", "until nc -z sentinel0 8443; do sleep 2; done"]
@@ -755,7 +755,7 @@ accept (kernel-level, cheap even mid-GC) but too tight for a health RPC that
 the application must actually answer: at 1s the JVM services flapped, killed
 3 times in 28 minutes by spurious liveness failures.
 */}}
-{{- define "cavalier.grpcProbe5000" -}}
+{{- define "schematic.grpcProbe5000" -}}
 grpc:
   port: 8444
 initialDelaySeconds: 10
@@ -764,7 +764,7 @@ timeoutSeconds: 5
 failureThreshold: 3
 {{- end }}
 
-{{- define "cavalier.startupProbe5000" -}}
+{{- define "schematic.startupProbe5000" -}}
 grpc:
   port: 8444
 periodSeconds: 5
@@ -772,7 +772,7 @@ timeoutSeconds: 5
 failureThreshold: 60
 {{- end }}
 
-{{- define "cavalier.grpcProbe8443" -}}
+{{- define "schematic.grpcProbe8443" -}}
 grpc:
   port: 8444
 initialDelaySeconds: 10
@@ -788,7 +788,7 @@ Once the startup probe passes, the liveness probe takes over. The health
 endpoint reports NOT_SERVING until bootstrap completes, so this gates on real
 readiness rather than merely on the port being bound.
 */}}
-{{- define "cavalier.startupProbe8443" -}}
+{{- define "schematic.startupProbe8443" -}}
 grpc:
   port: 8444
 periodSeconds: 5
@@ -799,7 +799,7 @@ failureThreshold: 60
 {{/*
 imagePullSecrets block — empty when no pull secret is configured.
 */}}
-{{- define "cavalier.imagePullSecrets" -}}
+{{- define "schematic.imagePullSecrets" -}}
 {{- if .Values.global.imagePullSecret -}}
 imagePullSecrets:
 - name: {{ .Values.global.imagePullSecret }}
@@ -810,7 +810,7 @@ imagePullSecrets:
 }
 
 // addRegistrySecret emits templates/registry-secret.yaml when gitlab_registry_token is set.
-// The secret provides pull credentials for registry.gitlab.com in the cavalier namespace.
+// The secret provides pull credentials for registry.gitlab.com in the schematic namespace.
 func (g *Generator) addRegistrySecret(charts *Charts, cfg *protoOperator.Config) error {
 	token := cfg.GetGitlabRegistryToken()
 	if token == "" {
@@ -845,7 +845,7 @@ data:
 func (g *Generator) addNamespace(charts *Charts, cfg *protoOperator.Config) error {
 	ns := cfg.Namespace
 	if ns == "" {
-		ns = "cavalier"
+		ns = "schematic"
 	}
 	charts.Files["templates/namespace.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Namespace
@@ -872,7 +872,7 @@ metadata:
   name: {{ $.Name }}{{ $i }}
   namespace: {{ "{{" }} .Values.global.namespace {{ "}}" }}
   labels:
-    {{ "{{- include \"cavalier.labels\" . | nindent 4 }}" }}
+    {{ "{{- include \"schematic.labels\" . | nindent 4 }}" }}
 spec:
   replicas: 1
   selector:
@@ -882,9 +882,9 @@ spec:
     metadata:
       labels:
         app: {{ $.Name }}{{ $i }}
-        {{ "{{- include \"cavalier.labels\" . | nindent 8 }}" }}
+        {{ "{{- include \"schematic.labels\" . | nindent 8 }}" }}
     spec:
-      {{ "{{- include \"cavalier.imagePullSecrets\" . | nindent 6 }}" }}
+      {{ "{{- include \"schematic.imagePullSecrets\" . | nindent 6 }}" }}
       hostname: {{ $.Name }}{{ $i }}
       containers:
       - name: {{ $.Name }}{{ $i }}
@@ -909,11 +909,11 @@ spec:
           mountPath: /app/data
         {{- end }}
         startupProbe:
-          {{ "{{- include \"cavalier.startupProbe5000\" . | nindent 10 }}" }}
+          {{ "{{- include \"schematic.startupProbe5000\" . | nindent 10 }}" }}
         readinessProbe:
-          {{ "{{- include \"cavalier.grpcProbe5000\" . | nindent 10 }}" }}
+          {{ "{{- include \"schematic.grpcProbe5000\" . | nindent 10 }}" }}
         livenessProbe:
-          {{ "{{- include \"cavalier.grpcProbe5000\" . | nindent 10 }}" }}
+          {{ "{{- include \"schematic.grpcProbe5000\" . | nindent 10 }}" }}
       volumes:
       - name: config
         configMap:
@@ -929,7 +929,7 @@ spec:
 func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
 	ns := cfg.Namespace
 	if ns == "" {
-		ns = "cavalier"
+		ns = "schematic"
 	}
 	if svc.AutomountServiceAccountToken == nil {
 		svc.AutomountServiceAccountToken = falsePtr()
@@ -942,7 +942,7 @@ metadata:
   name: %s
   namespace: {{ .Values.global.namespace }}
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 `, svc.ServiceAccountName))
 	}
 	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" {
@@ -951,7 +951,7 @@ kind: ClusterRole
 metadata:
   name: %s-tokenreview
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 rules:
 - apiGroups: ["authentication.k8s.io"]
   resources: ["tokenreviews"]
@@ -962,7 +962,7 @@ kind: ClusterRoleBinding
 metadata:
   name: %s-tokenreview
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -980,7 +980,7 @@ metadata:
   name: %s-pod-reader
   namespace: {{ .Values.global.namespace }}
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 rules:
 - apiGroups: [""]
   resources: ["pods"]
@@ -992,7 +992,7 @@ metadata:
   name: %s-pod-reader
   namespace: {{ .Values.global.namespace }}
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -1161,11 +1161,11 @@ spec:
 	if listenPort == 0 {
 		listenPort = 5000
 	}
-	probeHelper := "cavalier.grpcProbe5000"
-	startupProbeHelper := "cavalier.startupProbe5000"
+	probeHelper := "schematic.grpcProbe5000"
+	startupProbeHelper := "schematic.startupProbe5000"
 	if listenPort == 8443 {
-		probeHelper = "cavalier.grpcProbe8443"
-		startupProbeHelper = "cavalier.startupProbe8443"
+		probeHelper = "schematic.grpcProbe8443"
+		startupProbeHelper = "schematic.startupProbe8443"
 	}
 
 	if svc.IsStatefulSet {
@@ -1179,7 +1179,7 @@ metadata:
   name: %s
   namespace: {{ .Values.global.namespace }}
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 spec:
   serviceName: %s
   replicas: %d
@@ -1195,7 +1195,7 @@ spec:
     metadata:
       labels:
         app: %s
-        {{- include "cavalier.labels" . | nindent 8 }}
+        {{- include "schematic.labels" . | nindent 8 }}
 `, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
 		ssBuf.WriteString(`      annotations:
 `)
@@ -1204,7 +1204,7 @@ spec:
 `, i, svc.Name, i))
 		}
 		ssBuf.WriteString(`    spec:
-      {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
+      {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 `)
 		ssBuf.WriteString(podServiceAccountLines(svc))
 		ssBuf.WriteString(`      initContainers:
@@ -1325,7 +1325,7 @@ metadata:
   name: %s
   namespace: {{ .Values.global.namespace }}
   labels:
-    {{- include "cavalier.labels" . | nindent 4 }}
+    {{- include "schematic.labels" . | nindent 4 }}
 spec:
   replicas: 1
 %s  selector:
@@ -1335,7 +1335,7 @@ spec:
     metadata:
       labels:
         app: %s
-        {{- include "cavalier.labels" . | nindent 8 }}
+        {{- include "schematic.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ .Values.%s.config | sha256sum | quote }}
 `, name, strategy, name, name, svc.Name))
@@ -1344,7 +1344,7 @@ spec:
 `, svc.Name))
 			}
 			deployBuf.WriteString(fmt.Sprintf(`    spec:
-      {{- include "cavalier.imagePullSecrets" . | nindent 6 }}
+      {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 %s
       hostname: %s
       containers:

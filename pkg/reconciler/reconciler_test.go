@@ -28,7 +28,7 @@ func TestRemoveKernelHotfixDrift(t *testing.T) {
 	st := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kernel",
-			Namespace: "cavalier",
+			Namespace: "schematic",
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "Helm",
 			},
@@ -51,7 +51,7 @@ func TestRemoveKernelHotfixDrift(t *testing.T) {
 					Volumes: []corev1.Volume{
 						{Name: "bootstrap", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 						{Name: "config-0", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{}}},
-						{Name: "kernel-hotfix", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/opt/cavalier-hotfix"}}},
+						{Name: "kernel-hotfix", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/opt/schematic-hotfix"}}},
 					},
 				},
 			},
@@ -63,12 +63,12 @@ func TestRemoveKernelHotfixDrift(t *testing.T) {
 		log:    zap.NewNop(),
 	}
 
-	if err := r.removeKernelHotfixDrift(context.Background(), "cavalier"); err != nil {
+	if err := r.removeKernelHotfixDrift(context.Background(), "schematic"); err != nil {
 		t.Fatalf("removing hotfix drift: %v", err)
 	}
 
 	var got appsv1.StatefulSet
-	if err := r.client.Get(context.Background(), types.NamespacedName{Namespace: "cavalier", Name: "kernel"}, &got); err != nil {
+	if err := r.client.Get(context.Background(), types.NamespacedName{Namespace: "schematic", Name: "kernel"}, &got); err != nil {
 		t.Fatalf("getting statefulset: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestRemoveKernelHotfixDriftSkipsNonHelmStatefulSet(t *testing.T) {
 	}
 
 	st := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "kernel", Namespace: "cavalier"},
+		ObjectMeta: metav1.ObjectMeta{Name: "kernel", Namespace: "schematic"},
 		Spec: appsv1.StatefulSetSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
@@ -116,12 +116,12 @@ func TestRemoveKernelHotfixDriftSkipsNonHelmStatefulSet(t *testing.T) {
 		log:    zap.NewNop(),
 	}
 
-	if err := r.removeKernelHotfixDrift(context.Background(), "cavalier"); err != nil {
+	if err := r.removeKernelHotfixDrift(context.Background(), "schematic"); err != nil {
 		t.Fatalf("removing hotfix drift: %v", err)
 	}
 
 	var got appsv1.StatefulSet
-	if err := r.client.Get(context.Background(), types.NamespacedName{Namespace: "cavalier", Name: "kernel"}, &got); err != nil {
+	if err := r.client.Get(context.Background(), types.NamespacedName{Namespace: "schematic", Name: "kernel"}, &got); err != nil {
 		t.Fatalf("getting statefulset: %v", err)
 	}
 	if len(got.Spec.Template.Spec.Containers[0].Args) == 0 {

@@ -1,3 +1,3 @@
 FROM gcr.io/distroless/static:nonroot
-COPY cavalier-operator /cavalier-operator
-ENTRYPOINT ["/cavalier-operator"]
+COPY schematic-operator /schematic-operator
+ENTRYPOINT ["/schematic-operator"]

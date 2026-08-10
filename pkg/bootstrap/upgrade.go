@@ -16,7 +16,7 @@ import (
 
 const (
 	upgradeProjectID   = "81967216"
-	upgradePackageName = "cavalier-operator"
+	upgradePackageName = "schematic-operator"
 	upgradeAPIBase     = "https://gitlab.com/api/v4"
 )
 
@@ -27,8 +27,8 @@ var upgradeVersion string
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
-	Short: "Upgrade cavalier-operator to the latest patch release",
-	Long: `Download and replace the running cavalier-operator binary.
+	Short: "Upgrade schematic-operator to the latest patch release",
+	Long: `Download and replace the running schematic-operator binary.
 
 By default, upgrades to the latest patch release on the current MAJOR.MINOR
 version line (e.g. if running v1.2.1, installs the latest v1.2.x).
@@ -85,7 +85,7 @@ func runUpgrade(_ *cobra.Command, _ []string) error {
 	// Notify if a newer MAJOR.MINOR release line exists beyond the resolved tag.
 	checkNewerLine(releases, tag)
 
-	fmt.Printf("Installing cavalier-operator %s (%s)...\n", tag, binName)
+	fmt.Printf("Installing schematic-operator %s (%s)...\n", tag, binName)
 
 	url := fmt.Sprintf("%s/projects/%s/packages/generic/%s/%s/%s",
 		upgradeAPIBase, upgradeProjectID, upgradePackageName, tag, binName)
@@ -340,7 +340,7 @@ func downloadReplace(url, token, dest string) error {
 		return nil
 	}
 
-	tmp, err := os.CreateTemp(dir, ".cavalier-operator-upgrade-*")
+	tmp, err := os.CreateTemp(dir, ".schematic-operator-upgrade-*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
@@ -379,15 +379,15 @@ func writeFile(path string, r io.Reader, mode os.FileMode) error {
 func platformBinary() (string, error) {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "darwin/arm64":
-		return "cavalier-operator-darwin-arm64", nil
+		return "schematic-operator-darwin-arm64", nil
 	case "linux/amd64":
-		return "cavalier-operator-linux-amd64", nil
+		return "schematic-operator-linux-amd64", nil
 	case "linux/arm64":
-		return "cavalier-operator-linux-arm64", nil
+		return "schematic-operator-linux-arm64", nil
 	case "windows/amd64":
-		return "cavalier-operator-windows-amd64.exe", nil
+		return "schematic-operator-windows-amd64.exe", nil
 	case "windows/arm64":
-		return "cavalier-operator-windows-arm64.exe", nil
+		return "schematic-operator-windows-arm64.exe", nil
 	default:
 		return "", fmt.Errorf("unsupported platform %s/%s — download manually from the releases page", runtime.GOOS, runtime.GOARCH)
 	}

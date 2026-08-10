@@ -12,7 +12,7 @@ import (
 
 func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "cavalier",
+		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
 			KmakerNodes: 1,
@@ -24,9 +24,9 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 	for _, want := range []string{
 		"serviceAccountName: kernel",
 		"automountServiceAccountToken: false",
-		"- name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kmaker/token",
-		"- name: KERNEL_K8S_TOKEN_AUDIENCE\n          value: cavalier-kernel",
-		"- name: kmaker-token\n          mountPath: /var/run/secrets/cavalier/kmaker\n          readOnly: true",
+		"- name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/schematic/kmaker/token",
+		"- name: KERNEL_K8S_TOKEN_AUDIENCE\n          value: schematic-kernel",
+		"- name: kmaker-token\n          mountPath: /var/run/secrets/schematic/kmaker\n          readOnly: true",
 		"- name: kmaker-token\n        projected:",
 		"defaultMode: 0444",
 		"path: token",
@@ -61,7 +61,7 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 
 func TestGenerateKmakerProjectedKubernetesAPITokenAndRBAC(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "cavalier",
+		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KmakerNodes: 1,
 		},
@@ -112,7 +112,7 @@ func TestGenerateKmakerProjectedKubernetesAPITokenAndRBAC(t *testing.T) {
 
 func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "cavalier",
+		Namespace: "schematic",
 		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			SentinelNodes:   1,
@@ -154,12 +154,12 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			for _, want := range []string{
 				"serviceAccountName: " + service,
 				"automountServiceAccountToken: false",
-				"- name: KERNEL_K8S_TOKEN_FILE\n          value: /var/run/secrets/cavalier/kernel/token",
-				"- name: kernel-token\n          mountPath: /var/run/secrets/cavalier/kernel\n          readOnly: true",
+				"- name: KERNEL_K8S_TOKEN_FILE\n          value: /var/run/secrets/schematic/kernel/token",
+				"- name: kernel-token\n          mountPath: /var/run/secrets/schematic/kernel\n          readOnly: true",
 				"- name: kernel-token\n        projected:",
 				"defaultMode: 0444",
 				"path: token",
-				"audience: cavalier-kernel",
+				"audience: schematic-kernel",
 				"expirationSeconds: 3600",
 			} {
 				if !strings.Contains(deployment, want) {
@@ -183,7 +183,7 @@ func TestOperatorDeploymentUsesExplicitKubernetesAPITokenProjection(t *testing.T
 	}
 	deployment := string(data)
 	for _, want := range []string{
-		"serviceAccountName: cavalier-operator",
+		"serviceAccountName: schematic-operator",
 		"automountServiceAccountToken: false",
 		"- name: kubernetes-api-token\n          mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n          readOnly: true",
 		"- name: kubernetes-api-token\n        projected:",
@@ -228,7 +228,7 @@ func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
 // error during helm install dry-run.
 func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "cavalier",
+		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
 			KmakerNodes: 1,
@@ -317,8 +317,8 @@ func TestProbesQueryGRPCHealthOnPlaintextPort(t *testing.T) {
 	body := string(src)
 
 	for _, probe := range []string{
-		"cavalier.grpcProbe5000", "cavalier.startupProbe5000",
-		"cavalier.grpcProbe8443", "cavalier.startupProbe8443",
+		"schematic.grpcProbe5000", "schematic.startupProbe5000",
+		"schematic.grpcProbe8443", "schematic.startupProbe8443",
 	} {
 		if !strings.Contains(body, probe) {
 			t.Errorf("probe helper %q is missing", probe)
@@ -326,8 +326,8 @@ func TestProbesQueryGRPCHealthOnPlaintextPort(t *testing.T) {
 	}
 	// No probe helper may fall back to a TCP check.
 	probeRegion := body
-	if i := strings.Index(probeRegion, `"cavalier.grpcProbe5000"`); i >= 0 {
-		if j := strings.Index(probeRegion[i:], `"cavalier.imagePullSecrets"`); j > 0 {
+	if i := strings.Index(probeRegion, `"schematic.grpcProbe5000"`); i >= 0 {
+		if j := strings.Index(probeRegion[i:], `"schematic.imagePullSecrets"`); j > 0 {
 			probeRegion = probeRegion[i : i+j]
 		}
 	}

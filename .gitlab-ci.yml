@@ -1,10 +1,10 @@
-# cavalier/services/operator — standalone CI
+# schematic/services/operator — standalone CI
 #
 # Triggered on:
 #   - version tags: v<major>.<minor>.<patch>-main.<local> or v<major>.<minor>.<patch>
 #     e.g. v1.2.36-main.1 (prerelease, fan-out from proto) or v1.2.36 (prod)
 #     Proto tag is v1.2.36-main.36 (suffix = patch); operator/services start at .1.
-#   - PROTO_VALIDATE=true (fan-out from cavalier/proto on every proto tag)
+#   - PROTO_VALIDATE=true (fan-out from schematic/proto on every proto tag)
 #     → runs proto-validate job to confirm operator still compiles with new proto
 #
 # Stages on version tag:
@@ -48,7 +48,7 @@ compute-image:
     - if: $PROTO_VALIDATE == "true"
 
 # ---------------------------------------------------------------------------
-# Proto-validate: triggered by cavalier/proto fan-out.
+# Proto-validate: triggered by schematic/proto fan-out.
 # Clones proto at PROTO_VERSION, runs tacplus codegen, compiles all packages.
 # ---------------------------------------------------------------------------
 proto-validate:
@@ -107,8 +107,8 @@ proto-validate:
     - |
       CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
         go build -trimpath -ldflags="-s -w -X ${PKG}.Version=${VERSION}" \
-        -o "cavalier-operator-${GOOS}-${GOARCH}${EXT:-}" \
-        ./cmd/cavalier-operator
+        -o "schematic-operator-${GOOS}-${GOARCH}${EXT:-}" \
+        ./cmd/schematic-operator
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
 
@@ -121,7 +121,7 @@ build-linux-arm64:
     GOARCH: arm64
   artifacts:
     paths:
-      - cavalier-operator-linux-arm64
+      - schematic-operator-linux-arm64
     expire_in: 1 hour
 
 build-linux-amd64:
@@ -133,7 +133,7 @@ build-linux-amd64:
     GOARCH: amd64
   artifacts:
     paths:
-      - cavalier-operator-linux-amd64
+      - schematic-operator-linux-amd64
     expire_in: 1 hour
 
 build-darwin-arm64:
@@ -145,7 +145,7 @@ build-darwin-arm64:
     GOARCH: arm64
   artifacts:
     paths:
-      - cavalier-operator-darwin-arm64
+      - schematic-operator-darwin-arm64
     expire_in: 1 hour
 
 # build-windows-amd64:
@@ -158,7 +158,7 @@ build-darwin-arm64:
 #     EXT: .exe
 #   artifacts:
 #     paths:
-#       - cavalier-operator-windows-amd64.exe
+#       - schematic-operator-windows-amd64.exe
 #     expire_in: 1 hour
 #
 # build-windows-arm64:
@@ -171,7 +171,7 @@ build-darwin-arm64:
 #     EXT: .exe
 #   artifacts:
 #     paths:
-#       - cavalier-operator-windows-arm64.exe
+#       - schematic-operator-windows-arm64.exe
 #     expire_in: 1 hour
 
 # ---------------------------------------------------------------------------
@@ -194,8 +194,8 @@ package-release:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - |
-      BASE="${CI_REGISTRY_IMAGE}/cavalier-operator"
-      cp cavalier-operator-linux-arm64 cavalier-operator
+      BASE="${CI_REGISTRY_IMAGE}/schematic-operator"
+      cp schematic-operator-linux-arm64 schematic-operator
       docker build \
         --platform linux/arm64 \
         -f Dockerfile \
@@ -220,10 +220,10 @@ chart:
       V="${CI_COMMIT_TAG#v}"
       sed -i "s/^version:.*/version: ${V}/" helm/Chart.yaml
       sed -i "s/^appVersion:.*/appVersion: \"${CI_COMMIT_TAG}\"/" helm/Chart.yaml
-      sed -i "s|cavalier-operator:.*|cavalier-operator:${CI_COMMIT_TAG}|" helm/values.yaml
+      sed -i "s|schematic-operator:.*|schematic-operator:${CI_COMMIT_TAG}|" helm/values.yaml
       helm package helm/ --destination .
       helm registry login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-      helm push cavalier-operator-${V}.tgz oci://${CI_REGISTRY_IMAGE}/charts
+      helm push schematic-operator-${V}.tgz oci://${CI_REGISTRY_IMAGE}/charts
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/
 
@@ -240,11 +240,11 @@ release:
     - apk add --no-cache curl
   script:
     - |
-      BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cavalier-operator/${CI_COMMIT_TAG}"
+      BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/schematic-operator/${CI_COMMIT_TAG}"
       for FILE in \
-        cavalier-operator-linux-arm64 \
-        cavalier-operator-linux-amd64 \
-        cavalier-operator-darwin-arm64; do
+        schematic-operator-linux-arm64 \
+        schematic-operator-linux-amd64 \
+        schematic-operator-darwin-arm64; do
         echo "Uploading ${FILE}..."
         curl --fail --silent --show-error --http1.1 \
           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
@@ -253,17 +253,17 @@ release:
       done
   release:
     tag_name: $CI_COMMIT_TAG
-    description: "cavalier-operator $CI_COMMIT_TAG"
+    description: "schematic-operator $CI_COMMIT_TAG"
     assets:
       links:
-        - name: "cavalier-operator-linux-arm64"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cavalier-operator/${CI_COMMIT_TAG}/cavalier-operator-linux-arm64"
+        - name: "schematic-operator-linux-arm64"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/schematic-operator/${CI_COMMIT_TAG}/schematic-operator-linux-arm64"
           link_type: package
-        - name: "cavalier-operator-linux-amd64"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cavalier-operator/${CI_COMMIT_TAG}/cavalier-operator-linux-amd64"
+        - name: "schematic-operator-linux-amd64"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/schematic-operator/${CI_COMMIT_TAG}/schematic-operator-linux-amd64"
           link_type: package
-        - name: "cavalier-operator-darwin-arm64 (macOS Apple Silicon)"
-          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cavalier-operator/${CI_COMMIT_TAG}/cavalier-operator-darwin-arm64"
+        - name: "schematic-operator-darwin-arm64 (macOS Apple Silicon)"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/schematic-operator/${CI_COMMIT_TAG}/schematic-operator-darwin-arm64"
           link_type: package
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+(-[a-zA-Z][a-zA-Z0-9_-]*\.\d+)?$/

@@ -223,7 +223,7 @@ func InitOPA(cfgDir string) error {
 		fmt.Printf("  trusted issuer: %s\n", iss)
 	}
 	fmt.Printf("\nEdit services/opa/idp/claims.rego to customize IDP claim → role mapping.\n")
-	fmt.Printf("Run 'cavalier-operator generate' to rebuild.\n")
+	fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
 	return nil
 }
 
@@ -426,7 +426,7 @@ func operatorKubernetesNamespace(cfg *protoOperator.Config) string {
 	if ns := cfg.GetNamespace(); ns != "" {
 		return ns
 	}
-	return "cavalier"
+	return "schematic"
 }
 
 func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, namespace, serviceAccount string) {
@@ -569,7 +569,7 @@ func splitPath(s string) []string {
 // exampleKernelYAMLTemplate is a format string with %s for cert and key base64.
 const exampleKernelYAMLTemplate = `# Kernel configuration — security, TLS, and delegates.
 # Per-service configs live in separate files (sentinel.yaml, oauth.yaml, gateway.yaml).
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 
 # Token exchanger settings
 key_rotation_interval_seconds: 86400
@@ -580,12 +580,12 @@ tls:
   cert: %s
   key: %s
 
-# Delegates (added by 'cavalier-operator init cluster')
+# Delegates (added by 'schematic-operator init cluster')
 # delegates:
 #   - name: sentinel
 #     authorized_services: [sentinel]
 
-# Entitlement profiles (added by 'cavalier-operator add-profile')
+# Entitlement profiles (added by 'schematic-operator add-profile')
 # Maps OPA policy output to typed per-service RPC entitlements.
 # entitlement_profiles:
 #   - id: admin
@@ -593,17 +593,17 @@ tls:
 `
 
 const exampleSentinelYAML = `# Sentinel service configuration.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 {}
 `
 
 const exampleGatewayYAML = `# Gateway service configuration.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 {}
 `
 
 const exampleEventbusYAML = `# Eventbus service configuration.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 data_dir: /app/data
 default_retention_hours: 168
 default_partitions: 6
@@ -613,7 +613,7 @@ broker_count: 1
 `
 
 const exampleGraphdbYAML = `# Graphdb service configuration.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 zero_count: 1
 replicas: 1
 alpha_count: 1
@@ -621,7 +621,7 @@ alpha_count: 1
 
 const exampleOauthYAML = `# OAuth service configuration.
 # Unified auth broker: browser OAuth (OIDC) + CLI/device token delivery.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 enable: true
 scopes:
   - openid
@@ -631,7 +631,7 @@ providers:
   - enable: true
     name: Google
     domains:
-      - cavalier.io
+      - schematic.io
       - example.org
     issuer: https://accounts.google.com
     client_id: YOUR_GOOGLE_CLIENT_ID
@@ -644,21 +644,21 @@ providers:
 
 const exampleMsggatewayYAML = `# Msggateway service configuration.
 # Messaging platform gateway (Slack).
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 {}
 `
 
 const exampleOpaYAML = `# OPA service configuration.
 # OPA entitlements policy is loaded from services/opa/ directory.
-# Run 'cavalier-operator init-opa' to generate default policy.
-# Edit these, then run: cavalier-operator generate
+# Run 'schematic-operator init-opa' to generate default policy.
+# Edit these, then run: schematic-operator generate
 {}
 `
 
 const exampleSamlYAML = `# SAML service configuration.
 # Identity provider bridge for enterprise SSO.
 # Enable via optional_services.saml = true in operator.yaml.
-# Edit these, then run: cavalier-operator generate
+# Edit these, then run: schematic-operator generate
 {}
 `
 

@@ -53,7 +53,7 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 
 	mgr, err := manager.New(restCfg, manager.Options{
 		LeaderElection:          true,
-		LeaderElectionID:        "cavalier-operator-leader",
+		LeaderElectionID:        "schematic-operator-leader",
 		LeaderElectionNamespace: cfg.GetNamespace(),
 	})
 	if err != nil {
@@ -64,7 +64,7 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 	// Standard Kubernetes pattern: inject via POD_NAMESPACE env var in the Deployment spec.
 	operatorNS := os.Getenv("POD_NAMESPACE")
 	if operatorNS == "" {
-		operatorNS = "cavalier-operator"
+		operatorNS = "schematic-operator"
 	}
 
 	provider := NewServiceConfigProvider(dir)
@@ -119,7 +119,7 @@ func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
 	}
 
 	log.Info("charts written", zap.String("dir", outDir), zap.Int("files", len(charts.Files)))
-	fmt.Printf("Generated %d chart files → %s/cavalier/\n", len(charts.Files), outDir)
+	fmt.Printf("Generated %d chart files → %s/schematic/\n", len(charts.Files), outDir)
 	return nil
 }
 
@@ -140,8 +140,8 @@ var initCACmd = &cobra.Command{
 Idempotent: skips if a root CA already exists in crypto.yaml.
 
 Example:
-  cavalier-operator init ca
-  cavalier-operator init ca -c /path/to/config`,
+  schematic-operator init ca
+  schematic-operator init ca -c /path/to/config`,
 	RunE: runInitCA,
 }
 
@@ -200,7 +200,7 @@ var initClusterCmd = &cobra.Command{
 	Short: "Initialize cluster PKI and operator.yaml",
 	Long: `Generate cluster PKI material and write operator.yaml.
 
-Requires a root CA (from 'cavalier-operator init ca' or an existing crypto.yaml).
+Requires a root CA (from 'schematic-operator init ca' or an existing crypto.yaml).
 
 Flags:
   --ca       Path to crypto.yaml containing the root CA (required if not in config dir).
@@ -210,8 +210,8 @@ Flags:
   --gateways Number of gateway replicas (0 = auto from node count in IN_CLUSTER mode).
 
 Example:
-  cavalier-operator init cluster --ca ../ca/crypto.yaml --fqdn api.example.com
-  cavalier-operator init cluster --ca ../ca/crypto.yaml --fqdn api.example.com --type medium --gateways 3`,
+  schematic-operator init cluster --ca ../ca/crypto.yaml --fqdn api.example.com
+  schematic-operator init cluster --ca ../ca/crypto.yaml --fqdn api.example.com --type medium --gateways 3`,
 	RunE: runInitCluster,
 }
 
@@ -261,7 +261,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.Pki == nil || cfg.Pki.RootCa == nil {
-		return fmt.Errorf("no root CA found — run 'cavalier-operator init ca' first or provide --ca")
+		return fmt.Errorf("no root CA found — run 'schematic-operator init ca' first or provide --ca")
 	}
 
 	cfg.Fqdn = initClusterFQDN
@@ -343,6 +343,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  services/   editable service configs\n")
 	fmt.Printf("  ca.pem      CA cert for host trust\n")
 	fmt.Printf("\nEdit services/*.yaml, then run:\n")
-	fmt.Printf("  cavalier-operator generate\n")
+	fmt.Printf("  schematic-operator generate\n")
 	return nil
 }

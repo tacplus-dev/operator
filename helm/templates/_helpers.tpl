@@ -1,8 +1,8 @@
 {{/*
 Common labels.
 */}}
-{{- define "cavalier-operator.labels" -}}
-app.kubernetes.io/name: cavalier-operator
+{{- define "schematic-operator.labels" -}}
+app.kubernetes.io/name: schematic-operator
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end }}
@@ -10,7 +10,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{/*
 imagePullSecrets block.
 */}}
-{{- define "cavalier-operator.imagePullSecrets" -}}
+{{- define "schematic-operator.imagePullSecrets" -}}
 {{- if .Values.operator.imagePullSecret -}}
 imagePullSecrets:
 - name: {{ .Values.operator.imagePullSecret }}

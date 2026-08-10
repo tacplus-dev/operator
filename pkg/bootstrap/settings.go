@@ -101,10 +101,10 @@ func Issuer(cfg *protoOperator.Config) string {
 // ValidateConfig checks that cfg is internally consistent for deployment.
 func ValidateConfig(cfg *protoOperator.Config) error {
 	if cfg.Fqdn == "" {
-		return fmt.Errorf("fqdn is required — run 'cavalier-operator init cluster --fqdn <fqdn>'")
+		return fmt.Errorf("fqdn is required — run 'schematic-operator init cluster --fqdn <fqdn>'")
 	}
 	if cfg.Pki == nil || cfg.Pki.RootCa == nil || len(cfg.Pki.RootCa.Chain) == 0 {
-		return fmt.Errorf("pki.root_ca is required — run 'cavalier-operator init ca' first")
+		return fmt.Errorf("pki.root_ca is required — run 'schematic-operator init ca' first")
 	}
 	if cfg.Tls != nil && !cfg.Tls.Letsencrypt {
 		if cfg.Tls.Ca == nil || len(cfg.Tls.Ca.Chain) == 0 {

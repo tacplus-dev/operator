@@ -28,7 +28,7 @@ func AddApiKey(cfgDir, name string, profiles []string, claims map[string]string)
 	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
 
 	if _, err := os.Stat(oauthPath); os.IsNotExist(err) {
-		return fmt.Errorf("no services/oauth.yaml found — run 'cavalier-operator init cluster' first")
+		return fmt.Errorf("no services/oauth.yaml found — run 'schematic-operator init cluster' first")
 	}
 
 	for _, p := range profiles {

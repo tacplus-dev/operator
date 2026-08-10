@@ -32,7 +32,7 @@ func TestSelectLatestAllowsUnboundedProtoPatch(t *testing.T) {
 }
 
 func TestOperatorRepoUsesDeployableServiceNamespace(t *testing.T) {
-	want := "secondstarcavalier/schematic/platform/services/operator/cavalier-operator"
+	want := "secondstarcavalier/schematic/platform/services/operator/schematic-operator"
 	if got := operatorRepo(); got != want {
 		t.Fatalf("operatorRepo() = %q, want %q", got, want)
 	}

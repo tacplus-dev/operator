@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cavalier-operator
+  name: schematic-operator
   namespace: {{ .Values.operator.namespace }}
   labels:
-    {{- include "cavalier-operator.labels" . | nindent 4 }}
+    {{- include "schematic-operator.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.operator.replicas }}
   selector:
     matchLabels:
-      app: cavalier-operator
+      app: schematic-operator
   template:
     metadata:
       annotations:
@@ -17,12 +17,12 @@ spec:
         checksum/config-crypto: {{ .Values.config.crypto | sha256sum | quote }}
         checksum/config-bundle: {{ .Values.config.bundle | sha256sum | quote }}
       labels:
-        app: cavalier-operator
-        {{- include "cavalier-operator.labels" . | nindent 8 }}
+        app: schematic-operator
+        {{- include "schematic-operator.labels" . | nindent 8 }}
     spec:
-      serviceAccountName: cavalier-operator
+      serviceAccountName: schematic-operator
       automountServiceAccountToken: false
-      {{- include "cavalier-operator.imagePullSecrets" . | nindent 6 }}
+      {{- include "schematic-operator.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.config.bundle }}
       initContainers:
       - name: extract-config
@@ -44,13 +44,13 @@ spec:
           readOnly: true
       {{- end }}
       containers:
-      - name: cavalier-operator
+      - name: schematic-operator
         image: {{ .Values.operator.image }}
         imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
         args:
         - "--dir=/config"
         env:
-        - name: CAVALIER_OPERATOR_DIR
+        - name: SCHEMATIC_OPERATOR_DIR
           value: /config
         - name: POD_NAMESPACE
           valueFrom:
@@ -107,14 +107,14 @@ spec:
                   fieldPath: metadata.namespace
       - name: config
         configMap:
-          name: cavalier-operator-config
+          name: schematic-operator-config
       - name: crypto
         secret:
-          secretName: cavalier-operator-crypto
+          secretName: schematic-operator-crypto
       {{- if .Values.config.bundle }}
       - name: config-mutable
         emptyDir: {}
       - name: config-bundle
         secret:
-          secretName: cavalier-operator-bundle
+          secretName: schematic-operator-bundle
       {{- end }}

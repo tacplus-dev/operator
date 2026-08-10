@@ -64,7 +64,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	}
 
 	if cfg.Topology == nil {
-		return nil, fmt.Errorf("no topology configured — run 'cavalier-operator init cluster' first")
+		return nil, fmt.Errorf("no topology configured — run 'schematic-operator init cluster' first")
 	}
 
 	deployList, err := LoadDeployList(cfgDir)
@@ -428,7 +428,7 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 	if kmakerConfig.ClusterName == "" {
 		kmakerConfig.ClusterName = cfg.Fqdn
 		if kmakerConfig.ClusterName == "" {
-			kmakerConfig.ClusterName = "cavalier"
+			kmakerConfig.ClusterName = "schematic"
 		}
 	}
 	if kmakerConfig.Listener == nil {
@@ -467,7 +467,7 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 	if len(kmakerConfig.KernelServiceAccounts) == 0 {
 		ns := cfg.Namespace
 		if ns == "" {
-			ns = "cavalier"
+			ns = "schematic"
 		}
 		kmakerConfig.KernelServiceAccounts = []*protoKmaker.KernelServiceAccount{{
 			Namespace: ns,

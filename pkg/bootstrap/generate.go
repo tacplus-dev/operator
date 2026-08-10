@@ -30,7 +30,7 @@ var (
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate Helm charts to disk",
-	Long: `Generate the cavalier Helm chart for the configured cluster and write it to disk.
+	Long: `Generate the schematic Helm chart for the configured cluster and write it to disk.
 
 Does not require or communicate with a Kubernetes cluster. Use this to produce
 charts for GitOps workflows or for inspection before applying.
@@ -38,9 +38,9 @@ charts for GitOps workflows or for inspection before applying.
 The --gateways flag overrides topology.gateway_nodes for this run only.
 
 Examples:
-  cavalier-operator generate
-  cavalier-operator generate --output ./release/charts
-  cavalier-operator generate --gateways 3`,
+  schematic-operator generate
+  schematic-operator generate --output ./release/charts
+  schematic-operator generate --gateways 3`,
 	RunE: runGenerateCmd,
 }
 
@@ -98,7 +98,7 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Generated %d chart files → %s/cavalier/\n", len(charts.Files), outDir)
+	fmt.Printf("Generated %d chart files → %s/schematic/\n", len(charts.Files), outDir)
 	return nil
 }
 
@@ -113,17 +113,17 @@ var (
 var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Generate charts and apply to the current Kubernetes context (one-shot)",
-	Long: `Generate the cavalier Helm chart and apply it to the current Kubernetes cluster.
+	Long: `Generate the schematic Helm chart and apply it to the current Kubernetes cluster.
 Unlike the in-cluster reconciler, this runs once and exits.
 
 With --bundle, reads a pre-built bundle file instead of the config directory.
 The bundle embeds all rendered service configs — no config directory needed.
 
 Examples:
-  cavalier-operator apply
-  cavalier-operator apply --bundle cavalier-bundle.yaml
-  cavalier-operator apply --gateways 3
-  cavalier-operator apply --dry-run`,
+  schematic-operator apply
+  schematic-operator apply --bundle schematic-bundle.yaml
+  schematic-operator apply --gateways 3
+  schematic-operator apply --dry-run`,
 	RunE: runApply,
 }
 
@@ -173,7 +173,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	ns := cfg.GetNamespace()
 	if ns == "" {
-		ns = "cavalier"
+		ns = "schematic"
 	}
 
 	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil)
@@ -198,7 +198,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 			svcValues = map[string]interface{}{}
 		}
 		install := action.NewInstall(new(action.Configuration))
-		install.ReleaseName = "cavalier"
+		install.ReleaseName = "schematic"
 		install.Namespace = ns
 		install.DryRun = true
 		install.ClientOnly = true
@@ -241,7 +241,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	histAction := action.NewHistory(actionCfg)
 	histAction.Max = 1
-	_, histErr := histAction.Run("cavalier")
+	_, histErr := histAction.Run("schematic")
 
 	switch {
 	case histErr == helmdriver.ErrReleaseNotFound:
@@ -312,7 +312,7 @@ func (g *cliGetter) ToRESTConfig() (*rest.Config, error) {
 
 func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, vals map[string]interface{}) (string, error) {
 	install := action.NewInstall(cfg)
-	install.ReleaseName = "cavalier"
+	install.ReleaseName = "schematic"
 	install.Namespace = ns
 	install.CreateNamespace = true
 	install.Wait = false
@@ -334,7 +334,7 @@ func cliHelmUpgrade(cfg *action.Configuration, ch *helmchart.Chart, vals map[str
 	if vals == nil {
 		vals = map[string]interface{}{}
 	}
-	rel, err := upgrade.Run("cavalier", ch, vals)
+	rel, err := upgrade.Run("schematic", ch, vals)
 	if err != nil {
 		return "", fmt.Errorf("helm upgrade: %w", err)
 	}

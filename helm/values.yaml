@@ -1,14 +1,14 @@
 # ============================================================
-# cavalier-operator Helm values
+# schematic-operator Helm values
 # ============================================================
 
 operator:
-  image: registry.gitlab.com/secondstarcavalier/schematic/platform/services/operator/cavalier-operator:v1.2.28-main.1
+  image: registry.gitlab.com/secondstarcavalier/schematic/platform/services/operator/schematic-operator:v1.2.28-main.1
   imagePullPolicy: IfNotPresent
   imagePullSecret: gitlab-registry
 
-  # Kubernetes namespace for the operator and all cavalier services.
-  namespace: cavalier
+  # Kubernetes namespace for the operator and all schematic services.
+  namespace: schematic
 
   # Mode: "in-cluster" (default) or "generate-only".
   # Overrides operator.yaml if set here.
@@ -37,6 +37,6 @@ config:
   bundle: ""
 
 # registryToken, when set, creates a "gitlab-registry" docker-registry Secret in the
-# cavalier-operator namespace so the operator pod (and auto-upgrade) can pull from
+# schematic-operator namespace so the operator pod (and auto-upgrade) can pull from
 # registry.gitlab.com. Pass via --set registryToken=... at deploy time; never commit here.
 registryToken: ""
