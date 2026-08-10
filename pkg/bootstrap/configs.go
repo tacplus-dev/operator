@@ -43,6 +43,9 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.OpaConfig) > 0 && t.OpaNodes > 0 {
 		serviceFiles["opa"] = dc.OpaConfig
 	}
+	if len(dc.EchoConfig) > 0 && t.EchoNodes > 0 && dc.Cfg.GetOptionalServices().GetEcho() {
+		serviceFiles["echo"] = dc.EchoConfig
+	}
 	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
 		serviceFiles["stratum"] = dc.StratumConfig
 	}

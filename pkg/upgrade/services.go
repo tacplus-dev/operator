@@ -7,6 +7,7 @@ func AllServices() []ServiceRef {
 	return []ServiceRef{
 		{Proj: "kernel", Svc: "kernel"},
 		{Proj: "sentinel", Svc: "sentinel"},
+		{Proj: "echo", Svc: "echo"},
 		{Proj: "eventbus", Svc: "eventbus"},
 		{Proj: "gateway", Svc: "gateway"},
 		{Proj: "opa", Svc: "opa"},

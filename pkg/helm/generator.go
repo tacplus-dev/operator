@@ -562,6 +562,13 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef("oauth"), HasGRPC: true, ListenPort: 8443,
 		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 
+	// Echo sample service — disabled by default. Stateless, no S2S deps, so it
+	// needs nothing beyond the standard kernel service auth every service gets.
+	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "echo", Replicas: topo.EchoNodes, Image: g.imageRef("echo"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+	}
+
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef("saml"), HasGRPC: true, ListenPort: 8443,

@@ -70,6 +70,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		data []byte
 	}{
 		{"sentinel", dc.SentinelConfig},
+		{"echo", dc.EchoConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

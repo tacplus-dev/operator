@@ -27,6 +27,7 @@ type DeployConfigs struct {
 	BootstrapNames           []string
 	BootstrapYAMLs           [][]byte
 	SentinelConfig           []byte
+	EchoConfig               []byte
 	GatewayConfig            []byte
 	EventbusConfig           []byte
 	OauthConfig              []byte
@@ -189,6 +190,12 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	}
 
 	sentinelConfigYAML, err := buildSvc("sentinel", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// echo takes the plain bootstrap shape -- no state, no S2S deps, no extras.
+	echoConfigYAML, err := buildSvc("echo", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +399,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		BootstrapNames:           bootstrapNames,
 		BootstrapYAMLs:           bootstrapYAMLs,
 		SentinelConfig:           sentinelConfigYAML,
+		EchoConfig:               echoConfigYAML,
 		GatewayConfig:            gatewayConfigYAML,
 		EventbusConfig:           eventbusConfigYAML,
 		OauthConfig:              oauthConfigYAML,
@@ -549,6 +557,7 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("stratum", &t.StratumNodes)
 	check("saml", &t.SamlNodes)
 	check("kmaker", &t.KmakerNodes)
+	check("echo", &t.EchoNodes)
 }
 
 // ServiceConfigValues converts a DeployConfigs into a Helm values map.
@@ -567,6 +576,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		data []byte
 	}{
 		{"sentinel", dc.SentinelConfig},
+		{"echo", dc.EchoConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

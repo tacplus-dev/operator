@@ -22,6 +22,7 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"graphdb":     true,
 	"stratum":     true,
 	"msggateway":  true,
+	"echo":        true,
 }
 
 func isKernelAuthenticatedService(name string) bool {
@@ -70,6 +71,9 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	}
 	if topo.GetMsggatewayNodes() > 0 {
 		out = append(out, "msggateway")
+	}
+	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
+		out = append(out, "echo")
 	}
 
 	sort.Strings(out)
