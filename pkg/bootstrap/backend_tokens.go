@@ -34,10 +34,6 @@ func runGenBackendTokens(cmd *cobra.Command, args []string) error {
 	dir := resolveConfigDir()
 
 	providers := []struct{ name, env string }{
-		{"anthropic", "ANTHROPIC_TOKEN"},
-		{"gitlab", "GITLAB_TOKEN"},
-		{"openai", "OPENAI_TOKEN"},
-		{"github", "GITHUB_TOKEN"},
 	}
 
 	type entry struct{ name, token string }

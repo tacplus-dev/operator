@@ -258,7 +258,7 @@ Idempotent: re-running with the same ID replaces existing grants.
 Examples:
   cavalier-operator add-profile admin --all
   cavalier-operator add-profile reader --grant sentinel=SENTINEL_SERVICE_RPCS_GET_DASHBOARD
-  cavalier-operator add-profile custom --all --grant mcp=MCP_ASSIST_SERVICE_RPCS_CHAT`,
+  cavalier-operator add-profile custom --all --grant echo=ECHO_ANY`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAddProfile,
 }

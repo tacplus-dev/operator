@@ -256,11 +256,10 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 			GraphdbNodes:     1,
 			StratumNodes:     1,
 			OauthNodes:       1,
-			MsggatewayNodes:  2,
+			EchoNodes:        1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
-			Saml:      true,
-			Anthropic: true,
+			Saml: true,
 		},
 		Tls: &protoOperator.TLSConfig{
 			Letsencrypt: true,
@@ -279,14 +278,15 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 	}
 
 	// Enabled optional services must have delegates.
-	for _, svc := range []string{"saml", "anthropic", "letsencrypt", "msggateway"} {
+	for _, svc := range []string{"saml", "letsencrypt"} {
 		if !delegateNames[svc] {
 			t.Fatalf("missing delegate for enabled optional service %q", svc)
 		}
 	}
 
-	// Disabled optional services must NOT have delegates.
-	for _, svc := range []string{"openai", "mcp"} {
+	// Disabled optional services must NOT have delegates. echo is the surviving
+	// optional service and is left disabled above, so it carries this case.
+	for _, svc := range []string{"echo"} {
 		if delegateNames[svc] {
 			t.Fatalf("unexpected delegate for disabled optional service %q", svc)
 		}

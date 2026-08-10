@@ -119,7 +119,7 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			EventbusNodes:   1,
 			GatewayNodes:    1,
 			OauthNodes:      1,
-			MsggatewayNodes: 1,
+			EchoNodes:       1,
 			OpaNodes:        1,
 			TimedbNodes:     1,
 			GraphdbNodes:    1,
@@ -128,11 +128,9 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			SamlNodes:       1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
-			Anthropic: true,
-			Openai:    true,
-			Mcp:       true,
-			Saml:      true,
-			Oauth:     true,
+			Saml:  true,
+			Oauth: true,
+			Echo:  true,
 		},
 	})
 
@@ -148,10 +146,7 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		"oauth",
 		"saml",
 		"letsencrypt",
-		"anthropic",
-		"openai",
-		"mcp",
-		"msggateway",
+		"echo",
 	}
 	for _, service := range services {
 		t.Run(service, func(t *testing.T) {

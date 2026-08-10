@@ -37,9 +37,6 @@ func BuildConfigOutput(cfgDir string) error {
 		"gateway":  dc.GatewayConfig,
 		"eventbus": dc.EventbusConfig,
 	}
-	if len(dc.MsggatewayConfig) > 0 && t.MsggatewayNodes > 0 {
-		serviceFiles["msggateway"] = dc.MsggatewayConfig
-	}
 	if len(dc.OpaConfig) > 0 && t.OpaNodes > 0 {
 		serviceFiles["opa"] = dc.OpaConfig
 	}
@@ -65,12 +62,6 @@ func BuildConfigOutput(cfgDir string) error {
 	opt := dc.Cfg.GetOptionalServices()
 	if len(dc.OauthConfig) > 0 && opt.GetOauth() {
 		serviceFiles["oauth"] = dc.OauthConfig
-	}
-	if len(dc.AnthropicConfig) > 0 && opt.GetAnthropic() {
-		serviceFiles["anthropic"] = dc.AnthropicConfig
-	}
-	if len(dc.OpenAIConfig) > 0 && opt.GetOpenai() {
-		serviceFiles["openai"] = dc.OpenAIConfig
 	}
 	if len(dc.SamlConfig) > 0 && opt.GetSaml() {
 		serviceFiles["saml"] = dc.SamlConfig

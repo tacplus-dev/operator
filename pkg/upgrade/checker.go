@@ -45,10 +45,10 @@ const (
 // ServiceRef identifies a service image in the registry.
 type ServiceRef struct {
 	// Proj is the GitLab registry project name (under services/).
-	// e.g. "kernel", "anthropic-proxy".
+	// e.g. "kernel", "gateway".
 	Proj string
 	// Svc is the image name within the project.
-	// e.g. "kernel", "anthropic".
+	// e.g. "kernel", "gateway".
 	Svc string
 }
 

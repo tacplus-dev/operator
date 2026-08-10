@@ -31,10 +31,7 @@ type DeployConfigs struct {
 	GatewayConfig            []byte
 	EventbusConfig           []byte
 	OauthConfig              []byte
-	MsggatewayConfig         []byte
 	OpaConfig                []byte
-	AnthropicConfig          []byte
-	OpenAIConfig             []byte
 	SamlConfig               []byte
 	StratumConfig            []byte
 	ArgusConfig              []byte
@@ -280,25 +277,11 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		return nil, err
 	}
 
-	var msggatewayConfigYAML []byte
-	if t.MsggatewayNodes > 0 {
-		msggatewayConfigYAML, err = buildSvc("msggateway", nil)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// msggateway, anthropic and openai used to have their configs built here.
+	// They were application services, not platform: schematic is the base an
+	// application is built ON, so they moved out of this repo entirely.
 
 	opaConfigYAML, err := buildSvc("opa", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	anthropicConfigYAML, err := buildSvc("anthropic", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	openaiConfigYAML, err := buildSvc("openai", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -403,10 +386,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		GatewayConfig:            gatewayConfigYAML,
 		EventbusConfig:           eventbusConfigYAML,
 		OauthConfig:              oauthConfigYAML,
-		MsggatewayConfig:         msggatewayConfigYAML,
 		OpaConfig:                opaConfigYAML,
-		AnthropicConfig:          anthropicConfigYAML,
-		OpenAIConfig:             openaiConfigYAML,
 		SamlConfig:               samlConfigYAML,
 		StratumConfig:            stratumConfigYAML,
 		ArgusConfig:              argusConfigYAML,
@@ -549,7 +529,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("eventbus", &t.EventbusNodes)
 	check("gateway", &t.GatewayNodes)
 	check("oauth", &t.OauthNodes)
-	check("msggateway", &t.MsggatewayNodes)
 	check("opa", &t.OpaNodes)
 	check("timedb", &t.TimedbNodes)
 	check("graphdb", &t.GraphdbNodes)
@@ -580,10 +559,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
-		{"msggateway", dc.MsggatewayConfig},
 		{"opa", dc.OpaConfig},
-		{"anthropic", dc.AnthropicConfig},
-		{"openai", dc.OpenAIConfig},
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"argus", dc.ArgusConfig},

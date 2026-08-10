@@ -39,8 +39,9 @@ type Charts struct {
 }
 
 // TagResolver resolves the image tag for a service registry image.
-// The proj is the GitLab registry project name (e.g. "kernel", "anthropic-proxy"),
-// and svc is the image name within that project (e.g. "kernel", "anthropic").
+// The proj is the GitLab registry project name and svc is the image name within
+// that project. They are equal for every platform service; the split exists for
+// repos that publish an image under a different name than the repo.
 // Returns a full image tag string, e.g. "v1.2.12-main.3" or "latest".
 type TagResolver interface {
 	ServiceTag(proj, svc string) string
@@ -411,7 +412,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		EventbusNodes:   t.EventbusNodes,
 		GatewayNodes:    t.GatewayNodes,
 		OauthNodes:      t.OauthNodes,
-		MsggatewayNodes: t.MsggatewayNodes,
 		OpaNodes:        t.OpaNodes,
 		TimedbNodes:     t.TimedbNodes,
 		GraphdbNodes:    t.GraphdbNodes,
@@ -451,7 +451,7 @@ func (g *Generator) imageRef(svc string) string {
 }
 
 // imageRefProj builds an image reference where the GitLab registry project name
-// differs from the service name (e.g. "anthropic-proxy" project, "anthropic" image).
+// differs from the service name.
 func (g *Generator) imageRefProj(proj, svc string) string {
 	// Local-images mode (CAVALIER_LOCAL_IMAGES): reference locally-built images
 	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
@@ -590,23 +590,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		}))
 	}
 
-	// Proxy services — one replica per gateway node when enabled.
-	if opt.GetAnthropic() {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "anthropic", Replicas: topo.GatewayNodes, Image: g.imageRefProj("anthropic-proxy", "anthropic"), HasGRPC: true, ListenPort: 8443}))
-	}
-	if opt.GetOpenai() {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "openai", Replicas: topo.GatewayNodes, Image: g.imageRefProj("openai-proxy", "openai"), HasGRPC: true, ListenPort: 8443}))
-	}
-
-	// MCP server — one replica when enabled.
-	if opt.GetMcp() {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mcp", Replicas: 1, Image: g.imageRef("mcp"), HasGRPC: true, ListenPort: 8443}))
-	}
-
-	// On hold — only deployed when explicitly set above zero.
-	if topo.MsggatewayNodes > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "msggateway", Replicas: topo.MsggatewayNodes, Image: g.imageRef("msggateway"), HasGRPC: true, ListenPort: 8443}))
-	}
+	// The application proxy services (anthropic, openai, gitlab, github), the MCP
+	// server and msggateway were rendered here. They were application concerns,
+	// not platform, and have moved out of this repo.
 
 	// Filter zero-replica services.
 	out := svcs[:0]

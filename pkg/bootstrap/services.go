@@ -9,10 +9,7 @@ import (
 var kernelAuthenticatedServiceNames = map[string]bool{
 	"sentinel":    true,
 	"eventbus":    true,
-	"anthropic":   true,
 	"oauth":       true,
-	"openai":      true,
-	"mcp":         true,
 	"saml":        true,
 	"opa":         true,
 	"argus":       true,
@@ -21,7 +18,6 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"timedb":      true,
 	"graphdb":     true,
 	"stratum":     true,
-	"msggateway":  true,
 	"echo":        true,
 }
 
@@ -59,18 +55,6 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	}
 	if cfg.GetTls().GetLetsencrypt() {
 		out = append(out, "letsencrypt")
-	}
-	if opt.GetAnthropic() {
-		out = append(out, "anthropic")
-	}
-	if opt.GetOpenai() {
-		out = append(out, "openai")
-	}
-	if opt.GetMcp() {
-		out = append(out, "mcp")
-	}
-	if topo.GetMsggatewayNodes() > 0 {
-		out = append(out, "msggateway")
 	}
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		out = append(out, "echo")

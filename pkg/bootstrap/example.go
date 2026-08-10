@@ -15,12 +15,10 @@ import (
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
-	protoAnthropic "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/anthropic"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/graphdb"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoMsggateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/msggateway"
 	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -335,16 +333,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			hasHolder = true
 			return nil
 		}},
-		{"msggateway", func(m map[string]any) error {
-			cfg := &protoMsggateway.Config{}
-			if err := unmarshalMapToProto(m, cfg); err != nil {
-				return err
-			}
-			protoMsggateway.ConfigDefaults(cfg)
-			holder.MsggatewayConfig = cfg
-			hasHolder = true
-			return nil
-		}},
 		{"opa", func(m map[string]any) error {
 			delete(m, "entitlements_policy")
 			delete(m, "backend_token_policy")
@@ -391,15 +379,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			}
 
 			holder.OpaConfig = cfg
-			hasHolder = true
-			return nil
-		}},
-		{"anthropic", func(m map[string]any) error {
-			cfg := &protoAnthropic.Config{}
-			if err := unmarshalMapToProto(m, cfg); err != nil {
-				return err
-			}
-			holder.AnthropicConfig = cfg
 			hasHolder = true
 			return nil
 		}},
