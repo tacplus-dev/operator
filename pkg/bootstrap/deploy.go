@@ -28,6 +28,11 @@ type DeployConfigs struct {
 	BootstrapYAMLs           [][]byte
 	SentinelConfig           []byte
 	EchoConfig               []byte
+	// AppConfigs holds bootstrap YAML for the application's own services, keyed
+	// by service name. Platform services each have a named field above because
+	// the platform's service set is fixed; an app's is not known until its
+	// config declares it, so those cannot be fields.
+	AppConfigs map[string][]byte
 	GatewayConfig            []byte
 	EventbusConfig           []byte
 	OauthConfig              []byte
@@ -195,6 +200,18 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	echoConfigYAML, err := buildSvc("echo", nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// The application's own services take the same plain shape. A service that
+	// needs more (state, S2S deps) is not expressible yet; see the helm
+	// generator's app-service block.
+	appConfigs := map[string][]byte{}
+	for _, name := range AppServiceNames(cfg) {
+		y, err := buildSvc(name, nil)
+		if err != nil {
+			return nil, fmt.Errorf("building config for app service %q: %w", name, err)
+		}
+		appConfigs[name] = y
 	}
 
 	gatewayOpts := LoadGatewayOptions(filepath.Join(cfgDir, "services"))
@@ -383,6 +400,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		BootstrapYAMLs:           bootstrapYAMLs,
 		SentinelConfig:           sentinelConfigYAML,
 		EchoConfig:               echoConfigYAML,
+		AppConfigs:               appConfigs,
 		GatewayConfig:            gatewayConfigYAML,
 		EventbusConfig:           eventbusConfigYAML,
 		OauthConfig:              oauthConfigYAML,
@@ -579,6 +597,13 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 			vals["letsencrypt"] = le
 		}
 		le["serviceConfig"] = string(dc.LetsencryptServiceConfig)
+	}
+
+	// The application's own services, keyed the same way.
+	for name, data := range dc.AppConfigs {
+		if len(data) > 0 {
+			vals[name] = map[string]interface{}{"config": string(data)}
+		}
 	}
 
 	return vals

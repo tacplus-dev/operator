@@ -21,8 +21,42 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"echo":        true,
 }
 
+// appServiceNames holds the application's own services, seeded from
+// Topology.app_services before the dependency graph is walked.
+//
+// The map above lists PLATFORM services. An app's services are not known at
+// compile time — that is the entire point of app_services — but they are
+// kernel-authenticated exactly like a platform service, because they are
+// generated against the same ServiceManager. loadServiceDeps walks the merged
+// proto registry with no access to config, so the set is registered rather than
+// threaded through every caller.
+var appServiceNames = map[string]bool{}
+
+// RegisterAppServices records the application's service names. Safe to call
+// repeatedly; each call replaces the previous set.
+func RegisterAppServices(names []string) {
+	appServiceNames = make(map[string]bool, len(names))
+	for _, n := range names {
+		appServiceNames[n] = true
+	}
+}
+
+// AppServiceNames returns the sorted application service names declared in cfg.
+// Presence with a replica count > 0 is the enablement; app services carry no
+// parallel optional_services flag.
+func AppServiceNames(cfg *protoOperator.Config) []string {
+	var out []string
+	for name, n := range cfg.GetTopology().GetAppServices() {
+		if n > 0 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func isKernelAuthenticatedService(name string) bool {
-	return kernelAuthenticatedServiceNames[name]
+	return kernelAuthenticatedServiceNames[name] || appServiceNames[name]
 }
 
 // alwaysOnKernelAuthServices are kernel-authenticated services that are always
@@ -59,6 +93,9 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		out = append(out, "echo")
 	}
+	// The application's own services, declared by name rather than by a proto
+	// field the platform had to add for them.
+	out = append(out, AppServiceNames(cfg)...)
 
 	sort.Strings(out)
 	return out

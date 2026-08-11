@@ -87,6 +87,12 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 			svcs[pair.name] = string(pair.data)
 		}
 	}
+	// The application's own services.
+	for name, data := range dc.AppConfigs {
+		if len(data) > 0 {
+			svcs[name] = string(data)
+		}
+	}
 
 	serviceConfigs := make(map[string]string)
 	if len(dc.LetsencryptServiceConfig) > 0 {

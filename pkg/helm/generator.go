@@ -20,6 +20,7 @@
 package helm
 
 import (
+	"sort"
 	"strings"
 	"bytes"
 	"encoding/base64"
@@ -121,6 +122,20 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 		}
 	}
 	return nil
+}
+
+// appServiceNames returns the application's service names in sorted order, so
+// chart output is deterministic. Declared here rather than imported from
+// bootstrap: bootstrap depends on helm, and the reverse would be a cycle.
+func appServiceNames(topo *protoOperator.Topology) []string {
+	var out []string
+	for name, n := range topo.GetAppServices() {
+		if n > 0 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // --- internal types ---
@@ -448,6 +463,11 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		StratumNodes:    t.StratumNodes,
 		SamlNodes:       t.SamlNodes,
 		KmakerNodes:     t.KmakerNodes,
+		EchoNodes:       t.EchoNodes,
+		// Carry the app's services. A field-by-field clone silently drops
+		// anything added later — which is the failure mode a fixed-field message
+		// invites, and it dropped app_services on the first attempt.
+		AppServices: t.AppServices,
 	}
 }
 
@@ -595,6 +615,21 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// needs nothing beyond the standard kernel service auth every service gets.
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "echo", Replicas: topo.EchoNodes, Image: g.imageRef("echo"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+	}
+
+	// The application's own services.
+	//
+	// Modeled on echo, which was the platform's only example of "a service that
+	// just needs to run and authenticate to kernel": stateless, gRPC on 8443, no
+	// S2S dependencies beyond the standard kernel service auth every service
+	// gets. An app service that needs more than this (a PVC, extra ports, a
+	// Hazelcast member) is not expressible yet and should be added deliberately
+	// rather than guessed at.
+	for _, name := range appServiceNames(topo) {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+			Name: name, Replicas: topo.GetAppServices()[name], Image: g.imageRef(name),
+			HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
 	}
 

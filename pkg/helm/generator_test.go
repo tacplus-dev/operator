@@ -381,3 +381,48 @@ func TestPVCPodsSetFsGroupSoNonRootCanWrite(t *testing.T) {
 		t.Error("fsGroup must be gated on HasPVC — pods with no volume have nothing to chgrp")
 	}
 }
+
+// TestAppServicesRenderWithoutAPlatformProtoField is the point of app_services.
+//
+// Every other replica count on Topology is a fixed proto field, so before this
+// an application could not declare a service without editing the PLATFORM's
+// operator.proto — and proto3 offers no way to add a field to a message owned by
+// another repo. echo, a sample service, had to take field 17 there just to be
+// deployable, which is the clearest evidence that "schematic is the reusable
+// base" was not yet true.
+//
+// A service named only in the app's own config must now produce a full workload
+// with no platform proto change at all.
+func TestAppServicesRenderWithoutAPlatformProtoField(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			AppServices: map[string]int32{"widgeter": 2},
+		},
+	})
+
+	dep := chartFile(t, charts, "templates/widgeter/deployment.yaml")
+	if !strings.Contains(dep, "widgeter") {
+		t.Errorf("app service produced no Deployment naming it:\n%s", dep)
+	}
+	if _, ok := charts.Files["templates/widgeter/service-0.yaml"]; !ok {
+		t.Error("app service produced no Service; it would be unreachable in-cluster")
+	}
+	// A count of 0 means "not deployed" — presence with a positive count is the
+	// enablement, so an app service needs no parallel optional_services flag.
+	off := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			AppServices: map[string]int32{"widgeter": 0},
+		},
+	})
+	for path := range off.Files {
+		if strings.Contains(path, "widgeter") {
+			t.Errorf("app service with 0 replicas still rendered %s", path)
+		}
+	}
+}
