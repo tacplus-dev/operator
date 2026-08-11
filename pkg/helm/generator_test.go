@@ -341,3 +341,43 @@ func TestProbesQueryGRPCHealthOnPlaintextPort(t *testing.T) {
 		t.Error("grpc probes need timeoutSeconds above the 1s default, or JVM services flap")
 	}
 }
+
+// TestPVCPodsSetFsGroupSoNonRootCanWrite guards a defect that kept the fleet's
+// event bus dead while every probe reported it healthy.
+//
+// A freshly provisioned PersistentVolume is root:root 0755. eventbus runs as the
+// distroless `nonroot` user (65532), so it could not create
+// /app/data/__cluster_metadata-0 and its embedded Kafka broker failed to format
+// KRaft storage on every single attempt. It was on retry 131 when this was
+// found; stratum and timedb had spent that whole time logging "Kafka not yet
+// initialized".
+//
+// Nothing caught it because the pod's probes only ask whether the gRPC health
+// endpoint answers, and it did.
+//
+// fsGroup must be gated on HasPVC and applied by BOTH renderers -- the
+// text/template path and the buffer-built path -- or whichever one a service
+// happens to use decides whether its volume is writable.
+func TestPVCPodsSetFsGroupSoNonRootCanWrite(t *testing.T) {
+	src, err := os.ReadFile("generator.go")
+	if err != nil {
+		t.Fatalf("read generator.go: %v", err)
+	}
+	body := string(src)
+
+	if !strings.Contains(body, "func pvcFsGroupLines(svc serviceSpec) string {") {
+		t.Fatal("pvcFsGroupLines is gone; a PVC pod's volume is root-owned and a non-root container cannot write to it")
+	}
+	if !strings.Contains(body, "%s      containers:") {
+		t.Error("the buffer-built Deployment must emit the fsGroup securityContext before containers:")
+	}
+	if !strings.Contains(body, "pvcFsGroupLines(svc)") {
+		t.Error("the buffer-built Deployment must call pvcFsGroupLines")
+	}
+	if !strings.Contains(body, "{{- if $.HasPVC }}\n      securityContext:\n        fsGroup: 65532") {
+		t.Error("the templated Deployment must set fsGroup for PVC-owning pods too")
+	}
+	if !strings.Contains(body, "if !svc.HasPVC {\n\t\treturn \"\"\n\t}") {
+		t.Error("fsGroup must be gated on HasPVC — pods with no volume have nothing to chgrp")
+	}
+}

@@ -208,6 +208,35 @@ func serviceAccountLine(svc serviceSpec) string {
 	return fmt.Sprintf("      serviceAccountName: %s", svc.ServiceAccountName)
 }
 
+// pvcFsGroupNonRoot is the uid/gid the distroless `nonroot` user runs as. A
+// freshly provisioned PersistentVolume is owned by root:root with mode 0755, so
+// a container that does not run as root cannot create anything inside it. The
+// kubelet applies fsGroup by recursively chgrp'ing the volume to this gid and
+// adding g+w, which fixes the non-root case without taking anything away from a
+// container that DOES run as root.
+const pvcFsGroupNonRoot = 65532
+
+// pvcFsGroupLines renders the pod securityContext for a service with a PVC.
+//
+// Without it, eventbus -- distroless java, USER nonroot -- could not create
+// /app/data/__cluster_metadata-0 and its embedded Kafka broker failed to format
+// KRaft storage on every attempt, forever. It was on retry 131 when this was
+// found. Nothing surfaced: the pod's probes only check that the gRPC port
+// answers, so it reported Ready the whole time while every consumer in the
+// fleet sat on "Kafka not yet initialized".
+//
+// The image's own Dockerfile pre-chowns /var/lib/eventbus/data for 65532, which
+// looks like the fix is already in place -- but this template mounts the claim
+// at /app/data, a path the image never prepared. Doing it here rather than in
+// each Dockerfile keeps the guarantee attached to the thing that decides the
+// mount path.
+func pvcFsGroupLines(svc serviceSpec) string {
+	if !svc.HasPVC {
+		return ""
+	}
+	return fmt.Sprintf("      securityContext:\n        fsGroup: %d\n", pvcFsGroupNonRoot)
+}
+
 func podServiceAccountLines(svc serviceSpec) string {
 	var b bytes.Buffer
 	if line := serviceAccountLine(svc); line != "" {
@@ -886,6 +915,10 @@ spec:
     spec:
       {{ "{{- include \"schematic.imagePullSecrets\" . | nindent 6 }}" }}
       hostname: {{ $.Name }}{{ $i }}
+      {{- if $.HasPVC }}
+      securityContext:
+        fsGroup: 65532
+      {{- end }}
       containers:
       - name: {{ $.Name }}{{ $i }}
         image: {{ "{{" }} .Values.{{ $.Name }}.image {{ "}}" }}
@@ -1347,7 +1380,7 @@ spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 %s
       hostname: %s
-      containers:
+%s      containers:
       - name: %s
         image: {{ .Values.%s.image }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
@@ -1362,7 +1395,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, podServiceAccountLines(svc), name, name, svc.Name))
+`, podServiceAccountLines(svc), name, pvcFsGroupLines(svc), name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}
