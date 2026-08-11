@@ -426,3 +426,59 @@ func TestAppServicesRenderWithoutAPlatformProtoField(t *testing.T) {
 		}
 	}
 }
+
+// The app_services path must produce the SAME workload as the fixed-field path
+// it replaces.
+//
+// echo is the only service that exists both ways: it has a legacy echo_nodes
+// field and it is the model the app-service block was written from. Rendering it
+// each way and diffing is the strongest available check that an application
+// declaring a service by name gets what a platform service gets — without
+// having to deploy one first.
+//
+// Any difference other than the source of the replica count is a bug in the
+// generic path.
+func TestAppServiceRendersIdenticallyToTheFixedFieldPath(t *testing.T) {
+	viaField := generateTestChart(t, &protoOperator.Config{
+		Namespace:        "schematic",
+		Topology:         &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1, EchoNodes: 1},
+		OptionalServices: &protoOperator.OptionalServices{Echo: true},
+	})
+	viaMap := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1,
+			AppServices: map[string]int32{"echo": 1}},
+	})
+
+	// Without this the whole comparison passes vacuously when neither rendering
+	// emits echo at all — which is exactly how a "both paths agree" test lies.
+	compared := 0
+	for path, want := range viaField.Files {
+		if !strings.HasPrefix(path, "templates/echo/") {
+			continue
+		}
+		compared++
+		got, ok := viaMap.Files[path]
+		if !ok {
+			t.Errorf("app_services did not produce %s, which the fixed field does", path)
+			continue
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s differs between the two paths:\n--- via echo_nodes ---\n%s\n--- via app_services ---\n%s",
+				path, want, got)
+		}
+	}
+	if compared == 0 {
+		t.Fatal("neither path rendered any echo templates; the comparison proved nothing")
+	}
+
+	// And the reverse: no extra files the fixed path does not create.
+	for path := range viaMap.Files {
+		if !strings.HasPrefix(path, "templates/echo/") {
+			continue
+		}
+		if _, ok := viaField.Files[path]; !ok {
+			t.Errorf("app_services produced %s that the fixed field does not", path)
+		}
+	}
+}
