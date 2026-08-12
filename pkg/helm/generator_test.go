@@ -316,6 +316,63 @@ func TestStatefulServiceWithoutPerReplicaConfigUsesTheSharedKey(t *testing.T) {
 	}
 }
 
+// TestStratumRendersBothHazelcastClusters pins the wiring for stratum's SECOND
+// Hazelcast cluster — the working-set maps.
+//
+// Two clusters in one JVM cannot share a port, and the event store pins 5001
+// with auto-increment off, so the working set needs its own named port and its
+// own seed list. Without the seed list it falls back to standalone: each pod
+// holds working sets nobody else can see, and the shared Service hands the next
+// request to a pod that has never heard of the map.
+//
+// Kernel has a single cluster and must keep rendering exactly one port block.
+func TestStratumRendersBothHazelcastClusters(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			StratumNodes: 3,
+		},
+	})
+
+	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
+	for _, want := range []string{
+		`- name: STRATUM_SEED_MEMBERS`,
+		`"stratum-0.stratum:5001,stratum-1.stratum:5001,stratum-2.stratum:5001"`,
+		`- name: STRATUM_WS_SEED_MEMBERS`,
+		`"stratum-0.stratum:5701,stratum-1.stratum:5701,stratum-2.stratum:5701"`,
+		"containerPort: 5001",
+		"containerPort: 5701",
+	} {
+		if !strings.Contains(ss, want) {
+			t.Errorf("stratum statefulset missing %q\n--- statefulset ---\n%s", want, ss)
+		}
+	}
+
+	// Both ports must be reachable on the headless Service and on each per-pod
+	// Service, or a seed address resolves to a member nothing can connect to.
+	for _, f := range []string{
+		"templates/stratum/service-headless.yaml",
+		"templates/stratum/service-0.yaml",
+		"templates/stratum/service-1.yaml",
+		"templates/stratum/service-2.yaml",
+	} {
+		svc := chartFile(t, charts, f)
+		if !strings.Contains(svc, "name: hazelcast\n") {
+			t.Errorf("%s missing the event-store hazelcast port\n--- svc ---\n%s", f, svc)
+		}
+		if !strings.Contains(svc, "name: hazelcast-ws") || !strings.Contains(svc, "port: 5701") {
+			t.Errorf("%s missing the working-set hazelcast port\n--- svc ---\n%s", f, svc)
+		}
+	}
+
+	// Kernel is a HasHazelcast StatefulSet with ONE cluster: no ws port, no ws seeds.
+	ks := chartFile(t, charts, "templates/kernel/statefulset.yaml")
+	if strings.Contains(ks, "5701") || strings.Contains(ks, "STRATUM_WS_SEED_MEMBERS") {
+		t.Errorf("kernel must not render a working-set cluster\n--- statefulset ---\n%s", ks)
+	}
+}
+
 func generateTestChart(t *testing.T, cfg *protoOperator.Config) *Charts {
 	t.Helper()
 	charts, err := New("test", "1.2", nil).Generate(cfg, 1)

@@ -140,7 +140,23 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 // convention), so stratum must bind that rather than Hazelcast's 5701 default.
 const stratumHazelcastPort = 5001
 
+// stratumWorkingSetPort is the second Hazelcast cluster in stratum's JVM: the
+// working-set maps ("stratum-ws"), kept separate from the event store because
+// they have their own lifecycle — idle-TTL eviction, caller-chosen map ids.
+//
+// Two clusters in one JVM cannot share a port, and the event store pins 5001
+// with auto-increment off (a predictable peer address is the whole point of the
+// seed list). So the working set gets its own pinned port, and it must be a
+// DIFFERENT constant rather than "5001 + 1": auto-increment is exactly the
+// mechanism that made the second instance land somewhere nobody could name.
+const stratumWorkingSetPort = 5701
+
 func stratumSeedMembersEnv(replicas int32) string {
+	return stratumSeedEnv("STRATUM_SEED_MEMBERS", replicas, stratumHazelcastPort) +
+		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", replicas, stratumWorkingSetPort)
+}
+
+func stratumSeedEnv(name string, replicas int32, port int) string {
 	if replicas <= 0 {
 		return ""
 	}
@@ -152,9 +168,9 @@ func stratumSeedMembersEnv(replicas int32) string {
 		// stratum0 form a Deployment uses. Getting this wrong produces seed
 		// addresses that never resolve, and Hazelcast simply never forms a
 		// cluster: no error, just members that each sit alone.
-		members = append(members, fmt.Sprintf("stratum-%d.stratum:%d", i, stratumHazelcastPort))
+		members = append(members, fmt.Sprintf("stratum-%d.stratum:%d", i, port))
 	}
-	return fmt.Sprintf("        - name: STRATUM_SEED_MEMBERS\n          value: %q\n", strings.Join(members, ","))
+	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
 }
 
 // appServiceNames returns the application's service names in sorted order, so
@@ -184,6 +200,11 @@ type serviceSpec struct {
 	WebAppHostPath   string
 	HasServiceConfig bool
 	HasHazelcast     bool
+	// HasWorkingSetHazelcast declares a SECOND Hazelcast cluster in the same JVM,
+	// on stratumWorkingSetPort. Only stratum has one: its working-set maps are a
+	// separate cluster from the event store. Kernel has a single cluster and must
+	// keep rendering exactly one port block.
+	HasWorkingSetHazelcast bool
 	ListenPort       int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
@@ -655,7 +676,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// discoverable peer addresses — so several replicas would each form
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
 			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
 	}
@@ -1184,9 +1205,15 @@ spec:
 		hazelcastPort := ""
 		if svc.HasHazelcast {
 			hazelcastPort = fmt.Sprintf(`  - name: hazelcast
-    port: 5001
-    targetPort: 5001
-`)
+    port: %d
+    targetPort: %d
+`, stratumHazelcastPort, stratumHazelcastPort)
+		}
+		if svc.HasWorkingSetHazelcast {
+			hazelcastPort += fmt.Sprintf(`  - name: hazelcast-ws
+    port: %d
+    targetPort: %d
+`, stratumWorkingSetPort, stratumWorkingSetPort)
 		}
 		extraPort := ""
 		if svc.ExtraPort != 0 {
@@ -1264,10 +1291,16 @@ spec:
 		}
 		hazelcastHeadless := ""
 		if svc.HasHazelcast {
-			hazelcastHeadless = `  - name: hazelcast
-    port: 5001
-    targetPort: 5001
-`
+			hazelcastHeadless = fmt.Sprintf(`  - name: hazelcast
+    port: %d
+    targetPort: %d
+`, stratumHazelcastPort, stratumHazelcastPort)
+		}
+		if svc.HasWorkingSetHazelcast {
+			hazelcastHeadless += fmt.Sprintf(`  - name: hazelcast-ws
+    port: %d
+    targetPort: %d
+`, stratumWorkingSetPort, stratumWorkingSetPort)
 		}
 		charts.Files[fmt.Sprintf("templates/%s/service-headless.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Service
@@ -1390,9 +1423,14 @@ spec:
           name: grpc
 `, listenPort))
 		if svc.HasHazelcast {
-			ssBuf.WriteString(`        - containerPort: 5001
+			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
           name: hazelcast
-`)
+`, stratumHazelcastPort))
+		}
+		if svc.HasWorkingSetHazelcast {
+			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
+          name: hazelcast-ws
+`, stratumWorkingSetPort))
 		}
 		ssBuf.WriteString(`        volumeMounts:
         - name: bootstrap
