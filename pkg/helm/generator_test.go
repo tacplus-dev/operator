@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,7 +151,14 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	}
 	for _, service := range services {
 		t.Run(service, func(t *testing.T) {
-			deployment := chartFile(t, charts, "templates/"+service+"/deployment.yaml")
+			// stratum is a StatefulSet (its Hazelcast members need stable
+			// per-pod DNS), so its workload file is named differently. The
+			// projected-token assertions below apply to either shape.
+			path := "templates/" + service + "/deployment.yaml"
+			if _, ok := charts.Files[path]; !ok {
+				path = "templates/" + service + "/statefulset.yaml"
+			}
+			deployment := chartFile(t, charts, path)
 			for _, want := range []string{
 				"serviceAccountName: " + service,
 				"automountServiceAccountToken: false",
@@ -254,6 +262,57 @@ func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
 	if !strings.Contains(ss, ".Values.kernel0.config") {
 		t.Fatalf("kernel statefulset must reference .Values.kernel0.config\n--- statefulset ---\n%s", ss)
+	}
+}
+
+// TestStatefulServiceWithoutPerReplicaConfigUsesTheSharedKey pins the rule that
+// per-replica config keys belong to kernel (distinct TLS cert per replica), not
+// to StatefulSets in general.
+//
+// stratum is a multi-replica StatefulSet whose replicas all read ONE config, and
+// the bundle supplies exactly one entry under "stratum". When the key was chosen
+// by IsStatefulSet, its configmaps referenced .Values.stratum0.config — which
+// nothing populates — and all three pods died at startup with
+// "data is null or empty".
+func TestStatefulServiceWithoutPerReplicaConfigUsesTheSharedKey(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			StratumNodes: 3,
+		},
+	})
+
+	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
+	if !strings.Contains(ss, "replicas: 3") {
+		t.Fatalf("guard: expected a 3-replica stratum StatefulSet\n--- statefulset ---\n%s", ss)
+	}
+
+	for i := range 3 {
+		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum/configmap-%d.yaml", i))
+		if !strings.Contains(cm, ".Values.stratum.config") {
+			t.Errorf("stratum configmap-%d must reference the shared .Values.stratum.config\n--- configmap ---\n%s", i, cm)
+		}
+		if strings.Contains(cm, fmt.Sprintf(".Values.stratum%d.config", i)) {
+			t.Errorf("stratum configmap-%d references .Values.stratum%d.config, which nothing populates", i, i)
+		}
+		// The StatefulSet's checksum annotation must name the same key.
+		if strings.Contains(ss, fmt.Sprintf(".Values.stratum%d.config", i)) {
+			t.Errorf("stratum statefulset checksum references .Values.stratum%d.config, which nothing populates\n--- statefulset ---\n%s", i, ss)
+		}
+	}
+
+	// The headless Service must publish not-ready addresses, or the members
+	// cannot resolve each other at startup and split into one-member clusters.
+	hs := chartFile(t, charts, "templates/stratum/service-headless.yaml")
+	if !strings.Contains(hs, "publishNotReadyAddresses: true") {
+		t.Errorf("headless Service must set publishNotReadyAddresses\n--- service ---\n%s", hs)
+	}
+
+	// values.yaml must not carry per-replica placeholders for stratum.
+	values := chartFile(t, charts, "values.yaml")
+	if strings.Contains(values, "stratum0:") {
+		t.Errorf("values.yaml has a stratum0 placeholder; stratum shares one config\n--- values.yaml ---\n%s", values)
 	}
 }
 

@@ -124,6 +124,39 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 	return nil
 }
 
+// stratumSeedMembersEnv renders STRATUM_SEED_MEMBERS: the "host:port" address of
+// every stratum replica, from the StatefulSet's stable per-pod DNS.
+//
+// stratum's event store is a Hazelcast cluster and its members have to find each
+// other. The alternative it falls back to is multicast, which does not work in
+// Kubernetes: several replicas would each form their OWN cluster of size one, so
+// no partitions would be shared and every pod would believe it was a cold boot
+// with an empty store — replaying the entire event log, each of them.
+//
+// Peer wiring by env follows graphdb's GRAPHDB_ZERO_ADDR rather than inventing a
+// second typed-config path for what is deployment topology the operator already
+// knows.
+// The chart exposes Hazelcast on 5001 for every HasHazelcast service (kernel's
+// convention), so stratum must bind that rather than Hazelcast's 5701 default.
+const stratumHazelcastPort = 5001
+
+func stratumSeedMembersEnv(replicas int32) string {
+	if replicas <= 0 {
+		return ""
+	}
+	var members []string
+	for i := int32(0); i < replicas; i++ {
+		// <pod>.<headless service>:<hazelcast port>. A StatefulSet-shaped
+		// service is named for the service itself — pods are stratum-0,
+		// stratum-1, ... and the headless Service is "stratum" — NOT the
+		// stratum0 form a Deployment uses. Getting this wrong produces seed
+		// addresses that never resolve, and Hazelcast simply never forms a
+		// cluster: no error, just members that each sit alone.
+		members = append(members, fmt.Sprintf("stratum-%d.stratum:%d", i, stratumHazelcastPort))
+	}
+	return fmt.Sprintf("        - name: STRATUM_SEED_MEMBERS\n          value: %q\n", strings.Join(members, ","))
+}
+
 // appServiceNames returns the application's service names in sorted order, so
 // chart output is deterministic. Declared here rather than imported from
 // bootstrap: bootstrap depends on helm, and the reverse would be a cycle.
@@ -185,6 +218,18 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet bool
+	// PerReplicaConfig, if true, gives each replica its own values.yaml config key
+	// (kernel0, kernel1, …) instead of sharing one key named for the service.
+	//
+	// This is a property of the CONFIG, not of the workload kind. Kernel needs it
+	// because every replica carries a distinct TLS certificate, and the bundle
+	// supplies those as bootstrap0..N. Every other service — including stateful
+	// ones — has a single config that all replicas read, and the bundle supplies
+	// exactly one entry under the service name. Keying this off IsStatefulSet
+	// made stratum's configmaps reference .Values.stratum0.config, which nothing
+	// populates, so all three pods started with an empty config and died with
+	// "data is null or empty".
+	PerReplicaConfig bool
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
@@ -548,7 +593,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
@@ -603,8 +648,16 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "graphdb", Replicas: topo.GraphdbNodes, Image: g.imageRef("graphdb"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
 			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m", GoMemLimit: "800MiB"}),
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
+		// stratum is a StatefulSet with a headless Service, like kernel, because
+		// its event store is a Hazelcast cluster: the members need stable
+		// per-pod DNS to find each other. As a Deployment behind a plain
+		// ClusterIP they could not — the pods had no stable identity and no
+		// discoverable peer addresses — so several replicas would each form
+		// their OWN cluster of size one. No partition sharing, and every pod
+		// believing it was a cold boot, replaying the whole event log.
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
+			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
+			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
@@ -729,6 +782,19 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 // error when no runtime override is provided (e.g. during a dry-run).
 type perReplicaConfigKey = string
 
+// configValueKey returns the values.yaml key holding replica i's config.
+//
+// Kernel uses per-replica keys (kernel0, kernel1, …) because each replica has a
+// distinct TLS certificate and the bundle supplies them as bootstrap0..N. Every
+// other service shares one config under the service name. The configmap and the
+// StatefulSet's checksum annotation must agree, so both go through here.
+func configValueKey(svc serviceSpec, i int) string {
+	if svc.PerReplicaConfig {
+		return fmt.Sprintf("%s%d", svc.Name, i)
+	}
+	return svc.Name
+}
+
 func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, topo *protoOperator.Topology) error {
 	svcs := g.enabledServices(cfg, topo)
 	port := cfg.Port
@@ -755,7 +821,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	// on .Values.kernel0.config when no runtime override is present.
 	var perReplica []perReplicaConfigKey
 	for _, s := range svcs {
-		if s.IsStatefulSet {
+		if s.PerReplicaConfig {
 			for i := range int(s.Replicas) {
 				perReplica = append(perReplica, fmt.Sprintf("%s%d", s.Name, i))
 			}
@@ -1081,13 +1147,7 @@ subjects:
 		} else {
 			name = fmt.Sprintf("%s%d", svc.Name, i)
 		}
-		// Kernel uses per-replica value keys (kernel0, kernel1, …) because each
-		// replica has a distinct TLS certificate. All other services share one
-		// config across replicas and use the service name as the value key.
-		configValueKey := svc.Name
-		if svc.IsStatefulSet {
-			configValueKey = fmt.Sprintf("%s%d", svc.Name, i)
-		}
+		configValueKey := configValueKey(svc, i)
 		cmData := fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1216,6 +1276,16 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 spec:
   clusterIP: None
+  # Peer DNS must resolve BEFORE a pod is Ready. Hazelcast joins at startup by
+  # resolving the seed list (stratum-0.stratum, …), and a pod is not Ready until
+  # after it has joined — so with the default (not-ready addresses withheld) every
+  # pod in a cold start resolves nothing, decides it is alone, and forms its own
+  # single-member cluster. Observed exactly that: 7x "Cannot resolve hostname
+  # 'stratum-0.stratum'" per pod, three one-member clusters, each running the
+  # cold-boot event-log replay independently, and a query answered by one pod
+  # returning 0 records while another returned 57. They only converged later via
+  # Hazelcast's split-brain merge.
+  publishNotReadyAddresses: true
   selector:
     app: %s
   ports:
@@ -1268,8 +1338,8 @@ spec:
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {
-			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ .Values.%s%d.config | sha256sum | quote }}
-`, i, svc.Name, i))
+			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ .Values.%s.config | sha256sum | quote }}
+`, i, configValueKey(svc, i)))
 		}
 		ssBuf.WriteString(`    spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
