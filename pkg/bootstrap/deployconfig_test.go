@@ -822,3 +822,88 @@ func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 		t.Fatal("kernel gateway config root_ca is empty")
 	}
 }
+
+// TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes covers the
+// on-disk config path, which had drifted from the in-memory one.
+//
+// `apply` builds its bundle in memory (BundleFromConfigs), and that path always
+// included AppConfigs — so app services worked and nothing pointed at the gap.
+// `build` writes configs to disk and packs whatever it finds, and that path had
+// no AppConfigs loop at all: the portable bundle carried no config for any
+// application service, and a service started from it comes up with an empty
+// config, which is a crash and not a degraded mode.
+//
+// The same function only ever wrote files, never removed them, so a service
+// dropped from the topology kept being packed with its last config forever.
+func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "schematic",
+		Fqdn:         "console.secondstarcavalier.cloud",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+			AppServices:   map[string]int32{"echo": 1},
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A config left behind by a service that is no longer in the topology.
+	// anthropic-proxy was retired with the rest of proto-app and its config was
+	// still being packed into bundles weeks later.
+	configsDir := filepath.Join(dir, "configs")
+	if err := os.MkdirAll(configsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configsDir, "anthropic.yaml"), []byte("stale: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A non-YAML file a human kept here must survive.
+	if err := os.WriteFile(filepath.Join(configsDir, "bootstrap0.yaml.bak"), []byte("keep me\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := BuildConfigOutput(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	echoCfg, err := os.ReadFile(filepath.Join(configsDir, "echo.yaml"))
+	if err != nil {
+		t.Fatalf("app service echo has no config on disk: %v", err)
+	}
+	if len(echoCfg) == 0 {
+		t.Fatal("echo.yaml is empty — an empty config is a startup crash, not a default")
+	}
+
+	if _, err := os.Stat(filepath.Join(configsDir, "anthropic.yaml")); !os.IsNotExist(err) {
+		t.Errorf("config for a retired service was not pruned (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(configsDir, "bootstrap0.yaml.bak")); err != nil {
+		t.Errorf("a non-YAML file was removed: %v", err)
+	}
+	// Guard: pruning must not eat the live topology's own configs.
+	for _, want := range []string{"ca.pem", "bootstrap0.yaml", "sentinel.yaml", "gateway.yaml", "eventbus.yaml"} {
+		if _, err := os.Stat(filepath.Join(configsDir, want)); err != nil {
+			t.Errorf("pruning removed a live config %s: %v", want, err)
+		}
+	}
+}

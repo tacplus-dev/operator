@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // BuildConfigOutput writes all generated service configs as individual YAML files
@@ -66,6 +67,19 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.SamlConfig) > 0 && opt.GetSaml() {
 		serviceFiles["saml"] = dc.SamlConfig
 	}
+	// The application's own services. The in-memory bundle path (BundleFromConfigs)
+	// has always included these; this on-disk path did not, so `build` produced a
+	// portable bundle with NO config for any app service — and `apply --bundle`
+	// then started them with an empty config, which is a startup crash
+	// ("data is null or empty"), not a degraded mode. It went unnoticed because
+	// the one-shot `apply` builds its bundle in memory and was the only path
+	// exercised after app services were introduced.
+	for name, data := range dc.AppConfigs {
+		if len(data) > 0 {
+			serviceFiles[name] = data
+		}
+	}
+
 	for svc, data := range serviceFiles {
 		if err := os.WriteFile(filepath.Join(configsDir, svc+".yaml"), data, 0600); err != nil {
 			return fmt.Errorf("writing %s.yaml: %w", svc, err)
@@ -75,6 +89,42 @@ func BuildConfigOutput(cfgDir string) error {
 		if err := os.WriteFile(filepath.Join(configsDir, "letsencrypt-service.yaml"), dc.LetsencryptServiceConfig, 0600); err != nil {
 			return fmt.Errorf("writing letsencrypt-service.yaml: %w", err)
 		}
+	}
+
+	// Retire configs for services the topology no longer deploys.
+	//
+	// This function only ever wrote, and PackBundle re-ingests every *.yaml it
+	// finds here, so a service removed from the topology kept being shipped
+	// forever with the config it had on the day it was removed. anthropic-proxy
+	// was retired with the rest of proto-app and its config was still being
+	// packed into every bundle weeks later.
+	//
+	// Only *.yaml is considered, so hand-kept files with other suffixes (e.g. a
+	// .bak) survive; ca.pem and the bootstrapN configs are written above and are
+	// therefore in the keep set.
+	keep := map[string]bool{"ca.pem": true}
+	for name := range serviceFiles {
+		keep[name+".yaml"] = true
+	}
+	for _, name := range dc.BootstrapNames {
+		keep[name+".yaml"] = true
+	}
+	if len(dc.LetsencryptServiceConfig) > 0 {
+		keep["letsencrypt-service.yaml"] = true
+	}
+	entries, err := os.ReadDir(configsDir)
+	if err != nil {
+		return fmt.Errorf("reading configs directory: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".yaml") || keep[name] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(configsDir, name)); err != nil {
+			return fmt.Errorf("removing stale config %s: %w", name, err)
+		}
+		fmt.Printf("removed stale service config: configs/%s\n", name)
 	}
 
 	return nil
