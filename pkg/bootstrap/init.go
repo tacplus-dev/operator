@@ -11,6 +11,7 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	loggerchassis "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/logger"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
@@ -31,8 +32,15 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	log, _ := zap.NewProduction()
-	defer log.Sync()
+	// Through the chassis, not straight from zap: it wraps the sink in a redactor
+	// so a credential cannot reach the log through a structured FIELD. This path
+	// runs `operator run`, which reconciles a cluster holding the bootstrap crypto,
+	// and the same bypass was found in kmaker and letsencrypt by the same sweep.
+	log, err := loggerchassis.InstallFromConfig(nil)
+	if err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
+	defer log.Sync() //nolint:errcheck
 
 	switch cfg.GetMode() {
 	case protoOperator.OperatorMode_GENERATE_ONLY:
