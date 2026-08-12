@@ -598,3 +598,46 @@ func TestAppServiceRendersIdenticallyToTheFixedFieldPath(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryWorkloadToleratesTheArmTaint guards the toleration that lets this
+// fleet schedule at all.
+//
+// The whole fleet is arm64 by design (control/GKE.md: t2a Spot nodes) and GKE
+// taints Arm nodes kubernetes.io/arch=arm64:NoSchedule. Missing the toleration
+// is invisible until a node is REPLACED — a running pod is not evicted when its
+// node gains a NoSchedule taint — so it stays latent until the worst moment.
+//
+// It surfaced on a Spot preemption: the replacement node carried the taint and
+// 14 of 15 pods went Pending with "1 node(s) had untolerated taint(s)" while the
+// node sat at 25% CPU. The single pod that stayed up was cert-manager's
+// acme-solver, which ships this toleration itself.
+func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			StratumNodes:  3,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+			AppServices:   map[string]int32{"echo": 1},
+		},
+	})
+
+	checked := 0
+	for path, body := range charts.Files {
+		if !strings.HasSuffix(path, "/deployment.yaml") && !strings.HasSuffix(path, "/statefulset.yaml") {
+			continue
+		}
+		checked++
+		text := string(body)
+		if !strings.Contains(text, "key: kubernetes.io/arch") ||
+			!strings.Contains(text, "value: arm64") ||
+			!strings.Contains(text, "effect: NoSchedule") {
+			t.Errorf("%s has no arm64 toleration; it cannot schedule on a tainted Arm node\n%s", path, text)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("guard: no workload manifests were examined")
+	}
+}

@@ -311,6 +311,27 @@ const pvcFsGroupNonRoot = 65532
 // at /app/data, a path the image never prepared. Doing it here rather than in
 // each Dockerfile keeps the guarantee attached to the thing that decides the
 // mount path.
+// archTolerationLines renders the toleration every workload needs to land on an
+// Arm node.
+//
+// The whole fleet is arm64 by design (control/GKE.md: t2a Spot nodes), and GKE
+// taints Arm nodes `kubernetes.io/arch=arm64:NoSchedule`. Without a matching
+// toleration nothing schedules — which is invisible until a node is REPLACED,
+// because an existing pod keeps running on a node that gains a NoSchedule taint.
+//
+// That is exactly how it surfaced: a Spot preemption replaced the node, the new
+// one carried the taint, and 14 of 15 pods went Pending with "1 node(s) had
+// untolerated taint(s)" while the node sat at 25% CPU. The one pod that kept
+// running was cert-manager's acme-solver, which ships this toleration itself.
+func archTolerationLines() string {
+	return `      tolerations:
+      - key: kubernetes.io/arch
+        operator: Equal
+        value: arm64
+        effect: NoSchedule
+`
+}
+
 func pvcFsGroupLines(svc serviceSpec) string {
 	if !svc.HasPVC {
 		return ""
@@ -1395,6 +1416,7 @@ spec:
 		bootstrapEnv := `        - name: BOOTSTRAP_CONFIG
           value: /bootstrap/bootstrap.yaml
 `
+		ssBuf.WriteString(archTolerationLines())
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
         image: {{ .Values.%s.image }}
@@ -1523,7 +1545,7 @@ spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 %s
       hostname: %s
-%s      containers:
+%s%s      containers:
       - name: %s
         image: {{ .Values.%s.image }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
@@ -1538,7 +1560,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, podServiceAccountLines(svc), name, pvcFsGroupLines(svc), name, svc.Name))
+`, podServiceAccountLines(svc), name, archTolerationLines(), pvcFsGroupLines(svc), name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}
