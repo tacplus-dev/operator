@@ -332,6 +332,32 @@ const pvcFsGroupNonRoot = 65532
 // one carried the taint, and 14 of 15 pods went Pending with "1 node(s) had
 // untolerated taint(s)" while the node sat at 25% CPU. The one pod that kept
 // running was cert-manager's acme-solver, which ships this toleration itself.
+// spreadAcrossNodesLines asks the scheduler to place replicas of a service on
+// DIFFERENT nodes.
+//
+// Preferred, not required: with more replicas than nodes — or on a single-node
+// dev cluster — a required rule leaves pods Pending forever, which is a worse
+// failure than co-location. Redundancy that cannot schedule is not redundancy.
+//
+// This matters for the services we run one-per-node for availability: three
+// kernels stacked on one node survive nothing, and the Hazelcast members would
+// share a fate they are supposed to be independent of.
+func spreadAcrossNodesLines(svc serviceSpec) string {
+	if svc.Replicas < 2 {
+		return ""
+	}
+	return fmt.Sprintf(`      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: %s
+`, svc.Name)
+}
+
 func archTolerationLines() string {
 	return `      tolerations:
       - key: kubernetes.io/arch
@@ -1430,6 +1456,7 @@ spec:
           value: /bootstrap/bootstrap.yaml
 `
 		ssBuf.WriteString(archTolerationLines())
+		ssBuf.WriteString(spreadAcrossNodesLines(svc))
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
         image: {{ .Values.%s.image }}
@@ -1573,7 +1600,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, podServiceAccountLines(svc), name, archTolerationLines(), pvcFsGroupLines(svc), name, svc.Name))
+`, podServiceAccountLines(svc), name, archTolerationLines()+spreadAcrossNodesLines(svc), pvcFsGroupLines(svc), name, svc.Name))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}

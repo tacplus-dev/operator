@@ -641,3 +641,47 @@ func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
 		t.Fatal("guard: no workload manifests were examined")
 	}
 }
+
+// TestMultiReplicaServicesAskToSpreadAcrossNodes pins the anti-affinity that
+// makes replica count mean something.
+//
+// Three kernels or three stratums stacked on one node survive nothing, and
+// their Hazelcast members would share exactly the fate they exist to be
+// independent of. The rule is PREFERRED, not required: with more replicas than
+// nodes a required rule leaves pods Pending forever, and redundancy that cannot
+// schedule is worse than co-location.
+func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   3,
+			StratumNodes:  3,
+			SentinelNodes: 1,
+		},
+	})
+
+	for _, path := range []string{
+		"templates/kernel/statefulset.yaml",
+		"templates/stratum/statefulset.yaml",
+	} {
+		body := chartFile(t, charts, path)
+		for _, want := range []string{
+			"podAntiAffinity",
+			"preferredDuringSchedulingIgnoredDuringExecution",
+			"topologyKey: kubernetes.io/hostname",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q — replicas would stack on one node\n%s", path, want, body)
+			}
+		}
+		if strings.Contains(body, "requiredDuringSchedulingIgnoredDuringExecution") {
+			t.Errorf("%s uses a REQUIRED anti-affinity rule; with replicas > nodes that leaves pods Pending forever", path)
+		}
+	}
+
+	// A single-replica service gains nothing from the rule and should not carry it.
+	single := chartFile(t, charts, "templates/sentinel/deployment.yaml")
+	if strings.Contains(single, "podAntiAffinity") {
+		t.Errorf("a 1-replica service should not carry anti-affinity\n%s", single)
+	}
+}
