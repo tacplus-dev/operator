@@ -685,3 +685,37 @@ func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 		t.Errorf("a 1-replica service should not carry anti-affinity\n%s", single)
 	}
 }
+
+// A StatefulSet owns its volume through a volumeClaimTemplate, which is exactly
+// the case that was missing fsGroup: the Deployment path called
+// pvcFsGroupLines and the StatefulSet path did not, so kernel and stratum were
+// the only two services that could not write to their own disk.
+//
+// It failed silently for as long as it existed. Kernel's persistence layer logs
+// a WARN and returns -- "Failed to persist kernel disk snapshot to
+// /app/data/kernel: AccessDeniedException" -- so every probe passed, the fleet
+// was healthy, and the config state simply never reached the disk. Turn-down
+// then looked like it was destroying state that had in fact never been written.
+func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   3,
+			StratumNodes:  3,
+			SentinelNodes: 1,
+		},
+	})
+
+	for _, path := range []string{
+		"templates/kernel/statefulset.yaml",
+		"templates/stratum/statefulset.yaml",
+	} {
+		body := chartFile(t, charts, path)
+		if !strings.Contains(body, "volumeClaimTemplates") {
+			t.Fatalf("%s has no volumeClaimTemplates — this test is asserting against the wrong file", path)
+		}
+		if !strings.Contains(body, "fsGroup: 65532") {
+			t.Errorf("%s mounts a PVC but sets no fsGroup; a distroless nonroot image cannot write to a root-owned volume\n%s", path, body)
+		}
+	}
+}

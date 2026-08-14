@@ -306,20 +306,6 @@ func serviceAccountLine(svc serviceSpec) string {
 // container that DOES run as root.
 const pvcFsGroupNonRoot = 65532
 
-// pvcFsGroupLines renders the pod securityContext for a service with a PVC.
-//
-// Without it, eventbus -- distroless java, USER nonroot -- could not create
-// /app/data/__cluster_metadata-0 and its embedded Kafka broker failed to format
-// KRaft storage on every attempt, forever. It was on retry 131 when this was
-// found. Nothing surfaced: the pod's probes only check that the gRPC port
-// answers, so it reported Ready the whole time while every consumer in the
-// fleet sat on "Kafka not yet initialized".
-//
-// The image's own Dockerfile pre-chowns /var/lib/eventbus/data for 65532, which
-// looks like the fix is already in place -- but this template mounts the claim
-// at /app/data, a path the image never prepared. Doing it here rather than in
-// each Dockerfile keeps the guarantee attached to the thing that decides the
-// mount path.
 // archTolerationLines renders the toleration every workload needs to land on an
 // Arm node.
 //
@@ -367,6 +353,20 @@ func archTolerationLines() string {
 `
 }
 
+// pvcFsGroupLines renders the pod securityContext for a service with a PVC.
+//
+// Without it, eventbus -- distroless java, USER nonroot -- could not create
+// /app/data/__cluster_metadata-0 and its embedded Kafka broker failed to format
+// KRaft storage on every attempt, forever. It was on retry 131 when this was
+// found. Nothing surfaced: the pod's probes only check that the gRPC port
+// answers, so it reported Ready the whole time while every consumer in the
+// fleet sat on "Kafka not yet initialized".
+//
+// The image's own Dockerfile pre-chowns /var/lib/eventbus/data for 65532, which
+// looks like the fix is already in place -- but this template mounts the claim
+// at /app/data, a path the image never prepared. Doing it here rather than in
+// each Dockerfile keeps the guarantee attached to the thing that decides the
+// mount path.
 func pvcFsGroupLines(svc serviceSpec) string {
 	if !svc.HasPVC {
 		return ""
@@ -1438,6 +1438,12 @@ spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 `)
 		ssBuf.WriteString(podServiceAccountLines(svc))
+		// The StatefulSet path was missing this while the Deployment path had it,
+		// so the two services that own a volumeClaimTemplate -- kernel and stratum
+		// -- were the two that could not write to their own volume. See
+		// pvcFsGroupLines: a fresh PV is root:root 0755 and these images run as
+		// `nonroot`.
+		ssBuf.WriteString(pvcFsGroupLines(svc))
 		ssBuf.WriteString(`      initContainers:
       - name: config-select
         image: busybox:1.36
