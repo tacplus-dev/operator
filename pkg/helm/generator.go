@@ -265,6 +265,15 @@ type serviceSpec struct {
 	// set lower than MemLimit to leave room for non-heap memory (metaspace,
 	// direct buffers, code cache, threads).
 	JavaHeap string
+	// JavaHeapMin, if non-empty, sets -Xms independently of -Xmx.
+	//
+	// Xms == Xmx is a latency choice for a service with a large steady-state
+	// heap: it pre-commits and avoids growth pauses. For a service that is
+	// mostly idle it is pure waste — the JVM reserves memory the node could give
+	// to another pod, and RSS then reports the reservation rather than the live
+	// set, which makes the heap look "used" when measuring. Kernel showed
+	// 1175Mi RSS against -Xms1g while doing almost nothing.
+	JavaHeapMin string
 	// GoMemLimit, if non-empty, sets the GOMEMLIMIT env var (Go 1.19+) — Go's
 	// soft memory target. Set lower than MemLimit (commonly ~80%) so Go's GC
 	// triggers before the kernel OOM-killer fires. Same role as JavaHeap for
@@ -471,7 +480,11 @@ func javaOptsEnv(svc serviceSpec) string {
 	if svc.JavaHeap == "" {
 		return ""
 	}
-	return fmt.Sprintf("        - name: JDK_JAVA_OPTIONS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, svc.JavaHeap)
+	min := svc.JavaHeapMin
+	if min == "" {
+		min = svc.JavaHeap
+	}
+	return fmt.Sprintf("        - name: JDK_JAVA_OPTIONS\n          value: \"-Xmx%s -Xms%s -XX:+UseContainerSupport\"\n", svc.JavaHeap, min)
 }
 
 // goMemLimitEnv returns a YAML env-var snippet that sets GOMEMLIMIT for Go
@@ -661,7 +674,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
         - name: KERNEL_K8S_TOKEN_AUDIENCE
           value: %s
 `, kernelTokenAudience()),
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"},
+			MemRequest: "384Mi", MemLimit: "1Gi", CpuRequest: "250m", JavaHeap: "512m", JavaHeapMin: "128m"},
 		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
 			ServiceAccountName:           "kmaker",
 			AutomountServiceAccountToken: falsePtr(),
@@ -679,7 +692,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
@@ -699,7 +712,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// believing it was a cold boot, replaying the whole event log.
 		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
-			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g"}),
+			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
