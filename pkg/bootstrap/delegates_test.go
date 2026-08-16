@@ -343,3 +343,41 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 	}
 	t.Fatal("sentinel delegate not found")
 }
+
+// TestEnsureServiceDelegatesAppServiceGetsBroker verifies that a service
+// declared under Topology.app_services gets the full registry-derived
+// authorized_services, not the [self, kernel] fallback. app services are not in
+// the compile-time platform list, so the registry walk skips them unless
+// EnsureServiceDelegates registers them first — and a tasks delegate without
+// eventbus makes every event publish PermissionDenied.
+func TestEnsureServiceDelegatesAppServiceGetsBroker(t *testing.T) {
+	t.Cleanup(func() { RegisterAppServices(nil) })
+
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"tasks": 1},
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name != "tasks" {
+			continue
+		}
+		for _, as := range d.AuthorizedServices {
+			if as == "eventbus" {
+				return
+			}
+		}
+		t.Fatalf("tasks delegate authorized_services %v missing eventbus", d.AuthorizedServices)
+	}
+	t.Fatal("tasks delegate not found")
+}

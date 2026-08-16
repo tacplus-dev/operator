@@ -458,6 +458,13 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		return fmt.Errorf("loading kernel config: %w", err)
 	}
 
+	// The app's own services are kernel-authenticated too, but they are named
+	// only in config, so the registry walk skips them until they are registered.
+	// Without this the delegate falls back to the [self, kernel] minimum and an
+	// app service that publishes an event gets PermissionDenied against the
+	// broker.
+	RegisterAppServices(AppServiceNames(cfg))
+
 	sd, err := loadServiceDeps()
 	if err != nil {
 		return fmt.Errorf("loading service dependencies: %w", err)
