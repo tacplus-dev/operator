@@ -135,28 +135,49 @@ roles := merged if {
 
 default eval := {"token_entitlements": {}}
 
+# The grants below name only services the platform actually ships. An earlier
+# version of this generator granted MCP_ANY, ANTHROPIC_ANY, GITHUB_ANY,
+# GITLAB_ANY and OPENAI_ANY -- all application services that have since left the
+# platform -- which meant the ` + "`user`" + ` role, whose entire grant set was
+# OPENAI_ANY + ANTHROPIC_ANY, resolved to nothing usable at all. That was fixed
+# by hand in the generated output but never here, so regenerating reintroduced
+# the broken set. Keep this list and the shipped service set in step.
+
+# admin — full access, including kernel's administrative surface.
 eval := {"token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
-		"MCP_ANY",
-		"ANTHROPIC_ANY",
-		"GITHUB_ANY",
-		"GITLAB_ANY",
-		"OPENAI_ANY",
 		"ARGUS_ANY",
+		"ECHO_ANY",
+		"TASKS_ANY",
+		"STRATUM_ANY",
 		"KERNEL_ANY",
 	],
 }} if {
 	roles["admin"]
 }
 
+# prod / user — everything the shipped webapp needs EXCEPT kernel.
+#
+# Both seeded groups land here. The distinction that matters is kernel: it is
+# the cluster's administrative surface and its own token-minting authority, so a
+# non-admin does not get it. STRATUM_ANY sits with the data-plane grants rather
+# than with kernel: stratum is the record of truth that every query enters
+# through, and its protection is egress redaction plus server-pinned predicates,
+# not RPC-level denial. A record type added to stratum needs no new grant --
+# STRATUM_ANY already covers the RPCs its RecordMap generates -- so this list
+# scales with services, never with application types.
 eval := {"token_entitlements": {
 	"grants": [
-		"OPENAI_ANY",
-		"ANTHROPIC_ANY",
+		"SENTINEL_ANY",
+		"ARGUS_ANY",
+		"ECHO_ANY",
+		"TASKS_ANY",
+		"STRATUM_ANY",
 	],
 }} if {
-	roles["user"]
+	some role in {"prod", "user"}
+	roles[role]
 	not roles["admin"]
 }
 `
