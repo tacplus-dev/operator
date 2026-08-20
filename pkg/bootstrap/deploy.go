@@ -394,7 +394,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		bootstrapYAMLs = append(bootstrapYAMLs, bsYAML)
 	}
 
-	return &DeployConfigs{
+	dc := &DeployConfigs{
 		CACertPEM:                caCertPEM,
 		BootstrapNames:           bootstrapNames,
 		BootstrapYAMLs:           bootstrapYAMLs,
@@ -415,7 +415,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
-	}, nil
+	}
+
+	// Every artifact above is a serialized proto its consumer validates at
+	// boot. Check that here, so a required field the generator stopped
+	// emitting fails generation instead of a pod's boot.
+	if err := ValidateDeployConfigs(dc); err != nil {
+		return nil, err
+	}
+
+	return dc, nil
 }
 
 func isReadOnlyConfigWriteError(err error) bool {
