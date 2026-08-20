@@ -12,9 +12,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
+	protoHazelcast "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/common/hazelcast"
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
+	protoLogger "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/logger"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/graphdb"
@@ -407,14 +409,29 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 	}
 
 	// 6. Build kernel Config proto
+	// network, logger and rate_limit are assert_required on kernel's Config but
+	// carry no message-level default, so ConfigDefaults leaves them nil and
+	// kernel rejects the config at boot ("field network is required"). Kernel's
+	// own configDefaults does not recurse into submessages either, and the
+	// NetworkConfig timeouts are assert_duration POSITIVE, so the scalar
+	// defaults have to be filled in here rather than left zero.
 	kernelConfig := &protoKernel.Config{
 		KeyRotationIntervalSeconds: kernelCfg.KeyRotationIntervalSeconds,
 		DefaultTokenExpirySeconds:  kernelCfg.DefaultTokenExpirySeconds,
 		Delegates:                  delegates,
 		Fqdn:                       fqdn,
 		Issuer:                     issuer,
+		Network:                    &protoHazelcast.NetworkConfig{},
+		RateLimit:                  &protoHazelcast.RateLimitConfig{},
+		Logger: &protoLogger.LoggerConfig{
+			Format:      protoLogger.Format_FORMAT_JSON,
+			Level:       protoLogger.Level_LEVEL_DEBUG,
+			OutputPaths: []string{"stdout"},
+		},
 	}
 	protoKernel.ConfigDefaults(kernelConfig)
+	protoHazelcast.NetworkConfigDefaults(kernelConfig.Network)
+	protoHazelcast.RateLimitConfigDefaults(kernelConfig.RateLimit)
 	if hasHolder {
 		kernelConfig.Configs = holder
 	}
