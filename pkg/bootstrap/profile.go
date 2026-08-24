@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
+	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/grants"
 	protoEntitlements "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/entitlements"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -59,27 +60,38 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 	}
 }
 
-// allServiceGrants returns the _ANY grant for every service field on
-// TokenEntitlements, derived via proto reflection.
+// entitlementGrantsField is the field on TokenEntitlements that carries grants.
+// Named once so the shape assumption is checked against the descriptor rather
+// than assumed.
+const entitlementGrantsField = "grants"
+
+// allServiceGrants returns the profile entry that grants everything the fleet
+// exposes: the package-wide wildcard for every package in the GENERATED grant
+// catalog, under TokenEntitlements' actual grant field.
+//
+// It used to reflect over TokenEntitlements looking for repeated-ENUM fields,
+// one per service, and take each enum's value 99 (<SVC>_RPCS_ANY). That shape
+// is gone: the message carries `repeated string grants = 1`. The loop matched
+// nothing, returned an empty map, and `add-profile --all` wrote a profile with
+// zero grants and reported success. Fail loud if the field shape moves again.
 func allServiceGrants() map[string][]string {
 	var ep protoEntitlements.TokenEntitlements
-	md := ep.ProtoReflect().Descriptor()
-	grants := make(map[string][]string)
-	for i := 0; i < md.Fields().Len(); i++ {
-		fd := md.Fields().Get(i)
-		if fd.Kind() != protoreflect.EnumKind || !fd.IsList() {
-			continue
-		}
-		enumDesc := fd.Enum()
-		for j := 0; j < enumDesc.Values().Len(); j++ {
-			ev := enumDesc.Values().Get(j)
-			if ev.Number() == 99 {
-				grants[string(fd.Name())] = []string{string(ev.Name())}
-				break
-			}
+	fd := ep.ProtoReflect().Descriptor().Fields().ByName(entitlementGrantsField)
+	if fd == nil || fd.Kind() != protoreflect.StringKind || !fd.IsList() {
+		panic(fmt.Sprintf(
+			"TokenEntitlements.%s is not a repeated string; regenerate the model or update allServiceGrants",
+			entitlementGrantsField))
+	}
+
+	var tokens []string
+	for _, token := range grants.Tokens() {
+		// Package wildcards only: a capability wildcard (<PKG>_READ_ANY etc.) is
+		// a strict subset of its package's ANY, and every exact token is too.
+		if g, ok := grants.Lookup(token); ok && g.Capability == "ANY" {
+			tokens = append(tokens, token)
 		}
 	}
-	return grants
+	return map[string][]string{entitlementGrantsField: tokens}
 }
 
 // AddProfile adds or updates an entitlement profile in services/kernel.yaml.
