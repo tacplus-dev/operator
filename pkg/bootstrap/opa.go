@@ -150,7 +150,7 @@ eval := {"token_entitlements": {
 		"ARGUS_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
-		"STRATUM_ANY",
+		"QUERY_ANY",
 		"KERNEL_ANY",
 	],
 }} if {
@@ -161,19 +161,24 @@ eval := {"token_entitlements": {
 #
 # Both seeded groups land here. The distinction that matters is kernel: it is
 # the cluster's administrative surface and its own token-minting authority, so a
-# non-admin does not get it. STRATUM_ANY sits with the data-plane grants rather
-# than with kernel: stratum is the record of truth that every query enters
-# through, and its protection is egress redaction plus server-pinned predicates,
-# not RPC-level denial. A record type added to stratum needs no new grant --
-# STRATUM_ANY already covers the RPCs its RecordMap generates -- so this list
-# scales with services, never with application types.
+# non-admin does not get it. QUERY_ANY sits with the data-plane grants rather
+# than with kernel: the record plane is the record of truth that every query
+# enters through, and its protection is egress redaction plus server-pinned
+# predicates, not RPC-level denial. A record type added to the plane needs no new
+# grant -- QUERY_ANY already covers the RPCs the trait generates over it -- so
+# this list scales with services, never with application types.
+#
+# QUERY_ANY, not STRATUM_ANY: since BIG GOAL 3 item 16 the record query plane is
+# a TRAIT (testapp/proto/vservices/query.proto), so its grants are keyed on the
+# contract rather than on the service that hosts it. STRATUM_* is no longer in
+# the generated catalog at all, and the test below is what would have caught it.
 eval := {"token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
 		"ARGUS_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
-		"STRATUM_ANY",
+		"QUERY_ANY",
 	],
 }} if {
 	some role in {"prod", "user"}
