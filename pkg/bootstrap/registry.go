@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.
@@ -31,15 +30,15 @@ type registryNode struct {
 }
 
 type registryBoundary struct {
-	Tag string `json:"tag"`
+	Labels []string `json:"label"`
 }
 
 type registryService struct {
 	Name       string `json:"name"`
 	Package    string `json:"package"`
 	GrpcSvc    string `json:"grpc_service"`
-	HostTag    string `json:"host_tag"`
-	EventTag   string `json:"event_tag"`
+	HostLabel  string `json:"host_label"`
+	EventLabel string `json:"event_label"`
 }
 
 type registryClientDep struct {
@@ -51,14 +50,14 @@ type registryClientDep struct {
 }
 
 type registryEventPub struct {
-	BrokerTag string `json:"broker_tag"`
+	BrokerLabel string `json:"broker_label"`
 }
 
 // loadServiceDeps parses the embedded tacplus registry and derives per-service
 // authorized_services from the declared dependency graph:
-//   - boundary tags → which services host this service's state/config
-//   - s2s client_dependencies → resolved through vservice host_tag to physical services
-//   - event_publishes/event_watches → broker_tag identifies the event broker
+//   - boundary labels → which services host this service's state/config
+//   - s2s client_dependencies → resolved through vservice host_label to physical services
+//   - event_publishes/event_watches → broker_label identifies the event broker
 //   - always includes self + kernel
 //
 // Only returns deps for services in the known set (kernelAuthenticatedServiceNames).
@@ -70,7 +69,7 @@ func loadServiceDeps() (*serviceDeps, error) {
 	}
 
 	// Phase 1: Build vservice grpc_service → physical service mapping from
-	// host_tag and event_tag on vservice ServiceInfo entries.
+	// host_label and event_label on vservice ServiceInfo entries.
 	//   e.g. "agentsensor.StratumQuery" → "stratum"
 	//        "agentsensor.AgentEventBusStateService" → "eventbus"
 	grpcToPhysical := make(map[string]string)
@@ -79,11 +78,11 @@ func loadServiceDeps() (*serviceDeps, error) {
 			return
 		}
 		for _, svc := range node.Services {
-			if svc.HostTag != "" {
-				grpcToPhysical[svc.GrpcSvc] = svc.HostTag
+			if svc.HostLabel != "" {
+				grpcToPhysical[svc.GrpcSvc] = svc.HostLabel
 			}
-			if svc.EventTag != "" {
-				grpcToPhysical[svc.GrpcSvc] = svc.EventTag
+			if svc.EventLabel != "" {
+				grpcToPhysical[svc.GrpcSvc] = svc.EventLabel
 			}
 		}
 	})
@@ -104,10 +103,12 @@ func loadServiceDeps() (*serviceDeps, error) {
 		deps[svcName] = true
 		deps[kernelServiceName] = true
 
-		// Boundary tags → hosting service dependencies.
+		// Boundary labels → hosting service dependencies.
 		for _, b := range node.Boundaries {
-			if b.Tag != "" && isKernelAuthenticatedService(b.Tag) {
-				deps[b.Tag] = true
+			for _, label := range b.Labels {
+				if label != "" && isKernelAuthenticatedService(label) {
+					deps[label] = true
+				}
 			}
 		}
 
@@ -124,15 +125,15 @@ func loadServiceDeps() (*serviceDeps, error) {
 
 		// Event publishes → broker service.
 		for _, ep := range node.EventPublishes {
-			if ep.BrokerTag != "" && isKernelAuthenticatedService(ep.BrokerTag) {
-				deps[ep.BrokerTag] = true
+			if ep.BrokerLabel != "" && isKernelAuthenticatedService(ep.BrokerLabel) {
+				deps[ep.BrokerLabel] = true
 			}
 		}
 
 		// Event watches → broker service.
 		for _, ew := range node.EventWatches {
-			if ew.BrokerTag != "" && isKernelAuthenticatedService(ew.BrokerTag) {
-				deps[ew.BrokerTag] = true
+			if ew.BrokerLabel != "" && isKernelAuthenticatedService(ew.BrokerLabel) {
+				deps[ew.BrokerLabel] = true
 			}
 		}
 
@@ -154,7 +155,7 @@ func loadServiceDeps() (*serviceDeps, error) {
 
 // resolveTarget maps a client dependency target to a physical service name.
 func resolveTarget(cd registryClientDep, grpcToPhysical map[string]string) string {
-	// First: check if the target is a vservice service with a host_tag mapping.
+	// First: check if the target is a vservice service with a host_label mapping.
 	grpcKey := cd.TargetPackage + "." + cd.TargetService
 	if physical, ok := grpcToPhysical[grpcKey]; ok {
 		return physical

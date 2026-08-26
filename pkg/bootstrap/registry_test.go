@@ -47,7 +47,7 @@ func TestSubscriberGetsEventbus(t *testing.T) {
 
 // TestQueryFrontGetsRecordStore verifies that argus (the S2S query front for
 // records) gets stratum (the record store) in its authorized_services via the
-// agentsensor.StratumQuery host_tag resolution.
+// agentsensor.StratumQuery host_label resolution.
 func TestQueryFrontGetsRecordStore(t *testing.T) {
 	sd, err := loadServiceDeps()
 	if err != nil {
@@ -62,7 +62,7 @@ func TestQueryFrontGetsRecordStore(t *testing.T) {
 }
 
 // TestS2SClientGetsTargets verifies that services with declared s2s client
-// dependencies (resolved through host_tag for vservice targets) get those
+// dependencies (resolved through host_label for vservice targets) get those
 // target services in their authorized_services.
 func TestS2SClientGetsTargets(t *testing.T) {
 	sd, err := loadServiceDeps()
@@ -70,8 +70,8 @@ func TestS2SClientGetsTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// argus → stratum.RecordMap. The GraphdbQuery (host_tag: graphdb) and
-	// TimedbQuery (host_tag: timedb) legs went with the 2026-08-25 boneyard,
+	// argus → stratum.RecordMap. The GraphdbQuery (host_label: graphdb) and
+	// TimedbQuery (host_label: timedb) legs went with the 2026-08-25 boneyard,
 	// and so did stratum's own dependency on those two stores.
 	argusDeps := sd.authorizedServicesFor("argus")
 	has := toSet(argusDeps)
