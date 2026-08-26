@@ -27,15 +27,16 @@ func TestLoadServiceDepsFromRegistry(t *testing.T) {
 
 // TestSubscriberGetsEventbus verifies that services whose config state is
 // hosted by eventbus (tag: "eventbus" on boundaries) get eventbus in their
-// authorized_services. graphdb and timedb are projection stores that subscribe
-// to eventbus topics.
+// authorized_services. stratum is the record store that subscribes to eventbus
+// topics. (graphdb and timedb were the other two subscribers until the
+// 2026-08-25 boneyard removed them from the fleet.)
 func TestSubscriberGetsEventbus(t *testing.T) {
 	sd, err := loadServiceDeps()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, svc := range []string{"graphdb", "timedb"} {
+	for _, svc := range []string{"stratum"} {
 		deps := sd.authorizedServicesFor(svc)
 		has := toSet(deps)
 		if !has["eventbus"] {
@@ -69,23 +70,14 @@ func TestS2SClientGetsTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// argus → agentsensor.StratumQuery (host_tag: stratum),
-	//         agentsensor.GraphdbQuery (host_tag: graphdb),
-	//         agentsensor.TimedbQuery (host_tag: timedb)
+	// argus → stratum.RecordMap. The GraphdbQuery (host_tag: graphdb) and
+	// TimedbQuery (host_tag: timedb) legs went with the 2026-08-25 boneyard,
+	// and so did stratum's own dependency on those two stores.
 	argusDeps := sd.authorizedServicesFor("argus")
 	has := toSet(argusDeps)
-	for _, expected := range []string{"stratum", "graphdb", "timedb"} {
+	for _, expected := range []string{"stratum"} {
 		if !has[expected] {
 			t.Errorf("argus deps %v missing %q", argusDeps, expected)
-		}
-	}
-
-	// stratum → agentsensor.GraphdbQuery, agentsensor.TimedbQuery
-	stratumDeps := sd.authorizedServicesFor("stratum")
-	has = toSet(stratumDeps)
-	for _, expected := range []string{"graphdb", "timedb"} {
-		if !has[expected] {
-			t.Errorf("stratum deps %v missing %q", stratumDeps, expected)
 		}
 	}
 }

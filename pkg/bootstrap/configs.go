@@ -50,12 +50,6 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.ArgusConfig) > 0 && t.ArgusNodes > 0 {
 		serviceFiles["argus"] = dc.ArgusConfig
 	}
-	if len(dc.TimedbConfig) > 0 && t.TimedbNodes > 0 {
-		serviceFiles["timedb"] = dc.TimedbConfig
-	}
-	if len(dc.GraphdbConfig) > 0 && t.GraphdbNodes > 0 {
-		serviceFiles["graphdb"] = dc.GraphdbConfig
-	}
 	if len(dc.KmakerConfig) > 0 && t.KmakerNodes > 0 {
 		serviceFiles["kmaker"] = dc.KmakerConfig
 	}

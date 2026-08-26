@@ -133,7 +133,7 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 // no partitions would be shared and every pod would believe it was a cold boot
 // with an empty store — replaying the entire event log, each of them.
 //
-// Peer wiring by env follows graphdb's GRAPHDB_ZERO_ADDR rather than inventing a
+// Peer wiring by env follows the former graphdb GRAPHDB_ZERO_ADDR shape rather than inventing a
 // second typed-config path for what is deployment topology the operator already
 // knows.
 // The chart exposes Hazelcast on 5001 for every HasHazelcast service (kernel's
@@ -583,8 +583,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		GatewayNodes:    t.GatewayNodes,
 		OauthNodes:      t.OauthNodes,
 		OpaNodes:        t.OpaNodes,
-		TimedbNodes:     t.TimedbNodes,
-		GraphdbNodes:    t.GraphdbNodes,
 		ArgusNodes:      t.ArgusNodes,
 		StratumNodes:    t.StratumNodes,
 		SamlNodes:       t.SamlNodes,
@@ -597,29 +595,10 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	}
 }
 
-// timedbNodeModes returns per-replica NODE_MODE values: all nodes run as "combined"
-// (ClickHouse Keeper + Data) which is appropriate for a dev cluster.
-func timedbNodeModes(n int32) []string {
-	modes := make([]string, n)
-	for i := range modes {
-		modes[i] = "combined"
-	}
-	return modes
-}
-
-// graphdbNodeModes returns per-replica NODE_MODE values: first node is "zero",
-// the rest are "alpha".
-func graphdbNodeModes(n int32) []string {
-	modes := make([]string, n)
-	for i := range modes {
-		if i == 0 {
-			modes[i] = "zero"
-		} else {
-			modes[i] = "alpha"
-		}
-	}
-	return modes
-}
+// timedbNodeModes / graphdbNodeModes lived here. Both went with the
+// timedb/graphdb boneyard on 2026-08-25 (BIG GOAL 3, first move #1). The generic
+// serviceSpec.NodeModes plumbing they fed is left in place but now has no caller
+// — noted rather than removed, since it is not this change's business.
 
 func (g *Generator) imageRef(svc string) string {
 	return g.imageRefProj(svc, svc)
@@ -670,7 +649,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// Notable workloads:
 	//   - stratum: in-memory DB with in-memory result sets — needs to grow
 	//     with event volume; today's 2Gi limit is the starting point.
-	//   - graphdb: wraps Dgraph; memory grows with index + cache size.
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
@@ -725,10 +703,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		withKernelServiceAuth(serviceSpec{Name: "argus", Replicas: topo.ArgusNodes, Image: g.imageRef("argus"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
-		withKernelServiceAuth(serviceSpec{Name: "timedb", Replicas: topo.TimedbNodes, Image: g.imageRefProj("timedb", "timedb"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443, NodeModes: timedbNodeModes(topo.TimedbNodes),
-			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m"}),
-		withKernelServiceAuth(serviceSpec{Name: "graphdb", Replicas: topo.GraphdbNodes, Image: g.imageRef("graphdb"), HasGRPC: true, HasPVC: true, Storage: "5Gi", ListenPort: 8443, NodeModes: graphdbNodeModes(topo.GraphdbNodes),
-			MemRequest: "256Mi", MemLimit: "1Gi", CpuRequest: "100m", GoMemLimit: "800MiB"}),
 		// stratum is a StatefulSet with a headless Service, like kernel, because
 		// its event store is a Hazelcast cluster: the members need stable
 		// per-pod DNS to find each other. As a Deployment behind a plain
@@ -1630,13 +1604,6 @@ spec:
 				deployBuf.WriteString(fmt.Sprintf(`        - name: NODE_MODE
           value: %s
 `, nodeMode))
-				// GraphDB Alpha nodes need the Zero address for Raft cluster formation.
-				// Zero is always the first replica (graphdb0).
-				if svc.Name == "graphdb" && nodeMode == "alpha" {
-					deployBuf.WriteString(fmt.Sprintf(`        - name: GRAPHDB_ZERO_ADDR
-          value: %s0:5080
-`, svc.Name))
-				}
 			}
 			deployBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d

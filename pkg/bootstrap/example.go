@@ -19,7 +19,6 @@ import (
 	protoLogger "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/logger"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
-	protoGraphdb "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/graphdb"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
@@ -161,7 +160,6 @@ func WriteServices(cfgDir string) error {
 		"gateway.yaml":  exampleGatewayYAML,
 		"eventbus.yaml": exampleEventbusYAML,
 		"oauth.yaml":    exampleOauthYAML,
-		"graphdb.yaml":  exampleGraphdbYAML,
 		"saml.yaml":     exampleSamlYAML,
 		"opa.yaml":      exampleOpaYAML,
 	}
@@ -322,16 +320,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			}
 			protoOauth.ConfigDefaults(cfg)
 			holder.OauthConfig = cfg
-			hasHolder = true
-			return nil
-		}},
-		{"graphdb", func(m map[string]any) error {
-			cfg := &protoGraphdb.Config{}
-			if err := unmarshalMapToProto(m, cfg); err != nil {
-				return err
-			}
-			protoGraphdb.ConfigDefaults(cfg)
-			holder.GraphdbConfig = cfg
 			hasHolder = true
 			return nil
 		}},
@@ -634,13 +622,6 @@ default_partitions: 6
 default_replication_factor: 1
 controller_count: 1
 broker_count: 1
-`
-
-const exampleGraphdbYAML = `# Graphdb service configuration.
-# Edit these, then run: schematic-operator generate
-zero_count: 1
-replicas: 1
-alpha_count: 1
 `
 
 const exampleOauthYAML = `# OAuth service configuration.

@@ -78,8 +78,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"argus", dc.ArgusConfig},
-		{"timedb", dc.TimedbConfig},
-		{"graphdb", dc.GraphdbConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {

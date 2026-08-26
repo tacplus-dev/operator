@@ -33,8 +33,6 @@ func generatedOutputFixture(t *testing.T) string {
 			GatewayNodes:  1,
 			OauthNodes:    1,
 			OpaNodes:      1,
-			TimedbNodes:   1,
-			GraphdbNodes:  1,
 			ArgusNodes:    1,
 			StratumNodes:  1,
 			SamlNodes:     1,
@@ -90,7 +88,7 @@ func TestGeneratedOutputSatisfiesConsumerProtos(t *testing.T) {
 	want := []string{
 		"bootstrap0", "bootstrap1", "bootstrap2", "kmaker", "sentinel", "echo",
 		"gateway", "eventbus", "oauth", "opa", "saml", "stratum", "argus",
-		"timedb", "graphdb", "tasks",
+		"tasks",
 	}
 	got := map[string]bool{}
 	for _, a := range artifacts {
@@ -209,7 +207,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"EchoConfig": true, "AppConfigs": true, "GatewayConfig": true,
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
 		"SamlConfig": true, "StratumConfig": true, "ArgusConfig": true,
-		"TimedbConfig": true, "GraphdbConfig": true, "LetsencryptConfig": true,
+		"LetsencryptConfig": true,
 	}
 
 	typ := reflect.TypeOf(DeployConfigs{})

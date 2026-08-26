@@ -344,8 +344,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  oauth:  %s\n", oauthStatus)
 	fmt.Printf("  opa:   %d\n", topo.OpaNodes)
 	fmt.Printf("  argus:      %d\n", topo.ArgusNodes)
-	fmt.Printf("  timedb:     %d\n", topo.TimedbNodes)
-	fmt.Printf("  graphdb:    %d\n", topo.GraphdbNodes)
 	fmt.Printf("  stratum:    %d\n", topo.StratumNodes)
 	fmt.Printf("  saml:       %s\n", samlStatus)
 	fmt.Printf("  services/   editable service configs\n")

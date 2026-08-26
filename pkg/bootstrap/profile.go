@@ -27,8 +27,6 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.EventbusNodes = 5
 		t.OauthNodes = 5
 		t.OpaNodes = 5
-		t.TimedbNodes = 5
-		t.GraphdbNodes = 5
 		t.ArgusNodes = 5
 		t.StratumNodes = 5
 		t.SamlNodes = 5
@@ -39,8 +37,6 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
-		t.TimedbNodes = 3
-		t.GraphdbNodes = 3
 		t.ArgusNodes = 3
 		t.StratumNodes = 3
 		t.SamlNodes = 3
@@ -51,8 +47,6 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
-		t.TimedbNodes = 3
-		t.GraphdbNodes = 3
 		t.ArgusNodes = 3
 		t.StratumNodes = 3
 		t.SamlNodes = 3

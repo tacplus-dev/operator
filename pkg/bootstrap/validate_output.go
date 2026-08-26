@@ -104,8 +104,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"argus", dc.ArgusConfig},
-		{"timedb", dc.TimedbConfig},
-		{"graphdb", dc.GraphdbConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	}
 	for _, s := range svc {

@@ -15,8 +15,8 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"argus":       true,
 	"letsencrypt": true,
 	"gateway":     true,
-	"timedb":      true,
-	"graphdb":     true,
+	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
+	// move #1): out of the fleet build, protos deleted, no image published.
 	"stratum":     true,
 	"echo":        true,
 }
@@ -66,12 +66,10 @@ var alwaysOnKernelAuthServices = []string{
 	"argus",
 	"eventbus",
 	"gateway",
-	"graphdb",
 	"oauth",
 	"opa",
 	"sentinel",
 	"stratum",
-	"timedb",
 }
 
 // DeployedKernelAuthServices returns the sorted list of kernel-authenticated
