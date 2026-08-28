@@ -12,11 +12,11 @@ import (
 
 	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -112,6 +112,66 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 	external := findDelegate(t, cfg.Delegates, "external-client")
 	if len(external.KubernetesServiceAccounts) != 0 {
 		t.Fatalf("external-client should not get a default Kubernetes matcher: %#v", external.KubernetesServiceAccounts)
+	}
+}
+
+func TestBuildKernelConfigCarriesDelegationGrants(t *testing.T) {
+	dir := t.TempDir()
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	kernelYAML := []byte(`delegates:
+- name: tasks
+  authorized_services: [tasks, kernel, eventbus]
+grants:
+- id: delegation-proof-positive
+  delegate_name: tasks
+  subject: spiffe://local.dev/local/dev/drpepper/prod/users/joeuser
+  authorized_scope:
+    grants: [TASKS_ANY]
+    principal_scope: PRINCIPAL_SCOPE_SELF_ONLY
+  claims:
+    origin_iss: https://keycloak.example/realms/drpepper
+    groups: [prod]
+  created_at_ms: 123
+  expires_at_ms: 456
+`)
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), kernelYAML, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := BuildKernelConfigProto(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Grants) != 1 {
+		t.Fatalf("Grants = %d, want 1", len(cfg.Grants))
+	}
+	grant := cfg.Grants[0]
+	if grant.GetId() != "delegation-proof-positive" {
+		t.Fatalf("grant id = %q", grant.GetId())
+	}
+	if grant.GetDelegateName() != "tasks" {
+		t.Fatalf("grant delegate = %q", grant.GetDelegateName())
+	}
+	if grant.GetSubject() != "spiffe://local.dev/local/dev/drpepper/prod/users/joeuser" {
+		t.Fatalf("grant subject = %q", grant.GetSubject())
+	}
+	if got := grant.GetAuthorizedScope().GetGrants(); len(got) != 1 || got[0] != "TASKS_ANY" {
+		t.Fatalf("grant authorized_scope.grants = %#v, want [TASKS_ANY]", got)
+	}
+	if got := grant.GetAuthorizedScope().GetPrincipalScope(); got != "PRINCIPAL_SCOPE_SELF_ONLY" {
+		t.Fatalf("grant principal_scope = %q", got)
+	}
+	if got := grant.GetClaims().GetFields()["origin_iss"].GetStringValue(); got != "https://keycloak.example/realms/drpepper" {
+		t.Fatalf("grant claims.origin_iss = %q", got)
+	}
+	if got := grant.GetClaims().GetFields()["groups"].GetListValue().GetValues()[0].GetStringValue(); got != "prod" {
+		t.Fatalf("grant claims.groups[0] = %q", got)
+	}
+	if grant.GetCreatedAtMs() != 123 || grant.GetExpiresAtMs() != 456 {
+		t.Fatalf("grant timestamps = %d/%d, want 123/456", grant.GetCreatedAtMs(), grant.GetExpiresAtMs())
 	}
 }
 

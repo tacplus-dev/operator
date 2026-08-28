@@ -10,13 +10,13 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
 	protoHazelcast "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/common/hazelcast"
+	protoEntitlements "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/entitlements"
 	protoServices "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
-	protoLogger "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/logger"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
@@ -24,6 +24,8 @@ import (
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
+	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
+	protoLogger "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/logger"
 )
 
 // KernelSourceConfig is the human-editable kernel.yaml source format.
@@ -38,6 +40,7 @@ type KernelSourceConfig struct {
 
 	// Delegates (added by add-api-key / init cluster)
 	Delegates []SourceDelegate `yaml:"delegates,omitempty"`
+	Grants    []SourceGrant    `yaml:"grants,omitempty"`
 }
 
 // TLSSourceConfig holds base64-encoded TLS cert and key.
@@ -61,6 +64,22 @@ type SourceKubernetesServiceAccount struct {
 	KubernetesServiceAccount string `yaml:"kubernetes_service_account"`
 }
 
+type SourceGrant struct {
+	Id              string                   `yaml:"id"`
+	DelegateName    string                   `yaml:"delegate_name"`
+	Subject         string                   `yaml:"subject"`
+	AuthorizedScope *SourceTokenEntitlements `yaml:"authorized_scope,omitempty"`
+	Claims          map[string]any           `yaml:"claims,omitempty"`
+	CreatedAtMs     int64                    `yaml:"created_at_ms,omitempty"`
+	ExpiresAtMs     int64                    `yaml:"expires_at_ms,omitempty"`
+}
+
+type SourceTokenEntitlements struct {
+	Grants         []string `yaml:"grants,omitempty"`
+	DataGrants     []string `yaml:"data_grants,omitempty"`
+	PrincipalScope string   `yaml:"principal_scope,omitempty"`
+}
+
 // LoadKernelSourceConfig reads and parses the combined kernel.yaml source file.
 func LoadKernelSourceConfig(path string) (*KernelSourceConfig, error) {
 	data, err := os.ReadFile(path)
@@ -72,6 +91,17 @@ func LoadKernelSourceConfig(path string) (*KernelSourceConfig, error) {
 		return nil, fmt.Errorf("parsing kernel config: %w", err)
 	}
 	return &cfg, nil
+}
+
+func buildTokenEntitlements(src *SourceTokenEntitlements) *protoEntitlements.TokenEntitlements {
+	if src == nil {
+		return nil
+	}
+	return &protoEntitlements.TokenEntitlements{
+		Grants:         append([]string(nil), src.Grants...),
+		DataGrants:     append([]string(nil), src.DataGrants...),
+		PrincipalScope: src.PrincipalScope,
+	}
 }
 
 // AddDelegate reads kernel.yaml, adds/updates a delegate for the given service
@@ -275,6 +305,26 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		delegates = append(delegates, delegate)
 	}
 
+	var grants []*protoKernel.Grant
+	for _, sg := range kernelCfg.Grants {
+		grant := &protoKernel.Grant{
+			Id:              sg.Id,
+			DelegateName:    sg.DelegateName,
+			Subject:         sg.Subject,
+			AuthorizedScope: buildTokenEntitlements(sg.AuthorizedScope),
+			CreatedAtMs:     sg.CreatedAtMs,
+			ExpiresAtMs:     sg.ExpiresAtMs,
+		}
+		if len(sg.Claims) > 0 {
+			claims, err := structpb.NewStruct(sg.Claims)
+			if err != nil {
+				return nil, fmt.Errorf("building grant %q claims: %w", sg.Id, err)
+			}
+			grant.Claims = claims
+		}
+		grants = append(grants, grant)
+	}
+
 	// 4. Load per-service configs from separate files
 	holder := &protoServicesConfig.Services{}
 	hasHolder := false
@@ -407,6 +457,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		KeyRotationIntervalSeconds: kernelCfg.KeyRotationIntervalSeconds,
 		DefaultTokenExpirySeconds:  kernelCfg.DefaultTokenExpirySeconds,
 		Delegates:                  delegates,
+		Grants:                     grants,
 		Fqdn:                       fqdn,
 		Issuer:                     issuer,
 		Network:                    &protoHazelcast.NetworkConfig{},
