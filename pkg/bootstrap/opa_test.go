@@ -91,3 +91,56 @@ func TestDefaultOPAPolicyUsesGeneratedGrantNames(t *testing.T) {
 		}
 	}
 }
+
+// The generated IDP policy must be fail-CLOSED on a missing groups claim.
+// It used to carry a `roles := {"admin"} if { trusted_issuer; not
+// input.claims.groups }` rule, so a token from any trusted issuer that simply
+// omitted the claim was handed the admin role -- and with it KERNEL_ANY, the
+// cluster's administrative surface and its own token-minting authority. Assert
+// the general shape rather than the one deleted rule: `default roles := set()`
+// is the only answer for a token that asserts nothing, and every rule that
+// produces roles must read the groups claim to do it.
+func TestDefaultIdpPolicyFailsClosedWithoutGroupsClaim(t *testing.T) {
+	bundle := DefaultOPABundle([]string{"https://idp.example.com"})
+	var claims string
+	for _, sub := range bundle.GetDirectories() {
+		if sub.GetName() != "idp" {
+			continue
+		}
+		for _, f := range sub.GetFiles() {
+			if f.GetName() == "claims.rego" {
+				claims = string(f.GetContent())
+			}
+		}
+	}
+	if claims == "" {
+		t.Fatal("generated bundle has no idp/claims.rego")
+	}
+
+	if !strings.Contains(claims, "default roles := set()") {
+		t.Error("idp/claims.rego does not default roles to the empty set")
+	}
+
+	// Split on the rule heads so each `roles := ...` body can be inspected on
+	// its own. The head is line-anchored, which is what keeps the `user_roles`
+	// comprehension inside a body -- and the indented `default roles` line --
+	// from reading as rules of their own. The first chunk is the preamble.
+	chunks := strings.Split(claims, "\nroles := ")
+	rules := 0
+	for _, chunk := range chunks[1:] {
+		body, _, ok := strings.Cut(chunk, "\n}")
+		if !ok {
+			t.Fatalf("unterminated roles rule in idp/claims.rego:\n%s", chunk)
+		}
+		rules++
+		if !strings.Contains(body, "input.claims.groups") {
+			t.Errorf("a roles rule grants roles without reading the groups claim:\nroles := %s\n}", body)
+		}
+		if strings.Contains(body, "not input.claims.groups") {
+			t.Errorf("a roles rule grants roles BECAUSE the groups claim is absent:\nroles := %s\n}", body)
+		}
+	}
+	if rules == 0 {
+		t.Error("idp/claims.rego has no roles rule at all")
+	}
+}

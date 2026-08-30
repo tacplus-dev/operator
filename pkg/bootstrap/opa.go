@@ -207,10 +207,12 @@ roles := user_roles if {
 	count(user_roles) > 0
 }
 
-roles := {"admin"} if {
-	trusted_issuer
-	not input.claims.groups
-}
+# A token with no groups claim gets NO roles -- the ` + "`default roles := set()`" + `
+# above is the answer. An earlier version of this generator mapped the missing
+# claim to {"admin"}, which made the absence of an assertion the strongest
+# assertion an IDP could make: any trusted issuer that simply did not emit
+# groups handed the caller kernel's administrative surface. Roles are granted by
+# a claim that is present, never by one that is absent.
 `
 
 const defaultGrantsRego = `# Static role grants — not derived from IDP claims.
