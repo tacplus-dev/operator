@@ -982,6 +982,19 @@ failureThreshold: 60
 {{- end }}
 
 {{/*
+Startup probe for stratum only. Cold start now includes warm Lucene index open
+plus redo-log replay, which exceeds the shared 300s budget above and got the
+pod SIGTERM'd mid-replay on a live rolling restart. ~30 minutes total.
+*/}}
+{{- define "schematic.startupProbeStratum" -}}
+grpc:
+  port: 8444
+periodSeconds: 10
+timeoutSeconds: 5
+failureThreshold: 180
+{{- end }}
+
+{{/*
 imagePullSecrets block — empty when no pull secret is configured.
 */}}
 {{- define "schematic.imagePullSecrets" -}}
@@ -1371,6 +1384,13 @@ spec:
 	if listenPort == 8443 {
 		probeHelper = "schematic.grpcProbe8443"
 		startupProbeHelper = "schematic.startupProbe8443"
+	}
+	// stratum's cold start now includes warm Lucene index open + redo-log replay,
+	// which the shared 300s startup budget is too tight for — stratum-2 was
+	// SIGTERM'd twice mid-replay on a live rolling restart. Give stratum alone a
+	// longer budget; the shared helper still applies to every other service.
+	if svc.Name == "stratum" {
+		startupProbeHelper = "schematic.startupProbeStratum"
 	}
 
 	if svc.IsStatefulSet {
