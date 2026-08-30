@@ -10,6 +10,12 @@ operator:
   # Kubernetes namespace for the operator and all schematic services.
   namespace: schematic
 
+  # Namespaces the operator deploys the schematic fleet into, when that is not
+  # operator.namespace. Must match `namespace:` in operator.yaml. A namespaced
+  # Role + RoleBinding is emitted for operator.namespace plus each entry here;
+  # the operator holds no workload permissions outside that set.
+  managedNamespaces: []
+
   # Mode: "in-cluster" (default) or "generate-only".
   # Overrides operator.yaml if set here.
   mode: in-cluster

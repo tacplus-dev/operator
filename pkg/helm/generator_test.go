@@ -206,22 +206,99 @@ func TestOperatorDeploymentUsesExplicitKubernetesAPITokenProjection(t *testing.T
 	}
 }
 
-func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "helm", "templates", "clusterrole.yaml"))
-	if err != nil {
-		t.Fatalf("read operator ClusterRole template: %v", err)
+// stripYAMLComments drops comment lines so a "must NOT grant" assertion cannot
+// be satisfied by a resource name that only appears in prose.
+func stripYAMLComments(s string) string {
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept = append(kept, line)
 	}
-	clusterRole := string(data)
+	return strings.Join(kept, "\n")
+}
+
+func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
+	readTemplate := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("..", "..", "helm", "templates", name))
+		if err != nil {
+			t.Fatalf("read operator %s template: %v", name, err)
+		}
+		return stripYAMLComments(string(data))
+	}
+	clusterRole := readTemplate("clusterrole.yaml")
+	role := readTemplate("role.yaml")
+
+	// Cluster-scoped objects the operator genuinely has to reach: the
+	// <service>-tokenreview ClusterRole/ClusterRoleBinding pair the generated
+	// service chart emits, plus the TokenReview permission RBAC escalation
+	// prevention requires it to hold before it can mint that ClusterRole.
 	for _, want := range []string{
-		"- roles",
-		"- rolebindings",
 		"- clusterroles",
 		"- clusterrolebindings",
-		"- pods",
-		"verbs: [\"get\"]",
+		"- tokenreviews",
+		`resources: ["nodes"]`,
+		`resources: ["namespaces"]`,
 	} {
 		if !strings.Contains(clusterRole, want) {
 			t.Fatalf("operator ClusterRole missing %q\n--- clusterrole ---\n%s", want, clusterRole)
+		}
+	}
+
+	// Everything else is namespaced, including the <service>-pod-reader Role the
+	// generated chart emits and the pods/get the operator must hold to mint it.
+	for _, want := range []string{
+		"- roles",
+		"- rolebindings",
+		"- pods",
+		"- deployments",
+		"- statefulsets",
+		"- services",
+		"- serviceaccounts",
+		"- configmaps",
+		"- secrets",
+		"- persistentvolumeclaims",
+		`resources: ["leases"]`,
+		`resources: ["events"]`,
+		`verbs: ["get"]`,
+	} {
+		if !strings.Contains(role, want) {
+			t.Fatalf("operator Role missing %q\n--- role ---\n%s", want, role)
+		}
+	}
+
+	// The point of the split: none of the namespaced grants may leak back into
+	// the ClusterRole, where they would apply to every namespace in the cluster.
+	for _, forbidden := range []string{
+		"- roles",
+		"- rolebindings",
+		"- pods",
+		"- deployments",
+		"- statefulsets",
+		"- services",
+		"- serviceaccounts",
+		"- configmaps",
+		"- secrets",
+		"- persistentvolumeclaims",
+		`resources: ["leases"]`,
+		`resources: ["events"]`,
+	} {
+		if strings.Contains(clusterRole, forbidden) {
+			t.Fatalf("operator ClusterRole grants %q cluster-wide; it belongs in the namespaced Role\n--- clusterrole ---\n%s", forbidden, clusterRole)
+		}
+	}
+
+	// The Role must be bound in every managed namespace, with the subject
+	// pinned to the namespace the operator ServiceAccount actually lives in.
+	for _, want := range []string{
+		".Values.operator.managedNamespaces",
+		"kind: RoleBinding",
+		"namespace: {{ $ns }}",
+		"namespace: {{ $.Values.operator.namespace }}",
+	} {
+		if !strings.Contains(role, want) {
+			t.Fatalf("operator Role template missing %q\n--- role ---\n%s", want, role)
 		}
 	}
 }

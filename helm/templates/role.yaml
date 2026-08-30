@@ -1,0 +1,70 @@
+# Namespaced grants: everything the operator does against the namespaces it
+# manages. One Role + RoleBinding per namespace in
+# {operator.namespace} ∪ {operator.managedNamespaces}.
+{{- $namespaces := concat (list .Values.operator.namespace) (.Values.operator.managedNamespaces | default list) | uniq }}
+{{- range $ns := $namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: schematic-operator
+  namespace: {{ $ns }}
+  labels:
+    {{- include "schematic-operator.labels" $ | nindent 4 }}
+rules:
+  # Workload objects in the generated service chart.
+  - apiGroups: [""]
+    resources:
+      - services
+      - serviceaccounts
+      - configmaps
+      - secrets
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Namespaced RBAC emitted by the generated service chart
+  # (e.g. <service>-pod-reader).
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # RBAC escalation prevention: the operator can only mint the
+  # <service>-pod-reader Role above if it holds this itself.
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs: ["get"]
+
+  # Leader election.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Events.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: schematic-operator
+  namespace: {{ $ns }}
+  labels:
+    {{- include "schematic-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: schematic-operator
+subjects:
+  - kind: ServiceAccount
+    name: schematic-operator
+    namespace: {{ $.Values.operator.namespace }}
+{{- end }}

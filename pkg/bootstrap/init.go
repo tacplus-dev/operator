@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
@@ -59,20 +60,35 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("getting kubeconfig: %w", err)
 	}
 
-	mgr, err := manager.New(restCfg, manager.Options{
-		LeaderElection:          true,
-		LeaderElectionID:        "schematic-operator-leader",
-		LeaderElectionNamespace: cfg.GetNamespace(),
-	})
-	if err != nil {
-		return fmt.Errorf("creating manager: %w", err)
-	}
-
 	// Determine the operator's own namespace for reading secrets (e.g. gitlab-registry).
 	// Standard Kubernetes pattern: inject via POD_NAMESPACE env var in the Deployment spec.
 	operatorNS := os.Getenv("POD_NAMESPACE")
 	if operatorNS == "" {
 		operatorNS = "schematic-operator"
+	}
+
+	targetNS := cfg.GetNamespace()
+	if targetNS == "" {
+		targetNS = reconciler.DefaultNamespace
+	}
+
+	// Confine the cache to the namespaces the operator actually manages. Without
+	// this the informers LIST/WATCH secrets, deployments, statefulsets, services
+	// and configmaps cluster-wide, which the namespaced Role in the chart does not
+	// grant. Cluster-scoped types (nodes) still use the cluster-wide informer.
+	mgr, err := manager.New(restCfg, manager.Options{
+		LeaderElection:          true,
+		LeaderElectionID:        "schematic-operator-leader",
+		LeaderElectionNamespace: targetNS,
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				operatorNS: {},
+				targetNS:   {},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating manager: %w", err)
 	}
 
 	provider := NewServiceConfigProvider(dir)

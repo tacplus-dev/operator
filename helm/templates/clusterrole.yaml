@@ -1,3 +1,7 @@
+# Only grants that are genuinely cluster-scoped live here. Everything the
+# operator does against the namespaces it manages — deployments, statefulsets,
+# services, serviceaccounts, configmaps, secrets, PVCs, namespaced RBAC, leases,
+# events — is granted per-namespace by templates/role.yaml instead.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -5,51 +9,30 @@ metadata:
   labels:
     {{- include "schematic-operator.labels" . | nindent 4 }}
 rules:
-  # Read nodes to determine gateway replica count.
+  # Read nodes to determine gateway replica count. Nodes are cluster-scoped.
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["list", "watch"]
 
-  # Manage all schematic resources in the target namespace.
-  - apiGroups: ["", "apps", "batch"]
-    resources:
-      - namespaces
-      - deployments
-      - statefulsets
-      - services
-      - serviceaccounts
-      - configmaps
-      - secrets
-      - persistentvolumeclaims
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Helm install runs with CreateNamespace, and the generated service chart
+  # carries a Namespace object. Namespaces are cluster-scoped, so this cannot be
+  # narrowed to a Role — but the operator never deletes one.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 
-  # Manage cluster-scoped RBAC emitted by the Schematic service chart.
+  # The generated service chart emits <service>-tokenreview ClusterRole and
+  # ClusterRoleBinding pairs. Cluster-scoped objects, so a Role cannot hold them.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources:
       - clusterroles
       - clusterrolebindings
-      - roles
-      - rolebindings
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
-  # Allow the operator to grant kmaker TokenReview access.
+  # RBAC escalation prevention: the operator can only mint the
+  # <service>-tokenreview ClusterRole above if it holds this itself.
+  # TokenReview is a non-namespaced subresource API.
   - apiGroups: ["authentication.k8s.io"]
     resources:
       - tokenreviews
     verbs: ["create"]
-
-  # Allow the operator to grant kmaker pod-read access.
-  - apiGroups: [""]
-    resources:
-      - pods
-    verbs: ["get"]
-
-  # Leader election.
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-
-  # Events.
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]

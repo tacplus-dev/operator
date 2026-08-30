@@ -58,6 +58,10 @@ const StalePendingReleaseAge = 5 * time.Minute
 
 const releaseName = "schematic"
 
+// DefaultNamespace is the namespace the fleet is deployed into when
+// operator.yaml does not set one.
+const DefaultNamespace = "schematic"
+
 // ServiceConfigProvider returns per-service Helm values (map of service name →
 // {"config": yaml-string}) on each reconcile. It is called once per reconcile
 // loop iteration. Returning nil, nil means "no overrides — use chart defaults".
@@ -166,7 +170,7 @@ func (r *Reconciler) namespace() string {
 	if ns := r.cfg.GetNamespace(); ns != "" {
 		return ns
 	}
-	return "schematic"
+	return DefaultNamespace
 }
 
 // selfUpgrade checks whether the operator's own Deployment is running the

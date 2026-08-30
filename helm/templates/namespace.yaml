@@ -1,6 +1,12 @@
+# operator.namespace plus every managed namespace, so the per-namespace Role in
+# templates/role.yaml has a namespace to land in at install time.
+{{- $namespaces := concat (list .Values.operator.namespace) (.Values.operator.managedNamespaces | default list) | uniq }}
+{{- range $ns := $namespaces }}
+---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ .Values.operator.namespace }}
+  name: {{ $ns }}
   labels:
-    {{- include "schematic-operator.labels" . | nindent 4 }}
+    {{- include "schematic-operator.labels" $ | nindent 4 }}
+{{- end }}
