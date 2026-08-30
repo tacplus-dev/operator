@@ -899,3 +899,37 @@ func TestWriteToDiskRemovesSupersededConfigMapTemplate(t *testing.T) {
 		t.Errorf("kernel secret-0.yaml not written: %v", err)
 	}
 }
+
+// TestChartLabelsWorkloadsWithTheOperatorManagedByValue guards the contract the
+// reconciler's stale-deployment pruning selects on. Helm 3 does not set
+// app.kubernetes.io/managed-by by itself, so the value is whatever this chart's
+// helper writes -- and the reconciler must select on exactly that.
+func TestChartLabelsWorkloadsWithTheOperatorManagedByValue(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+		},
+	})
+
+	want := ManagedByLabel + ": " + ManagedByValue
+	helpers := chartFile(t, charts, "templates/_helpers.tpl")
+	if !strings.Contains(helpers, want) {
+		t.Fatalf("_helpers.tpl missing %q\n--- helpers ---\n%s", want, helpers)
+	}
+	if strings.Contains(helpers, ManagedByLabel+": Helm") {
+		t.Fatalf("_helpers.tpl still labels resources managed-by Helm:\n%s", helpers)
+	}
+
+	// Every workload pulls the label in via the shared helper.
+	for _, path := range []string{
+		"templates/kernel/statefulset.yaml",
+		"templates/gateway/deployment.yaml",
+	} {
+		body := chartFile(t, charts, path)
+		if !strings.Contains(body, `include "schematic.labels"`) {
+			t.Fatalf("%s does not include the schematic.labels helper:\n%s", path, body)
+		}
+	}
+}

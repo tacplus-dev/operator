@@ -444,7 +444,7 @@ func (r *Reconciler) removeKernelHotfixDrift(ctx context.Context, ns string) err
 		return client.IgnoreNotFound(err)
 	}
 
-	if st.Labels["app.kubernetes.io/managed-by"] != "Helm" {
+	if st.Labels[helm.ManagedByLabel] != helm.ManagedByValue {
 		return nil
 	}
 
@@ -527,6 +527,10 @@ func filterHotfixVolumes(volumes []corev1.Volume) ([]corev1.Volume, bool) {
 
 // pruneStaleDeployments deletes Deployments in the schematic namespace that are
 // managed by the chart but no longer expected (e.g. after topology scale-down).
+//
+// Ownership is established solely by the chart's managed-by label. There used to
+// be a second gate on app.kubernetes.io/instance == releaseName, but the chart
+// never applies that label, so it dropped every candidate the selector found.
 func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) error {
 	expected := r.generator.ExpectedDeploymentNames(r.cfg, nodeCount)
 
@@ -538,7 +542,7 @@ func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) e
 	var deployList appsv1.DeploymentList
 	if err := r.client.List(ctx, &deployList, &client.ListOptions{
 		Namespace:     ns,
-		LabelSelector: labels.SelectorFromSet(labels.Set{"app.kubernetes.io/managed-by": "Helm"}),
+		LabelSelector: labels.SelectorFromSet(labels.Set{helm.ManagedByLabel: helm.ManagedByValue}),
 	}); err != nil {
 		return fmt.Errorf("listing deployments: %w", err)
 	}
@@ -547,10 +551,6 @@ func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) e
 		dep := &deployList.Items[i]
 		name := dep.Name
 		if expected[name] {
-			continue
-		}
-		// Only delete deployments that belong to the schematic helm release.
-		if dep.Labels["app.kubernetes.io/instance"] != releaseName {
 			continue
 		}
 		r.log.Info("pruning stale deployment", zap.String("name", name))

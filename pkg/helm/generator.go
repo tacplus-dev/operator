@@ -33,6 +33,18 @@ import (
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
 
+// ManagedByLabel is the label key every generated chart resource carries, and
+// ManagedByValue is the value the chart's "schematic.labels" helper applies.
+//
+// The value is NOT "Helm": Helm 3 sets app.kubernetes.io/managed-by only when a
+// chart template asks for it, and this chart's helper hard-codes the operator's
+// own name instead. Anything selecting on these resources (e.g. the reconciler's
+// stale-deployment pruning) must match this value.
+const (
+	ManagedByLabel = "app.kubernetes.io/managed-by"
+	ManagedByValue = "schematic-operator"
+)
+
 // Charts is the in-memory representation of a generated Helm chart.
 // Keys are relative paths within the chart directory (e.g. "templates/kernel/deployment.yaml").
 type Charts struct {
@@ -918,7 +930,7 @@ func (g *Generator) addHelpers(charts *Charts) error {
 Common labels applied to all resources.
 */}}
 {{- define "schematic.labels" -}}
-app.kubernetes.io/managed-by: schematic-operator
+` + ManagedByLabel + `: ` + ManagedByValue + `
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end }}
 
