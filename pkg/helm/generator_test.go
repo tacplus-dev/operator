@@ -933,3 +933,51 @@ func TestChartLabelsWorkloadsWithTheOperatorManagedByValue(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteToDiskWritesChartFilesPrivate: the rendered chart holds the GitLab
+// registry token (templates/registry-secret.yaml) and the service configs
+// carrying kernel's and kmaker's private keys (templates/<svc>/secret-N.yaml).
+// Every file was written 0644, so all of that was world-readable on the
+// operator host. It also has to tighten a file already on disk: the tree is
+// routinely regenerated in place and os.WriteFile leaves an existing file's
+// mode alone, so a chart first rendered by a pre-fix binary would stay 0644.
+func TestWriteToDiskWritesChartFilesPrivate(t *testing.T) {
+	dir := t.TempDir()
+	preExisting := filepath.Join(dir, "schematic", "templates", "registry-secret.yaml")
+	if err := os.MkdirAll(filepath.Dir(preExisting), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preExisting, []byte("kind: Secret\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace:           "schematic",
+		GitlabRegistryToken: "glpat-not-a-real-token",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+		},
+	})
+	if _, ok := charts.Files["templates/registry-secret.yaml"]; !ok {
+		t.Fatal("generated chart has no templates/registry-secret.yaml — test would not cover the token")
+	}
+	if _, ok := charts.Files["templates/kernel/secret-0.yaml"]; !ok {
+		t.Fatal("generated chart has no templates/kernel/secret-0.yaml — test would not cover key material")
+	}
+
+	if err := New("test", "1.2", nil).WriteToDisk(charts, dir); err != nil {
+		t.Fatalf("WriteToDisk() error = %v", err)
+	}
+
+	for relPath := range charts.Files {
+		info, err := os.Stat(filepath.Join(dir, "schematic", relPath))
+		if err != nil {
+			t.Errorf("stat %s: %v", relPath, err)
+			continue
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Errorf("%s mode = %#o, want 0600 (the chart tree carries the registry token and kernel's private keys)", relPath, got)
+		}
+	}
+}

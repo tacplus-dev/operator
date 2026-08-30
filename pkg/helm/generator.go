@@ -129,8 +129,17 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(full, content, 0644); err != nil {
+		if err := os.WriteFile(full, content, 0600); err != nil {
 			return fmt.Errorf("writing %s: %w", relPath, err)
+		}
+		// 0600, like the kernel bootstrap configs: this tree holds the GitLab
+		// registry token (templates/registry-secret.yaml) and the service configs
+		// carrying kernel's and kmaker's private keys (templates/<svc>/secret-N.yaml),
+		// and it is routinely regenerated into an existing directory — WriteFile
+		// leaves an already-present file's mode alone, so a chart rendered by an
+		// older binary stays world-readable without this chmod.
+		if err := os.Chmod(full, 0600); err != nil {
+			return fmt.Errorf("securing %s: %w", relPath, err)
 		}
 		// A config that moved from a ConfigMap to a Secret leaves the old
 		// template behind in an output dir generated before the move, and helm
