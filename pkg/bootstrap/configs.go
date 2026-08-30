@@ -25,9 +25,11 @@ func BuildConfigOutput(cfgDir string) error {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 
+	// 0600, like every service config below: a kernel bootstrap config carries
+	// the node's TLS private key and its signing CA key.
 	for i, bsYAML := range dc.BootstrapYAMLs {
 		name := dc.BootstrapNames[i]
-		if err := os.WriteFile(filepath.Join(configsDir, name+".yaml"), bsYAML, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(configsDir, name+".yaml"), bsYAML, 0600); err != nil {
 			return fmt.Errorf("writing %s.yaml: %w", name, err)
 		}
 	}

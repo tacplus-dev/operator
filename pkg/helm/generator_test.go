@@ -248,10 +248,11 @@ func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 		t.Fatalf("values.yaml unexpectedly contains kernel1 for a 1-node topology\n--- values.yaml ---\n%s", values)
 	}
 
-	// configmap-0.yaml must reference .Values.kernel0.config (not .Values.kernel.config).
-	cm := chartFile(t, charts, "templates/kernel/configmap-0.yaml")
+	// secret-0.yaml (kernel's config holds key material) must reference
+	// .Values.kernel0.config, not .Values.kernel.config.
+	cm := chartFile(t, charts, "templates/kernel/secret-0.yaml")
 	if !strings.Contains(cm, ".Values.kernel0.config") {
-		t.Fatalf("kernel configmap-0 must reference .Values.kernel0.config\n--- configmap ---\n%s", cm)
+		t.Fatalf("kernel secret-0 must reference .Values.kernel0.config\n--- secret ---\n%s", cm)
 	}
 
 	// statefulset.yaml must checksum .Values.kernel0.config in its annotations.
@@ -713,5 +714,111 @@ func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
 		if !strings.Contains(body, "fsGroup: 65532") {
 			t.Errorf("%s mounts a PVC but sets no fsGroup; a distroless nonroot image cannot write to a root-owned volume\n%s", path, body)
 		}
+	}
+}
+
+// TestKeyMaterialConfigsArePackagedAsSecrets: kernel's per-node config carries
+// the node TLS key and its signing CA key, kmaker's carries the cluster CA
+// signing key, and gateway's carries the external TLS key. All three were
+// packaged as ConfigMaps, which are not treated as secret data by Kubernetes —
+// no encryption-at-rest by default, and readable by anything with configmap get.
+func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   3,
+			KmakerNodes:   1,
+			GatewayNodes:  1,
+			SentinelNodes: 1,
+		},
+	})
+
+	for _, tc := range []struct {
+		svc      string
+		replicas int
+	}{
+		{"kernel", 3},
+		{"kmaker", 1},
+		{"gateway", 1},
+	} {
+		for i := range tc.replicas {
+			if _, ok := charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", tc.svc, i)]; ok {
+				t.Errorf("%s config %d is still emitted as a ConfigMap; it holds private key material", tc.svc, i)
+			}
+			raw, ok := charts.Files[fmt.Sprintf("templates/%s/secret-%d.yaml", tc.svc, i)]
+			if !ok {
+				t.Errorf("generated chart has no templates/%s/secret-%d.yaml", tc.svc, i)
+				continue
+			}
+			secret := string(raw)
+			for _, want := range []string{"kind: Secret", "type: Opaque", "stringData:", "config.yaml:"} {
+				if !strings.Contains(secret, want) {
+					t.Errorf("%s secret-%d missing %q\n--- secret ---\n%s", tc.svc, i, want, secret)
+				}
+			}
+			if strings.Contains(secret, "kind: ConfigMap") {
+				t.Errorf("%s secret-%d is a ConfigMap\n--- secret ---\n%s", tc.svc, i, secret)
+			}
+		}
+	}
+
+	// The workloads must mount the Secret, not a ConfigMap of the same name.
+	statefulSet := chartFile(t, charts, "templates/kernel/statefulset.yaml")
+	for i := range 3 {
+		want := fmt.Sprintf("- name: config-%d\n        secret:\n          secretName: kernel-%d-config", i, i)
+		if !strings.Contains(statefulSet, want) {
+			t.Errorf("kernel StatefulSet does not mount config-%d from a Secret\n--- statefulset ---\n%s", i, statefulSet)
+		}
+	}
+	for i := range 3 {
+		if strings.Contains(statefulSet, fmt.Sprintf("configMap:\n          name: kernel-%d-config", i)) {
+			t.Errorf("kernel StatefulSet still mounts config-%d from a ConfigMap\n--- statefulset ---\n%s", i, statefulSet)
+		}
+	}
+	for _, svc := range []string{"kmaker", "gateway"} {
+		deployment := chartFile(t, charts, fmt.Sprintf("templates/%s/deployment.yaml", svc))
+		want := fmt.Sprintf("- name: config\n        secret:\n          secretName: %s0-config", svc)
+		if !strings.Contains(deployment, want) {
+			t.Errorf("%s Deployment does not mount its config from a Secret\n--- deployment ---\n%s", svc, deployment)
+		}
+		if strings.Contains(deployment, fmt.Sprintf("configMap:\n          name: %s0-config", svc)) {
+			t.Errorf("%s Deployment still mounts its config from a ConfigMap\n--- deployment ---\n%s", svc, deployment)
+		}
+	}
+
+	// A service with no key material in its config stays a ConfigMap.
+	sentinel := chartFile(t, charts, "templates/sentinel/configmap-0.yaml")
+	if !strings.Contains(sentinel, "kind: ConfigMap") {
+		t.Errorf("sentinel config should still be a ConfigMap\n--- configmap ---\n%s", sentinel)
+	}
+}
+
+// TestWriteToDiskRemovesSupersededConfigMapTemplate: an output directory
+// generated before the key-material configs moved to Secrets still holds
+// templates/kernel/configmap-0.yaml. Nothing else prunes that directory, and
+// helm would apply the stale ConfigMap alongside the new Secret.
+func TestWriteToDiskRemovesSupersededConfigMapTemplate(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "schematic", "templates", "kernel", "configmap-0.yaml")
+	if err := os.MkdirAll(filepath.Dir(stale), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("kind: ConfigMap\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 1},
+	})
+	if err := New("test", "1.2", nil).WriteToDisk(charts, dir); err != nil {
+		t.Fatalf("WriteToDisk() error = %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale kernel configmap-0.yaml still on disk (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "schematic", "templates", "kernel", "secret-0.yaml")); err != nil {
+		t.Errorf("kernel secret-0.yaml not written: %v", err)
 	}
 }

@@ -120,6 +120,16 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 		if err := os.WriteFile(full, content, 0644); err != nil {
 			return fmt.Errorf("writing %s: %w", relPath, err)
 		}
+		// A config that moved from a ConfigMap to a Secret leaves the old
+		// template behind in an output dir generated before the move, and helm
+		// would apply both — re-publishing the key material the Secret exists to
+		// protect. Nothing else prunes this directory.
+		if stale, ok := strings.CutSuffix(filepath.Base(relPath), ".yaml"); ok && strings.HasPrefix(stale, "secret-") {
+			old := filepath.Join(filepath.Dir(full), "configmap-"+strings.TrimPrefix(stale, "secret-")+".yaml")
+			if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("removing superseded %s: %w", old, err)
+			}
+		}
 	}
 	return nil
 }
@@ -239,6 +249,13 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet bool
+	// ConfigHasKeyMaterial, if true, packages the service's generated config as
+	// a Secret instead of a ConfigMap. Three configs embed private keys: kernel's
+	// per-node config (node TLS key, node signing CA key, and the gateway
+	// external TLS key it serves), kmaker's (the cluster CA signing key), and
+	// gateway's (the external TLS key). A ConfigMap is not secret storage —
+	// no encryption at rest, and readable by anything holding configmap get.
+	ConfigHasKeyMaterial bool
 	// PerReplicaConfig, if true, gives each replica its own values.yaml config key
 	// (kernel0, kernel1, …) instead of sharing one key named for the service.
 	//
@@ -652,7 +669,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
@@ -679,7 +696,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
           value: %s
 `, kernelTokenAudience()),
 			MemRequest: "384Mi", MemLimit: "1Gi", CpuRequest: "250m", JavaHeap: "512m", JavaHeapMin: "128m"},
-		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443,
+		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kmaker",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
@@ -697,7 +714,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
-		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443,
+		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
@@ -1128,6 +1145,15 @@ spec:
 {{- end }}
 `))
 
+// configVolumeSource renders the volume source for a service's config volume:
+// a secret for key-bearing configs, a configMap otherwise.
+func configVolumeSource(svc serviceSpec, name string) string {
+	if svc.ConfigHasKeyMaterial {
+		return fmt.Sprintf("        secret:\n          secretName: %s-config\n", name)
+	}
+	return fmt.Sprintf("        configMap:\n          name: %s-config\n", name)
+}
+
 func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
 	ns := cfg.Namespace
 	if ns == "" {
@@ -1206,7 +1232,11 @@ subjects:
 `, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
 	}
 
-	// ConfigMap
+	// ConfigMap — or a Secret, for configs that embed private key material.
+	kind, typeLine, dataField, fileStem := "ConfigMap", "", "data", "configmap"
+	if svc.ConfigHasKeyMaterial {
+		kind, typeLine, dataField, fileStem = "Secret", "type: Opaque\n", "stringData", "secret"
+	}
 	for i := range int(svc.Replicas) {
 		// StatefulSet pods use hyphenated names (kernel-0); Deployments use kernel0.
 		var name string
@@ -1217,17 +1247,17 @@ subjects:
 		}
 		configValueKey := configValueKey(svc, i)
 		cmData := fmt.Sprintf(`apiVersion: v1
-kind: ConfigMap
+kind: %s
 metadata:
   name: %s-config
   namespace: {{ .Values.global.namespace }}
-data:
+%s%s:
   config.yaml: {{ .Values.%s.config | quote }}
-`, name, configValueKey)
+`, kind, name, typeLine, dataField, configValueKey)
 		if svc.HasServiceConfig {
 			cmData += fmt.Sprintf("  service.yaml: {{ .Values.%s.serviceConfig | quote }}\n", configValueKey)
 		}
-		charts.Files[fmt.Sprintf("templates/%s/configmap-%d.yaml", svc.Name, i)] = []byte(cmData)
+		charts.Files[fmt.Sprintf("templates/%s/%s-%d.yaml", svc.Name, fileStem, i)] = []byte(cmData)
 
 		// PVC if needed — StatefulSet manages PVCs via volumeClaimTemplates.
 		if svc.HasPVC && !svc.IsStatefulSet {
@@ -1524,9 +1554,7 @@ spec:
 		for i := range int(svc.Replicas) {
 			name := fmt.Sprintf("%s-%d", svc.Name, i)
 			ssBuf.WriteString(fmt.Sprintf(`      - name: config-%d
-        configMap:
-          name: %s-config
-`, i, name))
+%s`, i, configVolumeSource(svc, name)))
 		}
 		if svc.HasPVC {
 			ssBuf.WriteString(fmt.Sprintf(`  volumeClaimTemplates:
@@ -1676,10 +1704,8 @@ spec:
 			}
 			deployBuf.WriteString(`      volumes:
       - name: config
-        configMap:
 `)
-			deployBuf.WriteString(fmt.Sprintf(`          name: %s-config
-`, name))
+			deployBuf.WriteString(configVolumeSource(svc, name))
 			if svc.HasPVC {
 				deployBuf.WriteString(fmt.Sprintf(`      - name: data
         persistentVolumeClaim:
