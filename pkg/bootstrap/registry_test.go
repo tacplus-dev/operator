@@ -45,21 +45,12 @@ func TestSubscriberGetsEventbus(t *testing.T) {
 	}
 }
 
-// TestQueryFrontGetsRecordStore verifies that argus (the S2S query front for
-// records) gets stratum (the record store) in its authorized_services via the
-// agentsensor.StratumQuery host_label resolution.
-func TestQueryFrontGetsRecordStore(t *testing.T) {
-	sd, err := loadServiceDeps()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	deps := sd.authorizedServicesFor("argus")
-	has := toSet(deps)
-	if !has["stratum"] {
-		t.Errorf("argus deps %v missing 'stratum'", deps)
-	}
-}
+// TestQueryFrontGetsRecordStore lived here. Its subject was argus, the S2S
+// query front for records, which was deleted from the platform 2026-09-01
+// (BIG GOAL 8 phase 2 item 9). Nothing else in the fleet resolves a record
+// store through a vservice host_label, so the test has no subject to assert
+// on — removed rather than repointed at a service that does not exercise that
+// resolution.
 
 // TestS2SClientGetsTargets verifies that services with declared s2s client
 // dependencies (resolved through host_label for vservice targets) get those
@@ -70,14 +61,15 @@ func TestS2SClientGetsTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// argus → stratum.RecordMap. The GraphdbQuery (host_label: graphdb) and
-	// TimedbQuery (host_label: timedb) legs went with the 2026-08-25 boneyard,
-	// and so did stratum's own dependency on those two stores.
-	argusDeps := sd.authorizedServicesFor("argus")
-	has := toSet(argusDeps)
-	for _, expected := range []string{"stratum"} {
+	// saml → kernel.Mint. The vservice host_label leg this test also used to
+	// cover (argus → stratum.RecordMap, GraphdbQuery, TimedbQuery) lost its
+	// last subject when argus was deleted 2026-09-01; every remaining
+	// (spec.grpc_s2s_client) in the fleet names a concrete service.
+	samlDeps := sd.authorizedServicesFor("saml")
+	has := toSet(samlDeps)
+	for _, expected := range []string{"kernel"} {
 		if !has[expected] {
-			t.Errorf("argus deps %v missing %q", argusDeps, expected)
+			t.Errorf("saml deps %v missing %q", samlDeps, expected)
 		}
 	}
 }

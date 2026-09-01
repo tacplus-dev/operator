@@ -49,9 +49,6 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
 		serviceFiles["stratum"] = dc.StratumConfig
 	}
-	if len(dc.ArgusConfig) > 0 && t.ArgusNodes > 0 {
-		serviceFiles["argus"] = dc.ArgusConfig
-	}
 	if len(dc.KmakerConfig) > 0 && t.KmakerNodes > 0 {
 		serviceFiles["kmaker"] = dc.KmakerConfig
 	}

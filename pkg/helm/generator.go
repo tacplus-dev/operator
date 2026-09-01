@@ -621,7 +621,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		GatewayNodes:    t.GatewayNodes,
 		OauthNodes:      t.OauthNodes,
 		OpaNodes:        t.OpaNodes,
-		ArgusNodes:      t.ArgusNodes,
 		StratumNodes:    t.StratumNodes,
 		SamlNodes:       t.SamlNodes,
 		KmakerNodes:     t.KmakerNodes,
@@ -738,8 +737,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
-		withKernelServiceAuth(serviceSpec{Name: "argus", Replicas: topo.ArgusNodes, Image: g.imageRef("argus"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		// stratum is a StatefulSet with a headless Service, like kernel, because
 		// its event store is a Hazelcast cluster: the members need stable

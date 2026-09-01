@@ -147,7 +147,6 @@ default eval := {"token_entitlements": {}}
 eval := {"token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
-		"ARGUS_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
 		"QUERY_ANY",
@@ -175,7 +174,6 @@ eval := {"token_entitlements": {
 eval := {"token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
-		"ARGUS_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
 		"QUERY_ANY",

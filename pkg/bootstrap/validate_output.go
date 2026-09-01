@@ -103,7 +103,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"opa", dc.OpaConfig},
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
-		{"argus", dc.ArgusConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	}
 	for _, s := range svc {

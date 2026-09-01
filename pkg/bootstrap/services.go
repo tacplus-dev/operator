@@ -12,7 +12,6 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"oauth":       true,
 	"saml":        true,
 	"opa":         true,
-	"argus":       true,
 	"letsencrypt": true,
 	"gateway":     true,
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
@@ -63,7 +62,6 @@ func isKernelAuthenticatedService(name string) bool {
 // deployed (their replica counts come from topology presets and are always > 0).
 // Sorted for deterministic output.
 var alwaysOnKernelAuthServices = []string{
-	"argus",
 	"eventbus",
 	"gateway",
 	"oauth",

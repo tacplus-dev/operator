@@ -39,7 +39,6 @@ type DeployConfigs struct {
 	OpaConfig                []byte
 	SamlConfig               []byte
 	StratumConfig            []byte
-	ArgusConfig              []byte
 	KmakerConfig             []byte
 	LetsencryptConfig        []byte
 	LetsencryptServiceConfig []byte
@@ -314,11 +313,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		return nil, err
 	}
 
-	argusConfigYAML, err := buildSvc("argus", nil)
-	if err != nil {
-		return nil, err
-	}
-
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 
@@ -398,7 +392,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		OpaConfig:                opaConfigYAML,
 		SamlConfig:               samlConfigYAML,
 		StratumConfig:            stratumConfigYAML,
-		ArgusConfig:              argusConfigYAML,
 		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
@@ -546,7 +539,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("gateway", &t.GatewayNodes)
 	check("oauth", &t.OauthNodes)
 	check("opa", &t.OpaNodes)
-	check("argus", &t.ArgusNodes)
 	check("stratum", &t.StratumNodes)
 	check("saml", &t.SamlNodes)
 	check("kmaker", &t.KmakerNodes)
@@ -576,7 +568,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"opa", dc.OpaConfig},
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
-		{"argus", dc.ArgusConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 	} {

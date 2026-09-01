@@ -11,7 +11,6 @@ func AllServices() []ServiceRef {
 		{Proj: "eventbus", Svc: "eventbus"},
 		{Proj: "gateway", Svc: "gateway"},
 		{Proj: "opa", Svc: "opa"},
-		{Proj: "argus", Svc: "argus"},
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 		{Proj: "stratum", Svc: "stratum"},
