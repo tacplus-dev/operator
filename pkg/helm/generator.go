@@ -1192,10 +1192,15 @@ metadata:
 `, svc.ServiceAccountName))
 	}
 	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" {
+		// ClusterRole/ClusterRoleBinding are cluster-scoped, so their names must be
+		// namespace-qualified: two fleets in two namespaces on one cluster would
+		// otherwise collide on the same fixed name, with the second deploy silently
+		// rewriting the first's binding to its own subject namespace.
+		tokenReviewName := fmt.Sprintf("%s-%s-tokenreview", ns, svc.Name)
 		charts.Files[fmt.Sprintf("templates/%s/tokenreview-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: %s-tokenreview
+  name: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 rules:
@@ -1206,18 +1211,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: %s-tokenreview
+  name: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: %s-tokenreview
+  name: %s
 subjects:
 - kind: ServiceAccount
   name: %s
   namespace: {{ .Values.global.namespace }}
-`, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
+`, tokenReviewName, tokenReviewName, tokenReviewName, svc.ServiceAccountName))
 	}
 	if svc.PodReadRBAC && svc.ServiceAccountName != "" {
 		charts.Files[fmt.Sprintf("templates/%s/pod-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
