@@ -548,19 +548,37 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 					changed = true
 				}
 			}
-			// Backfill the Kubernetes service-account matcher if absent (idempotent).
+			// Backfill the Kubernetes service-account matcher if absent, and
+			// resync its namespace if present but stale (idempotent either way).
+			//
+			// A platform delegate (sentinel, gateway, eventbus, ...) is typically
+			// created by the FIRST call to EnsureServiceDelegates, at 'init
+			// cluster' time, before operator.yaml's namespace has necessarily been
+			// set to its final value. An app_services delegate is often created
+			// later, by the 'generate'-time call, once the app's own topology AND
+			// the real namespace are both configured — so it picks up the correct
+			// namespace on creation while an already-existing platform delegate's
+			// matcher was never revisited. Without this resync, every platform
+			// delegate stays pinned to whatever namespace (or the "schematic"
+			// fallback) was in effect the first time its matcher was written.
+			wantNamespace := operatorKubernetesNamespace(cfg)
 			hasKSA := false
-			for _, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
-				if k.KubernetesServiceAccount == svc {
-					hasKSA = true
-					break
+			for i, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
+				if k.KubernetesServiceAccount != svc {
+					continue
 				}
+				hasKSA = true
+				if k.KubernetesNamespace != wantNamespace {
+					kernelCfg.Delegates[idx].KubernetesServiceAccounts[i].KubernetesNamespace = wantNamespace
+					changed = true
+				}
+				break
 			}
 			if !hasKSA {
 				kernelCfg.Delegates[idx].KubernetesServiceAccounts = append(
 					kernelCfg.Delegates[idx].KubernetesServiceAccounts,
 					SourceKubernetesServiceAccount{
-						KubernetesNamespace:      operatorKubernetesNamespace(cfg),
+						KubernetesNamespace:      wantNamespace,
 						KubernetesServiceAccount: svc,
 					})
 				changed = true

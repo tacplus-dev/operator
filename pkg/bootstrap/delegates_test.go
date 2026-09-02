@@ -168,6 +168,62 @@ func TestEnsureServiceDelegatesIdempotent(t *testing.T) {
 	}
 }
 
+// TestEnsureServiceDelegatesResyncsStaleNamespace reproduces the
+// separate-namespace deploy bug: 'init cluster' runs EnsureServiceDelegates
+// before operator.yaml's namespace is necessarily set to its final value, so
+// platform delegates get their Kubernetes service-account matcher written
+// with the "schematic" fallback. A later run (e.g. at 'generate' time), once
+// the real namespace is configured, must correct the existing matcher rather
+// than leaving it pinned to the stale value.
+func TestEnsureServiceDelegatesResyncsStaleNamespace(t *testing.T) {
+	dir := t.TempDir()
+	setupKernelYAML(t, dir, nil)
+
+	// First run: no namespace set yet, as at 'init cluster' time.
+	unnamespaced := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			EventbusNodes: 1,
+			GatewayNodes:  1,
+			OpaNodes:      1,
+			StratumNodes:  1,
+			OauthNodes:    1,
+		},
+	}
+	if err := EnsureServiceDelegates(dir, unnamespaced); err != nil {
+		t.Fatal(err)
+	}
+
+	kernelPath := filepath.Join(dir, "services", "kernel.yaml")
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name == "kernel" {
+			continue
+		}
+		if len(d.KubernetesServiceAccounts) == 0 || d.KubernetesServiceAccounts[0].KubernetesNamespace != "schematic" {
+			t.Fatalf("delegate %q: want fallback namespace %q before namespace is configured, got %+v", d.Name, "schematic", d.KubernetesServiceAccounts)
+		}
+	}
+
+	// Second run: namespace now configured, as at 'generate' time.
+	namespaced := &protoOperator.Config{
+		Namespace: "docmanager",
+		Topology:  unnamespaced.Topology,
+	}
+	if err := EnsureServiceDelegates(dir, namespaced); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name == "kernel" {
+			continue
+		}
+		if len(d.KubernetesServiceAccounts) == 0 || d.KubernetesServiceAccounts[0].KubernetesNamespace != "docmanager" {
+			t.Fatalf("delegate %q: want resynced namespace %q, got %+v", d.Name, "docmanager", d.KubernetesServiceAccounts)
+		}
+	}
+}
+
 // TestEnsureServiceDelegatesPreservesUserDelegates verifies that pre-existing
 // user-added delegates (e.g. from add-api-key) survive.
 func TestEnsureServiceDelegatesPreservesUserDelegates(t *testing.T) {
