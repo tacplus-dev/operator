@@ -199,12 +199,23 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		return nil, err
 	}
 
-	// The application's own services take the same plain shape. A service that
-	// needs more (state, S2S deps) is not expressible yet; see the helm
-	// generator's app-service block.
+	// The application's own services take the same plain shape, plus the
+	// shared llm_credential value for any service named in
+	// llm_credential_services. A service that needs more (state, S2S deps) is
+	// not expressible yet; see the helm generator's app-service block.
+	llmCredentialTargets := map[string]bool{}
+	for _, name := range cfg.GetLlmCredentialServices() {
+		llmCredentialTargets[name] = true
+	}
 	appConfigs := map[string][]byte{}
 	for _, name := range AppServiceNames(cfg) {
-		y, err := buildSvc(name, nil)
+		var extra func(map[string]any)
+		if cfg.GetLlmCredential() != "" && llmCredentialTargets[name] {
+			extra = func(fields map[string]any) {
+				fields["llm_credential"] = cfg.GetLlmCredential()
+			}
+		}
+		y, err := buildSvc(name, extra)
 		if err != nil {
 			return nil, fmt.Errorf("building config for app service %q: %w", name, err)
 		}

@@ -283,6 +283,7 @@ func runExportConfig(cmd *cobra.Command, args []string) error {
 	cfg.Patch = 0
 	cfg.Dev = false
 	cfg.GitlabRegistryToken = ""
+	cfg.LlmCredential = ""
 	cfg.TraceId = ""
 	// Write to YAML and read back as a raw map so we can embed in the template.
 	settingsYAML, err := protoOperator.ConfigToYAML(cfg)
