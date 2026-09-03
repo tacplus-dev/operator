@@ -20,6 +20,15 @@ operator:
   # Overrides operator.yaml if set here.
   mode: in-cluster
 
+  # Mirrors the SCHEMATIC_LOCAL_IMAGES env var the one-shot `apply` CLI reads
+  # from the operator's own shell. The in-cluster reconciler is a long-running
+  # pod with no such shell, so it never saw this override — it always fell
+  # back to GitLab-registry image references, even on clusters (like this
+  # project's GKE cluster) that need a registry prefix such as
+  # us-central1-docker.pkg.dev/<project>/cavalier instead. Set here so the
+  # value reaches the reconciler's own process environment too.
+  localImages: ""
+
   replicas: 1
 
   resources:

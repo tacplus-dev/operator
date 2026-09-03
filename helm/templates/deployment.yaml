@@ -69,6 +69,12 @@ spec:
         # runtime from its PKI and topology and points the env var at it.
         - name: KERNEL_K8S_TOKEN_FILE
           value: /var/run/secrets/schematic/kernel/token
+        # Mirrors the SCHEMATIC_LOCAL_IMAGES env var the one-shot `apply` CLI
+        # reads from its shell (pkg/helm/generator.go imageRefProj) so the
+        # in-cluster reconciler resolves the same image references instead of
+        # always falling back to the GitLab registry.
+        - name: SCHEMATIC_LOCAL_IMAGES
+          value: {{ .Values.operator.localImages | quote }}
         ports:
         - containerPort: 8080
           name: metrics
