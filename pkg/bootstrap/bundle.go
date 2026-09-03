@@ -48,9 +48,9 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 	}
 
 	// Split config into settings (no PKI) and crypto (PKI only) for the bundle.
-	settingsOnly := *dc.Cfg
+	settingsOnly := proto.Clone(dc.Cfg).(*protoOperator.Config)
 	settingsOnly.Pki = nil
-	settingsYAML, err := protoOperator.ConfigToYAML(&settingsOnly)
+	settingsYAML, err := protoOperator.ConfigToYAML(settingsOnly)
 	if err != nil {
 		return nil, fmt.Errorf("serializing operator config: %w", err)
 	}
