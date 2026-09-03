@@ -157,6 +157,13 @@ func runApply(cmd *cobra.Command, args []string) error {
 		if err := ValidateConfig(cfg); err != nil {
 			return err
 		}
+		// Ensure kernel.yaml has delegates for all deployed services before
+		// building deploy configs — otherwise a service added since the last
+		// 'generate'/'init cluster' run has no delegate and crash-loops on
+		// token exchange ("no delegate authorizes ... service account").
+		if err := EnsureServiceDelegates(dir, cfg); err != nil {
+			return fmt.Errorf("ensuring service delegates: %w", err)
+		}
 		dc, err := BuildDeployConfigs(dir)
 		if err != nil {
 			return fmt.Errorf("building deploy configs: %w", err)
