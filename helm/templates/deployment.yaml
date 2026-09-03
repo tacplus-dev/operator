@@ -56,6 +56,14 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        # The operator holds a kernel identity of its own so its reconciler can
+        # push the OPA config through kernel.Mint/UpdateOpaConfig. Same env var
+        # and mount path the generated fleet chart gives every other service
+        # (pkg/helm/generator.go withKernelServiceAuth). BOOTSTRAP_CONFIG is NOT
+        # set here: the operator generates its own chassis bootstrap config at
+        # runtime from its PKI and topology and points the env var at it.
+        - name: KERNEL_K8S_TOKEN_FILE
+          value: /var/run/secrets/schematic/kernel/token
         ports:
         - containerPort: 8080
           name: metrics
@@ -64,6 +72,9 @@ spec:
         volumeMounts:
         - name: kubernetes-api-token
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+        - name: kernel-token
+          mountPath: /var/run/secrets/schematic/kernel
           readOnly: true
         {{- if .Values.config.bundle }}
         - name: config-mutable
@@ -105,6 +116,14 @@ spec:
               - path: namespace
                 fieldRef:
                   fieldPath: metadata.namespace
+      - name: kernel-token
+        projected:
+          defaultMode: 0444
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: schematic-kernel
+              expirationSeconds: 3600
       - name: config
         configMap:
           name: schematic-operator-config

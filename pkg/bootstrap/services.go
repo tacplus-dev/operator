@@ -14,6 +14,12 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"opa":         true,
 	"letsencrypt": true,
 	"gateway":     true,
+	// The operator authenticates to kernel like any other service: it holds a
+	// kernel identity so its reconciler can push the OPA config into a running
+	// cluster (kernel.Mint/UpdateOpaConfig). It is not deployed BY the fleet
+	// chart -- it deploys that chart -- but from kernel's point of view it is
+	// an ordinary delegate.
+	"operator":    true,
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 	"stratum":     true,
@@ -68,8 +74,25 @@ var alwaysOnKernelAuthServices = []string{
 	"gateway",
 	"oauth",
 	"opa",
+	"operator",
 	"sentinel",
 	"stratum",
+}
+
+// operatorServiceAccountName is the Kubernetes ServiceAccount the operator pod
+// runs as, from the operator's own chart (helm/templates/serviceaccount.yaml).
+const operatorServiceAccountName = "schematic-operator"
+
+// delegateServiceAccountName returns the Kubernetes ServiceAccount that
+// authenticates as svc. For every service the operator deploys this is the
+// service's own name, because the generated chart names the ServiceAccount
+// after the service. The operator is the exception: its own chart is
+// hand-written and names its ServiceAccount "schematic-operator".
+func delegateServiceAccountName(svc string) string {
+	if svc == "operator" {
+		return operatorServiceAccountName
+	}
+	return svc
 }
 
 // DeployedKernelAuthServices returns the sorted list of kernel-authenticated

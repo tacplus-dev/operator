@@ -118,6 +118,10 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("registering reconciler: %w", err)
 	}
 
+	// Bring up the operator's own kernel identity in the background so the
+	// reconcile loop can push the OPA config to kernel once it is available.
+	startKernelIdentity(dir, rec, log)
+
 	return mgr.Start(context.Background())
 }
 

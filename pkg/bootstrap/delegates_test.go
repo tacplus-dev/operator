@@ -120,9 +120,13 @@ func TestEnsureServiceDelegatesCreatesPerService(t *testing.T) {
 		if len(d.KubernetesServiceAccounts) == 0 {
 			t.Fatalf("delegate %q has no kubernetes_service_accounts matcher", d.Name)
 		}
-		if d.KubernetesServiceAccounts[0].KubernetesServiceAccount != d.Name {
+		// The service account is the delegate's own name for every service the
+		// operator deploys; the operator itself runs as "schematic-operator",
+		// the name its hand-written chart gives its ServiceAccount.
+		wantKSA := delegateServiceAccountName(d.Name)
+		if d.KubernetesServiceAccounts[0].KubernetesServiceAccount != wantKSA {
 			t.Fatalf("delegate %q KSA = %q, want %q", d.Name,
-				d.KubernetesServiceAccounts[0].KubernetesServiceAccount, d.Name)
+				d.KubernetesServiceAccounts[0].KubernetesServiceAccount, wantKSA)
 		}
 	}
 }

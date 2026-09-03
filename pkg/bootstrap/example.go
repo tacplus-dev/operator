@@ -300,7 +300,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)
 		}
 		if isKernelAuthenticatedService(sd.Name) {
-			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, sd.Name)
+			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, delegateServiceAccountName(sd.Name))
 		}
 		delegates = append(delegates, delegate)
 	}
@@ -562,9 +562,10 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			// delegate stays pinned to whatever namespace (or the "schematic"
 			// fallback) was in effect the first time its matcher was written.
 			wantNamespace := operatorKubernetesNamespace(cfg)
+			wantServiceAccount := delegateServiceAccountName(svc)
 			hasKSA := false
 			for i, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
-				if k.KubernetesServiceAccount != svc {
+				if k.KubernetesServiceAccount != wantServiceAccount {
 					continue
 				}
 				hasKSA = true
@@ -579,7 +580,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 					kernelCfg.Delegates[idx].KubernetesServiceAccounts,
 					SourceKubernetesServiceAccount{
 						KubernetesNamespace:      wantNamespace,
-						KubernetesServiceAccount: svc,
+						KubernetesServiceAccount: wantServiceAccount,
 					})
 				changed = true
 			}
@@ -593,7 +594,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			AuthorizedServices: required,
 			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
 				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
-				KubernetesServiceAccount: svc,
+				KubernetesServiceAccount: delegateServiceAccountName(svc),
 			}},
 		})
 		changed = true

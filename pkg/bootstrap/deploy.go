@@ -18,7 +18,9 @@ import (
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
+	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
 )
 
 // DeployConfigs holds all generated per-service configurations.
@@ -46,6 +48,21 @@ type DeployConfigs struct {
 	LetsencryptServiceConfig []byte
 	GatewayOpts              GatewayOptions
 	Cfg                      *protoOperator.Config
+
+	// OperatorBootstrapConfig is the operator's OWN chassis grpcconfig.Config —
+	// the same shape every other service gets, built from the same kernel
+	// endpoints, trusted CAs and SPIFFE fields. The operator needs a kernel
+	// identity of its own to call kernel.Mint/UpdateOpaConfig, and nothing else
+	// generates this file for it: it is the thing that generates everyone
+	// else's. Carries no private key (bootstrap is a projected k8s token).
+	OperatorBootstrapConfig []byte
+
+	// KernelOpaConfig is the policy-bearing opa.Config that kernel serves as
+	// opa's config-state root. It is NOT OpaConfig above: that one is the plain
+	// chassis bootstrap file mounted into the opa pod, which carries no
+	// policies. This is the value the reconciler pushes through
+	// kernel.Mint/UpdateOpaConfig. Nil when services/opa.yaml is absent.
+	KernelOpaConfig *protoOpa.Config
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -326,6 +343,13 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		return nil, err
 	}
 
+	// The operator's own bootstrap config — same construction as every other
+	// service's, so there is exactly one way a kernel endpoint is computed.
+	operatorBootstrapYAML, err := buildSvc("operator", nil)
+	if err != nil {
+		return nil, err
+	}
+
 	var samlConfigYAML []byte
 	if opt.GetSaml() {
 		samlConfigYAML, err = buildSvc("saml", nil)
@@ -425,6 +449,8 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
+		OperatorBootstrapConfig:  operatorBootstrapYAML,
+		KernelOpaConfig:          cloneOpaConfig(kernelConfig.GetConfigs().GetOpaConfig()),
 	}
 
 	// Every artifact above is a serialized proto its consumer validates at
@@ -435,6 +461,19 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	}
 
 	return dc, nil
+}
+
+// cloneOpaConfig returns a deep copy so the reconciler cannot observe a
+// later mutation of the kernel config it was taken from.
+func cloneOpaConfig(cfg *protoOpa.Config) *protoOpa.Config {
+	if cfg == nil {
+		return nil
+	}
+	cloned, ok := proto.Clone(cfg).(*protoOpa.Config)
+	if !ok {
+		return nil
+	}
+	return cloned
 }
 
 func isReadOnlyConfigWriteError(err error) bool {
@@ -629,9 +668,9 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 // NewServiceConfigProvider returns a reconciler.ServiceConfigProvider that calls
 // BuildDeployConfigs(cfgDir) on each invocation. If cfgDir is empty or the
 // config directory is not yet fully initialized, it returns nil values (no override).
-func NewServiceConfigProvider(cfgDir string) func() (map[string]interface{}, error) {
+func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs, error) {
 	var pkiCache *protoOperator.PKI
-	return func() (map[string]interface{}, error) {
+	return func() (*reconciler.ServiceConfigs, error) {
 		if cfgDir == "" {
 			return nil, nil
 		}
@@ -646,6 +685,9 @@ func NewServiceConfigProvider(cfgDir string) func() (map[string]interface{}, err
 			}
 			pkiCache = pki
 		}
-		return ServiceConfigValues(dc), nil
+		return &reconciler.ServiceConfigs{
+			Values: ServiceConfigValues(dc),
+			Opa:    dc.KernelOpaConfig,
+		}, nil
 	}
 }
