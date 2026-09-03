@@ -625,6 +625,8 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		SamlNodes:       t.SamlNodes,
 		KmakerNodes:     t.KmakerNodes,
 		EchoNodes:       t.EchoNodes,
+		MessagingNodes:  t.MessagingNodes,
+		MailboxNodes:    t.MailboxNodes,
 		// Carry the app's services. A field-by-field clone silently drops
 		// anything added later — which is the failure mode a fixed-field message
 		// invites, and it dropped app_services on the first attempt.
@@ -758,6 +760,22 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// needs nothing beyond the standard kernel service auth every service gets.
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "echo", Replicas: topo.EchoNodes, Image: g.imageRef("echo"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+	}
+
+	// Messaging — the platform's message primitive. Disabled by default.
+	// Stateless mediation over eventbus; its eventbus access is s2s and is
+	// arranged by the generated ServiceManager, so like echo it needs nothing
+	// beyond the standard kernel service auth.
+	if opt.GetMessaging() && topo.GetMessagingNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "messaging", Replicas: topo.MessagingNodes, Image: g.imageRef("messaging"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+	}
+
+	// Mailbox — pull delivery over messaging's deliveries. Disabled by default,
+	// same shape as messaging.
+	if opt.GetMailbox() && topo.GetMailboxNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mailbox", Replicas: topo.MailboxNodes, Image: g.imageRef("mailbox"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
 	}
 

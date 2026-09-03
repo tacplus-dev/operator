@@ -18,6 +18,8 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	// move #1): out of the fleet build, protos deleted, no image published.
 	"stratum":     true,
 	"echo":        true,
+	"messaging":   true,
+	"mailbox":     true,
 }
 
 // appServiceNames holds the application's own services, seeded from
@@ -88,6 +90,12 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	}
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		out = append(out, "echo")
+	}
+	if opt.GetMessaging() && topo.GetMessagingNodes() > 0 {
+		out = append(out, "messaging")
+	}
+	if opt.GetMailbox() && topo.GetMailboxNodes() > 0 {
+		out = append(out, "mailbox")
 	}
 	// The application's own services, declared by name rather than by a proto
 	// field the platform had to add for them.

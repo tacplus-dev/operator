@@ -28,6 +28,8 @@ type DeployConfigs struct {
 	BootstrapYAMLs           [][]byte
 	SentinelConfig           []byte
 	EchoConfig               []byte
+	MessagingConfig          []byte
+	MailboxConfig            []byte
 	// AppConfigs holds bootstrap YAML for the application's own services, keyed
 	// by service name. Platform services each have a named field above because
 	// the platform's service set is fixed; an app's is not known until its
@@ -195,6 +197,19 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 
 	// echo takes the plain bootstrap shape -- no state, no S2S deps, no extras.
 	echoConfigYAML, err := buildSvc("echo", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// messaging and mailbox take the same plain shape: their eventbus and
+	// stratum access is s2s, routed through kernel by the generated
+	// ServiceManager, so nothing extra belongs in the bootstrap config.
+	messagingConfigYAML, err := buildSvc("messaging", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	mailboxConfigYAML, err := buildSvc("mailbox", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +411,8 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		BootstrapYAMLs:           bootstrapYAMLs,
 		SentinelConfig:           sentinelConfigYAML,
 		EchoConfig:               echoConfigYAML,
+		MessagingConfig:          messagingConfigYAML,
+		MailboxConfig:            mailboxConfigYAML,
 		AppConfigs:               appConfigs,
 		GatewayConfig:            gatewayConfigYAML,
 		EventbusConfig:           eventbusConfigYAML,
@@ -554,6 +571,8 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("saml", &t.SamlNodes)
 	check("kmaker", &t.KmakerNodes)
 	check("echo", &t.EchoNodes)
+	check("messaging", &t.MessagingNodes)
+	check("mailbox", &t.MailboxNodes)
 }
 
 // ServiceConfigValues converts a DeployConfigs into a Helm values map.
@@ -573,6 +592,8 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 	}{
 		{"sentinel", dc.SentinelConfig},
 		{"echo", dc.EchoConfig},
+		{"messaging", dc.MessagingConfig},
+		{"mailbox", dc.MailboxConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

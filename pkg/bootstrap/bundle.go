@@ -71,6 +71,8 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 	}{
 		{"sentinel", dc.SentinelConfig},
 		{"echo", dc.EchoConfig},
+		{"messaging", dc.MessagingConfig},
+		{"mailbox", dc.MailboxConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

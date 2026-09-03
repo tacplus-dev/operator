@@ -46,6 +46,12 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.EchoConfig) > 0 && t.EchoNodes > 0 && dc.Cfg.GetOptionalServices().GetEcho() {
 		serviceFiles["echo"] = dc.EchoConfig
 	}
+	if len(dc.MessagingConfig) > 0 && t.MessagingNodes > 0 && dc.Cfg.GetOptionalServices().GetMessaging() {
+		serviceFiles["messaging"] = dc.MessagingConfig
+	}
+	if len(dc.MailboxConfig) > 0 && t.MailboxNodes > 0 && dc.Cfg.GetOptionalServices().GetMailbox() {
+		serviceFiles["mailbox"] = dc.MailboxConfig
+	}
 	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
 		serviceFiles["stratum"] = dc.StratumConfig
 	}
