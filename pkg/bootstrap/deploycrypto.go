@@ -16,6 +16,7 @@ import (
 	wrapperSpiffe "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/spiffe"
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
+	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -646,6 +647,70 @@ func EnsureGatewayExternalTLS(cfg *protoOperator.Config, fqdn string) (bool, err
 	}
 
 	return true, nil
+}
+
+// EnsureKmakerServingTLS generates the serving certificate for kmaker's own
+// gRPC listener, signed by the cluster CA, if one does not already exist. The
+// cert is stored in cfg.Kmaker.Tls (kmaker.Config field 10), which
+// BuildKmakerConfig copies into the generated kmaker service config.
+// Returns true if a new cert was generated.
+//
+// Unlike the kernel/gateway certs this material is not part of cfg.Pki, so it
+// is not persisted to crypto.yaml — it is regenerated whenever the operator
+// process reloads its config, and reused for the lifetime of that cfg.
+func EnsureKmakerServingTLS(cfg *protoOperator.Config) (bool, error) {
+	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
+		return false, fmt.Errorf("pki.cluster_ca with private key is required for kmaker serving TLS")
+	}
+
+	// Idempotent: skip if a kmaker serving cert already exists.
+	if cfg.Kmaker != nil && cfg.Kmaker.Tls != nil &&
+		len(cfg.Kmaker.Tls.Chain) > 0 && cfg.Kmaker.Tls.Key != nil {
+		return false, nil
+	}
+
+	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
+	if err != nil {
+		return false, fmt.Errorf("loading cluster CA key: %w", err)
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		return false, fmt.Errorf("loading cluster CA cert: %w", err)
+	}
+	clusterCACert := cc.Leaf().X509Certificate()
+
+	chain, err := generateSignedCertChain(clusterCAImmKey, clusterCACert, kmakerServingDNSNames(cfg), "")
+	if err != nil {
+		return false, fmt.Errorf("generating kmaker serving TLS cert: %w", err)
+	}
+
+	if cfg.Kmaker == nil {
+		cfg.Kmaker = &protoKmaker.Config{}
+	}
+	cfg.Kmaker.Tls = chain
+
+	return true, nil
+}
+
+// kmakerServingDNSNames lists the names clients may use to reach kmaker.
+// Same shape as the kernel node certs (own name + service DNS): "kmaker" is
+// the service id a SPIFFE/gateway-style verifier uses as domain_name, and
+// "kmaker0" is the Deployment/Service name plus its in-cluster DNS forms.
+func kmakerServingDNSNames(cfg *protoOperator.Config) []string {
+	ns := cfg.Namespace
+	if ns == "" {
+		ns = "schematic"
+	}
+	dnsNames := []string{
+		"kmaker",
+		"kmaker0",
+		fmt.Sprintf("kmaker0.%s.svc", ns),
+		fmt.Sprintf("kmaker0.%s.svc.cluster.local", ns),
+	}
+	if cfg.Fqdn != "" {
+		dnsNames = append(dnsNames, cfg.Fqdn)
+	}
+	return dnsNames
 }
 
 // GatewayExternalTLSPEM extracts PEM-encoded certificate chain and private key

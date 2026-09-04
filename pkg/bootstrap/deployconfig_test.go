@@ -967,3 +967,105 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 		}
 	}
 }
+
+func TestBuildKmakerConfigPopulatesServingTLS(t *testing.T) {
+	cfg := &protoOperator.Config{Namespace: "cavalier", Fqdn: "schematic.localtest.me"}
+	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	kmakerConfig, err := BuildKmakerConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kmakerConfig.Tls == nil || len(kmakerConfig.Tls.Chain) == 0 || kmakerConfig.Tls.Key == nil {
+		t.Fatal("kmaker config has no serving TLS cert")
+	}
+
+	cc, err := wrapperX509.NewImmutableX509CertChain(kmakerConfig.Tls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := cc.Leaf().X509Certificate()
+	want := []string{"kmaker", "kmaker0", "kmaker0.cavalier.svc", "kmaker0.cavalier.svc.cluster.local", "schematic.localtest.me"}
+	for _, name := range want {
+		found := false
+		for _, dns := range cert.DNSNames {
+			if dns == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("kmaker serving cert missing SAN %q: %v", name, cert.DNSNames)
+		}
+	}
+
+	// The serving cert must chain to the cluster CA (and thus to the root).
+	roots := stdx509.NewCertPool()
+	root, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.RootCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots.AddCert(root.Leaf().X509Certificate())
+	intermediates := stdx509.NewCertPool()
+	cluster, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intermediates.AddCert(cluster.Leaf().X509Certificate())
+	if _, err := cert.Verify(stdx509.VerifyOptions{
+		DNSName:       "kmaker",
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   time.Now(),
+		KeyUsages:     []stdx509.ExtKeyUsage{stdx509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		t.Fatalf("kmaker serving cert did not verify to root: %v", err)
+	}
+}
+
+func TestEnsureKmakerServingTLSIdempotent(t *testing.T) {
+	cfg := &protoOperator.Config{Namespace: "cavalier"}
+	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	generated, err := EnsureKmakerServingTLS(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !generated {
+		t.Fatal("first call should generate a cert")
+	}
+	firstCertID := cfg.Kmaker.Tls.Chain[0].Id
+	firstKeyID := cfg.Kmaker.Tls.Key.Id
+
+	generated, err = EnsureKmakerServingTLS(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated {
+		t.Fatal("second call should skip (idempotent)")
+	}
+	if got := cfg.Kmaker.Tls.Chain[0].Id; got != firstCertID {
+		t.Fatalf("cert id changed from %q to %q on idempotent run", firstCertID, got)
+	}
+	if got := cfg.Kmaker.Tls.Key.Id; got != firstKeyID {
+		t.Fatalf("key id changed from %q to %q on idempotent run", firstKeyID, got)
+	}
+
+	// BuildKmakerConfig must reuse the existing cert rather than minting a new one.
+	kmakerConfig, err := BuildKmakerConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kmakerConfig.Tls.Chain[0].Id; got != firstCertID {
+		t.Fatalf("BuildKmakerConfig minted a new cert id %q, want reuse of %q", got, firstCertID)
+	}
+}
+
+func TestEnsureKmakerServingTLSRequiresClusterCA(t *testing.T) {
+	if _, err := EnsureKmakerServingTLS(&protoOperator.Config{}); err == nil {
+		t.Fatal("expected error when pki.cluster_ca is absent")
+	}
+}

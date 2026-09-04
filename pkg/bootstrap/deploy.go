@@ -496,6 +496,13 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 		return nil, fmt.Errorf("pki.cluster_ca with private key is required")
 	}
 
+	// Mint kmaker's own serving cert before cloning so the generated config
+	// carries it; without it kmaker refuses to start (ErrTLSRequired) unless
+	// the plaintext opt-in is set.
+	if _, err := EnsureKmakerServingTLS(cfg); err != nil {
+		return nil, err
+	}
+
 	kmakerConfig := &protoKmaker.Config{}
 	if cfg.GetKmaker() != nil {
 		kmakerConfig = proto.Clone(cfg.GetKmaker()).(*protoKmaker.Config)
