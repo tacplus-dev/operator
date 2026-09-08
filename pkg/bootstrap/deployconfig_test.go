@@ -127,7 +127,7 @@ func TestBuildKernelConfigCarriesDelegationGrants(t *testing.T) {
 grants:
 - id: delegation-proof-positive
   delegate_name: tasks
-  subject: spiffe://local.dev/local/dev/drpepper/prod/users/joeuser
+  subject: spiffe://local.dev/tenants/drpepper/prod/users/joeuser
   authorized_scope:
     grants: [TASKS_ANY]
     principal_scope: PRINCIPAL_SCOPE_SELF_ONLY
@@ -155,7 +155,7 @@ grants:
 	if grant.GetDelegateName() != "tasks" {
 		t.Fatalf("grant delegate = %q", grant.GetDelegateName())
 	}
-	if grant.GetSubject() != "spiffe://local.dev/local/dev/drpepper/prod/users/joeuser" {
+	if grant.GetSubject() != "spiffe://local.dev/tenants/drpepper/prod/users/joeuser" {
 		t.Fatalf("grant subject = %q", grant.GetSubject())
 	}
 	if got := grant.GetAuthorizedScope().GetGrants(); len(got) != 1 || got[0] != "TASKS_ANY" {

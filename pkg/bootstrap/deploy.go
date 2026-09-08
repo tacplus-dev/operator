@@ -541,7 +541,7 @@ func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
 	if kmakerConfig.SpiffePrefix == "" {
 		kmakerConfig.SpiffePrefix = cfg.SpiffePrefix
 		if kmakerConfig.SpiffePrefix == "" {
-			kmakerConfig.SpiffePrefix = "local/dev"
+			kmakerConfig.SpiffePrefix = "local.dev"
 		}
 	}
 	if kmakerConfig.TokenAudience == "" {
