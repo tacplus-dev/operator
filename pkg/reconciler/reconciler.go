@@ -121,12 +121,14 @@ type Reconciler struct {
 // operatorNS is the namespace where the operator pod runs (used for reading
 // the gitlab-registry secret when auto_upgrade is enabled).
 // checker resolves per-service image tags; the generator uses it as a TagResolver.
-func New(cfg *protoOperator.Config, configProvider ServiceConfigProvider, checker *upgrade.Checker, mgr manager.Manager, log *zap.Logger, operatorNS, series, versionLock string) *Reconciler {
+// tenantOwned names the services registry.json marks tenant_owned; the caller
+// reads it from the embedded registry, which this package cannot reach.
+func New(cfg *protoOperator.Config, configProvider ServiceConfigProvider, checker *upgrade.Checker, mgr manager.Manager, log *zap.Logger, operatorNS, series, versionLock string, tenantOwned map[string]bool) *Reconciler {
 	return &Reconciler{
 		cfg:            cfg,
 		configProvider: configProvider,
 		checker:        checker,
-		generator:      helm.New(series, versionLock, checker),
+		generator:      helm.New(series, versionLock, checker, tenantOwned),
 		client:         mgr.GetClient(),
 		log:            log,
 		restCfg:        mgr.GetConfig(),

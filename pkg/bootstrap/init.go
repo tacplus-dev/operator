@@ -109,7 +109,11 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		log,
 		pollInterval,
 	)
-	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor())
+	tenantOwned, err := TenantOwnedServices()
+	if err != nil {
+		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+	}
+	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor(), tenantOwned)
 
 	// Register as a managed runnable so the manager starts it AFTER the k8s
 	// cache is ready. This prevents the "cache is not started" error when
@@ -131,7 +135,11 @@ func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
 		return fmt.Errorf("topology.gateway_nodes must be set in GENERATE_ONLY mode")
 	}
 
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil)
+	tenantOwned, err := TenantOwnedServices()
+	if err != nil {
+		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err

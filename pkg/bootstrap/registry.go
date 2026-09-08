@@ -39,6 +39,11 @@ type registryService struct {
 	GrpcSvc    string `json:"grpc_service"`
 	HostLabel  string `json:"host_label"`
 	EventLabel string `json:"event_label"`
+	// TenantOwned mirrors ServiceInfo.tenant_owned, which tacplus emits from
+	// the service-level (spec.service).tenant_owned annotation. True means the
+	// operator runs one instance of this service per tenant. Absent (the proto3
+	// default, and what every entry in today's registry carries) means shared.
+	TenantOwned bool `json:"tenant_owned"`
 }
 
 type registryClientDep struct {
@@ -173,6 +178,45 @@ func (sd *serviceDeps) authorizedServicesFor(svc string) []string {
 	}
 	// Fallback for services not in the registry (e.g. not yet generated).
 	return authorizedServicesFor(svc)
+}
+
+// tenantOwnedServices returns the set of physical service names that
+// registry.json marks tenant_owned. This annotation is the ONLY source of
+// truth for "is this service tenant-owned" — the operator carries no parallel
+// allowlist or config flag that could disagree with it.
+//
+// The annotation is file-level in the proto ((spec.service) on the package's
+// single service block), so tacplus stamps it onto every ServiceInfo the file
+// produces; one entry carrying it marks the whole service node.
+func tenantOwnedServices() (map[string]bool, error) {
+	return tenantOwnedServicesFrom(registryJSON)
+}
+
+// TenantOwnedServices exposes the tenant_owned set to the helm generator and
+// the reconciler, which cannot read the embedded registry themselves: this
+// package imports both, so the dependency only runs one way.
+func TenantOwnedServices() (map[string]bool, error) {
+	return tenantOwnedServices()
+}
+
+func tenantOwnedServicesFrom(data []byte) (map[string]bool, error) {
+	var root registryNode
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parsing registry.json: %w", err)
+	}
+	out := make(map[string]bool)
+	walkNodes(&root, func(node *registryNode) {
+		if !strings.HasPrefix(node.FullPath, "services/") {
+			return
+		}
+		for _, svc := range node.Services {
+			if svc.TenantOwned {
+				out[node.Name] = true
+				return
+			}
+		}
+	})
+	return out, nil
 }
 
 func walkNodes(node *registryNode, fn func(*registryNode)) {

@@ -68,14 +68,29 @@ type Generator struct {
 	versionLock string
 	// resolver resolves per-service image tags. May be nil (falls back to "latest").
 	resolver TagResolver
+	// tenantOwned is the set of service names registry.json marks
+	// (spec.service).tenant_owned. Those services are deployed once per entry
+	// in Config.tenants instead of once for the whole cluster. May be nil,
+	// which means every service is shared — the fleet's state today.
+	tenantOwned map[string]bool
 }
 
 // New returns a new Generator.
 // series is the image series (e.g. "1-2") and versionLock is the MAJOR.MINOR
 // string (e.g. "1.2"), both derived from the operator binary version at startup.
 // resolver provides per-service image tag resolution; pass nil to always use "latest".
-func New(series, versionLock string, resolver TagResolver) *Generator {
-	return &Generator{series: series, versionLock: versionLock, resolver: resolver}
+// tenantOwned names the services registry.json marks tenant_owned; pass nil for
+// a fleet with no tenant-owned services.
+func New(series, versionLock string, resolver TagResolver, tenantOwned map[string]bool) *Generator {
+	return &Generator{series: series, versionLock: versionLock, resolver: resolver, tenantOwned: tenantOwned}
+}
+
+// TenantInstanceName returns the Kubernetes object name for one tenant's
+// instance of a tenant-owned service. Both the Deployment and the
+// ServiceAccount carry it, and the kernel delegate for that instance points its
+// kubernetes_service_accounts matcher at it.
+func TenantInstanceName(svc, tenant string) string {
+	return svc + "-" + tenant
 }
 
 // Generate produces the full schematic Helm chart for the given config.
@@ -787,11 +802,25 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// gets. An app service that needs more than this (a PVC, extra ports, a
 	// Hazelcast member) is not expressible yet and should be added deliberately
 	// rather than guessed at.
+	// A tenant-owned app service (registry.json's (spec.service).tenant_owned)
+	// is deployed once per tenant instead of once for the cluster: object names
+	// become "<svc>-<tenant>" so N tenants do not collapse into one Deployment.
+	// The image is still the one service's image — the instances differ only in
+	// identity, which kernel derives from the delegate, never from config here.
 	for _, name := range appServiceNames(topo) {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+		base := serviceSpec{
 			Name: name, Replicas: topo.GetAppServices()[name], Image: g.imageRef(name),
 			HasGRPC: true, ListenPort: 8443,
-			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
+		if !g.tenantOwned[name] {
+			svcs = append(svcs, withKernelServiceAuth(base))
+			continue
+		}
+		for _, tenant := range cfg.GetTenants() {
+			inst := base
+			inst.Name = TenantInstanceName(name, tenant)
+			svcs = append(svcs, withKernelServiceAuth(inst))
+		}
 	}
 
 	// SAML bridge — disabled by default.
@@ -889,6 +918,19 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 // so that templates referencing .Values.kernel0.config don't fail with a nil-pointer
 // error when no runtime override is provided (e.g. during a dry-run).
 type perReplicaConfigKey = string
+
+// valuesRef renders a hyphen-safe values.yaml lookup, e.g.
+//
+//	{{ index .Values "docmanager-acme" "config" }}
+//
+// A tenant-owned service's Kubernetes objects are named "<svc>-<tenant>", and
+// the matching values key carries that dash. `.Values.docmanager-acme.config`
+// does not parse — a Go template reads the dash as an operator, not as part of
+// the key — so every per-service values lookup goes through index. Dashless
+// names render identically either way.
+func valuesRef(key, field string) string {
+	return fmt.Sprintf("index .Values %q %q", key, field)
+}
 
 // configValueKey returns the values.yaml key holding replica i's config.
 //
@@ -1293,10 +1335,10 @@ metadata:
   name: %s-config
   namespace: {{ .Values.global.namespace }}
 %s%s:
-  config.yaml: {{ .Values.%s.config | quote }}
-`, kind, name, typeLine, dataField, configValueKey)
+  config.yaml: {{ %s | quote }}
+`, kind, name, typeLine, dataField, valuesRef(configValueKey, "config"))
 		if svc.HasServiceConfig {
-			cmData += fmt.Sprintf("  service.yaml: {{ .Values.%s.serviceConfig | quote }}\n", configValueKey)
+			cmData += fmt.Sprintf("  service.yaml: {{ %s | quote }}\n", valuesRef(configValueKey, "serviceConfig"))
 		}
 		charts.Files[fmt.Sprintf("templates/%s/%s-%d.yaml", svc.Name, fileStem, i)] = []byte(cmData)
 
@@ -1311,8 +1353,8 @@ spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: {{ .Values.%s.storage }}
-`, name, svc.Name))
+      storage: {{ %s }}
+`, name, valuesRef(svc.Name, "storage")))
 		}
 
 		// Service
@@ -1496,8 +1538,8 @@ spec:
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {
-			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ .Values.%s.config | sha256sum | quote }}
-`, i, configValueKey(svc, i)))
+			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ %s | sha256sum | quote }}
+`, i, valuesRef(configValueKey(svc, i), "config")))
 		}
 		ssBuf.WriteString(`    spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
@@ -1530,7 +1572,7 @@ spec:
 		ssBuf.WriteString(spreadAcrossNodesLines(svc))
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
-        image: {{ .Values.%s.image }}
+        image: {{ %s }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         env:
 %s        - name: NODE_NAME
@@ -1541,7 +1583,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, svc.Name, svc.Name, bootstrapEnv))
+`, svc.Name, valuesRef(svc.Name, "image"), bootstrapEnv))
 		if jo := javaOptsEnv(svc); jo != "" {
 			ssBuf.WriteString(jo)
 		}
@@ -1605,8 +1647,8 @@ spec:
       accessModes: [ReadWriteOnce]
       resources:
         requests:
-          storage: {{ .Values.%s.storage }}
-`, svc.Name))
+          storage: {{ %s }}
+`, valuesRef(svc.Name, "storage")))
 		}
 		charts.Files[fmt.Sprintf("templates/%s/statefulset.yaml", svc.Name)] = ssBuf.Bytes()
 	} else {
@@ -1644,11 +1686,11 @@ spec:
         app: %s
         {{- include "schematic.labels" . | nindent 8 }}
       annotations:
-        checksum/config: {{ .Values.%s.config | sha256sum | quote }}
-`, name, strategy, name, name, svc.Name))
+        checksum/config: {{ %s | sha256sum | quote }}
+`, name, strategy, name, name, valuesRef(svc.Name, "config")))
 			if svc.HasServiceConfig {
-				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ .Values.%s.serviceConfig | sha256sum | quote }}
-`, svc.Name))
+				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ %s | sha256sum | quote }}
+`, valuesRef(svc.Name, "serviceConfig")))
 			}
 			deployBuf.WriteString(fmt.Sprintf(`    spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
@@ -1656,7 +1698,7 @@ spec:
       hostname: %s
 %s%s      containers:
       - name: %s
-        image: {{ .Values.%s.image }}
+        image: {{ %s }}
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         env:
         - name: BOOTSTRAP_CONFIG
@@ -1669,7 +1711,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, podServiceAccountLines(svc), name, archTolerationLines()+spreadAcrossNodesLines(svc), pvcFsGroupLines(svc), name, svc.Name))
+`, podServiceAccountLines(svc), name, archTolerationLines()+spreadAcrossNodesLines(svc), pvcFsGroupLines(svc), name, valuesRef(svc.Name, "image")))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}

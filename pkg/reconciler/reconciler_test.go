@@ -315,7 +315,7 @@ func TestPruneStaleDeploymentsSelectsTheChartsManagedByLabel(t *testing.T) {
 			Namespace: "schematic",
 			Topology:  &protoOperator.Topology{KernelNodes: 1, GatewayNodes: 1},
 		},
-		generator: helm.New("test", "1.2", nil),
+		generator: helm.New("test", "1.2", nil, nil),
 		client:    cl,
 		log:       zap.NewNop(),
 	}

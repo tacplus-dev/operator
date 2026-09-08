@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -323,17 +324,18 @@ func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 		t.Fatalf("values.yaml unexpectedly contains kernel1 for a 1-node topology\n--- values.yaml ---\n%s", values)
 	}
 
-	// secret-0.yaml (kernel's config holds key material) must reference
-	// .Values.kernel0.config, not .Values.kernel.config.
+	// secret-0.yaml (kernel's config holds key material) must reference the
+	// kernel0 config value, not kernel's. Values lookups render as
+	// `index .Values "<key>" "config"` so that hyphenated per-tenant keys parse.
 	cm := chartFile(t, charts, "templates/kernel/secret-0.yaml")
-	if !strings.Contains(cm, ".Values.kernel0.config") {
-		t.Fatalf("kernel secret-0 must reference .Values.kernel0.config\n--- secret ---\n%s", cm)
+	if !strings.Contains(cm, `index .Values "kernel0" "config"`) {
+		t.Fatalf("kernel secret-0 must reference the kernel0 config value\n--- secret ---\n%s", cm)
 	}
 
-	// statefulset.yaml must checksum .Values.kernel0.config in its annotations.
+	// statefulset.yaml must checksum the kernel0 config value in its annotations.
 	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
-	if !strings.Contains(ss, ".Values.kernel0.config") {
-		t.Fatalf("kernel statefulset must reference .Values.kernel0.config\n--- statefulset ---\n%s", ss)
+	if !strings.Contains(ss, `index .Values "kernel0" "config"`) {
+		t.Fatalf("kernel statefulset must reference the kernel0 config value\n--- statefulset ---\n%s", ss)
 	}
 }
 
@@ -362,15 +364,15 @@ func TestStatefulServiceWithoutPerReplicaConfigUsesTheSharedKey(t *testing.T) {
 
 	for i := range 3 {
 		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum/configmap-%d.yaml", i))
-		if !strings.Contains(cm, ".Values.stratum.config") {
-			t.Errorf("stratum configmap-%d must reference the shared .Values.stratum.config\n--- configmap ---\n%s", i, cm)
+		if !strings.Contains(cm, `index .Values "stratum" "config"`) {
+			t.Errorf("stratum configmap-%d must reference the shared stratum config value\n--- configmap ---\n%s", i, cm)
 		}
-		if strings.Contains(cm, fmt.Sprintf(".Values.stratum%d.config", i)) {
-			t.Errorf("stratum configmap-%d references .Values.stratum%d.config, which nothing populates", i, i)
+		if strings.Contains(cm, fmt.Sprintf(`index .Values "stratum%d" "config"`, i)) {
+			t.Errorf("stratum configmap-%d references the stratum%d config value, which nothing populates", i, i)
 		}
 		// The StatefulSet's checksum annotation must name the same key.
-		if strings.Contains(ss, fmt.Sprintf(".Values.stratum%d.config", i)) {
-			t.Errorf("stratum statefulset checksum references .Values.stratum%d.config, which nothing populates\n--- statefulset ---\n%s", i, ss)
+		if strings.Contains(ss, fmt.Sprintf(`index .Values "stratum%d" "config"`, i)) {
+			t.Errorf("stratum statefulset checksum references the stratum%d config value, which nothing populates\n--- statefulset ---\n%s", i, ss)
 		}
 	}
 
@@ -447,7 +449,14 @@ func TestStratumRendersBothHazelcastClusters(t *testing.T) {
 
 func generateTestChart(t *testing.T, cfg *protoOperator.Config) *Charts {
 	t.Helper()
-	charts, err := New("test", "1.2", nil).Generate(cfg, 1)
+	return generateTestChartWithTenantOwned(t, cfg, nil)
+}
+
+// generateTestChartWithTenantOwned is generateTestChart for a fleet where some
+// services carry registry.json's (spec.service).tenant_owned annotation.
+func generateTestChartWithTenantOwned(t *testing.T, cfg *protoOperator.Config, tenantOwned map[string]bool) *Charts {
+	t.Helper()
+	charts, err := New("test", "1.2", nil, tenantOwned).Generate(cfg, 1)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -886,7 +895,7 @@ func TestWriteToDiskRemovesSupersededConfigMapTemplate(t *testing.T) {
 		Namespace: "schematic",
 		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	})
-	if err := New("test", "1.2", nil).WriteToDisk(charts, dir); err != nil {
+	if err := New("test", "1.2", nil, nil).WriteToDisk(charts, dir); err != nil {
 		t.Fatalf("WriteToDisk() error = %v", err)
 	}
 
@@ -964,7 +973,7 @@ func TestWriteToDiskWritesChartFilesPrivate(t *testing.T) {
 		t.Fatal("generated chart has no templates/kernel/secret-0.yaml — test would not cover key material")
 	}
 
-	if err := New("test", "1.2", nil).WriteToDisk(charts, dir); err != nil {
+	if err := New("test", "1.2", nil, nil).WriteToDisk(charts, dir); err != nil {
 		t.Fatalf("WriteToDisk() error = %v", err)
 	}
 
@@ -978,4 +987,120 @@ func TestWriteToDiskWritesChartFilesPrivate(t *testing.T) {
 			t.Errorf("%s mode = %#o, want 0600 (the chart tree carries the registry token and kernel's private keys)", relPath, got)
 		}
 	}
+}
+
+// TestTenantOwnedServiceRendersOneWorkloadPerTenant is the chart half of goal A
+// item 4: a service registry.json marks (spec.service).tenant_owned gets one
+// Deployment and one ServiceAccount per tenant, named "<svc>-<tenant>", instead
+// of one shared instance for the whole cluster.
+func TestTenantOwnedServiceRendersOneWorkloadPerTenant(t *testing.T) {
+	charts := generateTestChartWithTenantOwned(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Tenants:   []string{"acme", "beta"},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"docmanager": 1, "tasks": 1},
+		},
+	}, map[string]bool{"docmanager": true})
+
+	// The shared service the cluster also runs is untouched: still one instance
+	// under its bare name, and no per-tenant object anywhere.
+	if _, ok := charts.Files["templates/tasks/deployment.yaml"]; !ok {
+		t.Fatalf("shared app service tasks lost its deployment; files: %v", chartFileNames(charts))
+	}
+	for _, tenant := range []string{"acme", "beta"} {
+		if _, ok := charts.Files[fmt.Sprintf("templates/tasks-%s/deployment.yaml", tenant)]; ok {
+			t.Errorf("tasks is not tenant_owned but got a per-tenant deployment for %q", tenant)
+		}
+	}
+
+	// The tenant-owned service is deployed once per tenant, and NOT once under
+	// its bare name.
+	if _, ok := charts.Files["templates/docmanager/deployment.yaml"]; ok {
+		t.Errorf("tenant-owned docmanager still rendered a shared deployment; the tenants collapsed into one")
+	}
+	for _, tenant := range []string{"acme", "beta"} {
+		name := "docmanager-" + tenant
+
+		dep := chartFile(t, charts, fmt.Sprintf("templates/%s/deployment.yaml", name))
+		if !strings.Contains(dep, "name: "+name+"0") {
+			t.Errorf("%s deployment is not named %s0\n--- deployment ---\n%s", name, name, dep)
+		}
+		// It runs as its own ServiceAccount — the one the kernel delegate for
+		// (docmanager, /tenants/<tenant>) matches on.
+		if !strings.Contains(dep, "serviceAccountName: "+name) {
+			t.Errorf("%s deployment does not run as service account %q\n--- deployment ---\n%s", name, name, dep)
+		}
+		// Same image for every tenant: instances differ in identity, not build.
+		if !strings.Contains(dep, fmt.Sprintf(`image: {{ index .Values "%s" "image" }}`, name)) {
+			t.Errorf("%s deployment image ref is not the hyphen-safe values lookup\n--- deployment ---\n%s", name, dep)
+		}
+
+		sa := chartFile(t, charts, fmt.Sprintf("templates/%s/serviceaccount.yaml", name))
+		if !strings.Contains(sa, "name: "+name) {
+			t.Errorf("%s serviceaccount is not named %q\n--- serviceaccount ---\n%s", name, name, sa)
+		}
+
+		// values.yaml must carry the per-instance key the templates look up,
+		// and the configmap must reach it through index (a dashed key is not
+		// addressable as .Values.docmanager-acme.config).
+		values := chartFile(t, charts, "values.yaml")
+		if !strings.Contains(values, name+":") {
+			t.Errorf("values.yaml missing the %q key\n--- values.yaml ---\n%s", name, values)
+		}
+		cm := chartFile(t, charts, fmt.Sprintf("templates/%s/configmap-0.yaml", name))
+		if !strings.Contains(cm, fmt.Sprintf(`index .Values "%s" "config"`, name)) {
+			t.Errorf("%s configmap does not reference its own config value\n--- configmap ---\n%s", name, cm)
+		}
+	}
+
+	// The reconciler prunes deployments not in this set; per-tenant workloads
+	// have to be in it or every reconcile would delete them.
+	names := New("test", "1.2", nil, map[string]bool{"docmanager": true}).ExpectedDeploymentNames(&protoOperator.Config{
+		Namespace: "schematic",
+		Tenants:   []string{"acme", "beta"},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"docmanager": 1, "tasks": 1},
+		},
+	}, 1)
+	for _, want := range []string{"docmanager-acme0", "docmanager-beta0", "tasks0"} {
+		if !names[want] {
+			t.Errorf("ExpectedDeploymentNames missing %q: %v", want, names)
+		}
+	}
+	if names["docmanager0"] {
+		t.Errorf("ExpectedDeploymentNames still expects the collapsed docmanager0: %v", names)
+	}
+}
+
+// TestTenantOwnedServiceWithNoTenantsRendersNothing pins the degenerate case: a
+// tenant-owned service in a cluster that lists no tenants has no instance to
+// deploy, rather than silently falling back to one shared instance.
+func TestTenantOwnedServiceWithNoTenantsRendersNothing(t *testing.T) {
+	charts := generateTestChartWithTenantOwned(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"docmanager": 1},
+		},
+	}, map[string]bool{"docmanager": true})
+
+	for path := range charts.Files {
+		if strings.HasPrefix(path, "templates/docmanager") {
+			t.Errorf("tenant-owned docmanager rendered %q with no tenants configured", path)
+		}
+	}
+}
+
+func chartFileNames(charts *Charts) []string {
+	names := make([]string, 0, len(charts.Files))
+	for name := range charts.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

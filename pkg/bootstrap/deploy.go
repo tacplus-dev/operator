@@ -239,6 +239,14 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	for _, name := range cfg.GetLlmCredentialServices() {
 		llmCredentialTargets[name] = true
 	}
+	// One config per DEPLOYED instance, not per service name: a tenant-owned
+	// service's pods are named "<svc>-<tenant>" and each looks its config up
+	// under that name. The config bytes are identical — nothing in a service's
+	// bootstrap config names its tenant; kernel derives that from the delegate.
+	tenantOwned, err := tenantOwnedServices()
+	if err != nil {
+		return nil, fmt.Errorf("reading tenant-owned services from registry: %w", err)
+	}
 	appConfigs := map[string][]byte{}
 	for _, name := range AppServiceNames(cfg) {
 		var extra func(map[string]any)
@@ -251,7 +259,9 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		if err != nil {
 			return nil, fmt.Errorf("building config for app service %q: %w", name, err)
 		}
-		appConfigs[name] = y
+		for _, inst := range serviceInstances(cfg, name, tenantOwned) {
+			appConfigs[inst.InstanceName()] = y
+		}
 	}
 
 	gatewayOpts := LoadGatewayOptions(filepath.Join(cfgDir, "services"))

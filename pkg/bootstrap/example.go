@@ -51,7 +51,13 @@ type TLSSourceConfig struct {
 
 // SourceDelegate represents a delegate in the source config format.
 type SourceDelegate struct {
-	Name                      string                           `yaml:"name"`
+	Name string `yaml:"name"`
+	// TenantNamespace is the canonical authorization namespace of the tenant
+	// this delegate's instance belongs to, e.g. "/tenants/acme". Empty — every
+	// delegate a shared service gets — means the /system root. Together with
+	// Name it is the delegate's key: N tenants' instances of one tenant-owned
+	// service all carry the same Name and differ only here.
+	TenantNamespace           string                           `yaml:"tenant_namespace,omitempty"`
 	AuthorizedServices        []string                         `yaml:"authorized_services,omitempty"`
 	KubernetesServiceAccounts []SourceKubernetesServiceAccount `yaml:"kubernetes_service_accounts,omitempty"`
 	CustomClaims              map[string]string                `yaml:"custom_claims,omitempty"`
@@ -295,12 +301,14 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		delegate := &protoKernel.Delegate{
 			Name:               sd.Name,
 			AuthorizedServices: authSvcs,
+			TenantNamespace:    sd.TenantNamespace,
 		}
 		for _, sa := range sd.KubernetesServiceAccounts {
 			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)
 		}
 		if isKernelAuthenticatedService(sd.Name) {
-			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, delegateServiceAccountName(sd.Name))
+			inst := ServiceInstance{Service: sd.Name, Tenant: tenantFromNamespace(sd.TenantNamespace)}
+			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, delegateServiceAccountName(inst))
 		}
 		delegates = append(delegates, delegate)
 	}
@@ -500,6 +508,14 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 	})
 }
 
+// delegateKey is the identity of a kernel delegate: its name plus the
+// authorization namespace of the tenant it belongs to. Shared services carry an
+// empty namespace, which kernel reads as /system.
+type delegateKey struct {
+	name            string
+	tenantNamespace string
+}
+
 // EnsureServiceDelegates ensures kernel.yaml contains a delegate entry for
 // every deployed kernel-authenticated service. Each delegate's authorized_services
 // is derived from the tacplus registry dependency graph: boundary tags (state/config
@@ -526,17 +542,25 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		return fmt.Errorf("loading service dependencies: %w", err)
 	}
 
-	existing := make(map[string]int, len(kernelCfg.Delegates))
+	// Keyed by (name, tenant_namespace), not by name alone: a tenant-owned
+	// service has one delegate per tenant, all sharing the service's name and
+	// differing only in tenant_namespace (kernel's item-2 keying). Keying by
+	// name would collapse every tenant's delegate into the first one.
+	existing := make(map[delegateKey]int, len(kernelCfg.Delegates))
 	for i, d := range kernelCfg.Delegates {
-		existing[d.Name] = i
+		existing[delegateKey{d.Name, d.TenantNamespace}] = i
 	}
 
-	deployed := DeployedKernelAuthServices(cfg)
+	deployed, err := DeployedServiceInstances(cfg)
+	if err != nil {
+		return fmt.Errorf("resolving deployed service instances: %w", err)
+	}
 	changed := false
 
-	for _, svc := range deployed {
+	for _, inst := range deployed {
+		svc := inst.Service
 		required := sd.authorizedServicesFor(svc)
-		if idx, ok := existing[svc]; ok {
+		if idx, ok := existing[delegateKey{svc, inst.TenantNamespace()}]; ok {
 			// Delegate exists — ensure all required services are authorized.
 			have := make(map[string]bool, len(kernelCfg.Delegates[idx].AuthorizedServices))
 			for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
@@ -562,7 +586,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			// delegate stays pinned to whatever namespace (or the "schematic"
 			// fallback) was in effect the first time its matcher was written.
 			wantNamespace := operatorKubernetesNamespace(cfg)
-			wantServiceAccount := delegateServiceAccountName(svc)
+			wantServiceAccount := delegateServiceAccountName(inst)
 			hasKSA := false
 			for i, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
 				if k.KubernetesServiceAccount != wantServiceAccount {
@@ -591,12 +615,14 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		// SERVICE_NAME_ANY.
 		kernelCfg.Delegates = append(kernelCfg.Delegates, SourceDelegate{
 			Name:               svc,
+			TenantNamespace:    inst.TenantNamespace(),
 			AuthorizedServices: required,
 			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
 				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
-				KubernetesServiceAccount: delegateServiceAccountName(svc),
+				KubernetesServiceAccount: delegateServiceAccountName(inst),
 			}},
 		})
+		existing[delegateKey{svc, inst.TenantNamespace()}] = len(kernelCfg.Delegates) - 1
 		changed = true
 	}
 

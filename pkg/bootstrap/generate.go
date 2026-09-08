@@ -89,7 +89,11 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		outDir = "charts"
 	}
 
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil)
+	tenantOwned, err := TenantOwnedServices()
+	if err != nil {
+		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err
@@ -183,7 +187,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 		ns = "schematic"
 	}
 
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil)
+	tenantOwned, err := TenantOwnedServices()
+	if err != nil {
+		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err

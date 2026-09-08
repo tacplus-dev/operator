@@ -2,8 +2,10 @@ package bootstrap
 
 import (
 	"sort"
+	"strings"
 
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 )
 
 var kernelAuthenticatedServiceNames = map[string]bool{
@@ -83,16 +85,93 @@ var alwaysOnKernelAuthServices = []string{
 // runs as, from the operator's own chart (helm/templates/serviceaccount.yaml).
 const operatorServiceAccountName = "schematic-operator"
 
+// ServiceInstance is one deployed instance of a kernel-authenticated service.
+//
+// A shared service has exactly one instance, with an empty Tenant. A service
+// registry.json marks (spec.service).tenant_owned has one instance per entry in
+// Config.tenants — the operator runs a separate pod, ServiceAccount and kernel
+// delegate for each, so N tenants never collapse into one.
+type ServiceInstance struct {
+	// Service is the service name, e.g. "docmanager". It is also the kernel
+	// delegate's name for every tenant: the delegate name is the service path
+	// that auth_services patterns match, so it must not carry the tenant
+	// (kernel keys delegates by the (name, tenant_namespace) pair instead).
+	Service string
+	// Tenant is the bare tenant name, e.g. "acme". Empty for a shared service.
+	Tenant string
+}
+
+// InstanceName is the Kubernetes Deployment/ServiceAccount name for this
+// instance: the service name for a shared service, "<svc>-<tenant>" otherwise.
+func (si ServiceInstance) InstanceName() string {
+	if si.Tenant == "" {
+		return si.Service
+	}
+	return helm.TenantInstanceName(si.Service, si.Tenant)
+}
+
+// TenantNamespace is the canonical authorization namespace written to the
+// kernel delegate's tenant_namespace field. Empty for a shared service, which
+// kernel reads as the /system root.
+func (si ServiceInstance) TenantNamespace() string {
+	if si.Tenant == "" {
+		return ""
+	}
+	return tenantNamespacePrefix + si.Tenant
+}
+
+const tenantNamespacePrefix = "/tenants/"
+
+// tenantFromNamespace turns a canonical "/tenants/<name>" authorization
+// namespace back into the bare tenant name. Empty (the shared /system case)
+// stays empty.
+func tenantFromNamespace(ns string) string {
+	return strings.TrimPrefix(ns, tenantNamespacePrefix)
+}
+
+// DeployedServiceInstances returns every (service, tenant) instance the
+// operator deploys for cfg, in the order DeployedKernelAuthServices lists the
+// services and Config.tenants lists the tenants.
+//
+// Whether a service is tenant-owned comes from the registry.json annotation
+// alone — there is deliberately no operator-side allowlist that could disagree
+// with it.
+func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, error) {
+	tenantOwned, err := tenantOwnedServices()
+	if err != nil {
+		return nil, err
+	}
+	var out []ServiceInstance
+	for _, svc := range DeployedKernelAuthServices(cfg) {
+		out = append(out, serviceInstances(cfg, svc, tenantOwned)...)
+	}
+	return out, nil
+}
+
+// serviceInstances expands one service name into the instances the operator
+// deploys for it: exactly one for a shared service, one per Config.tenants
+// entry for a tenant-owned one.
+func serviceInstances(cfg *protoOperator.Config, svc string, tenantOwned map[string]bool) []ServiceInstance {
+	if !tenantOwned[svc] {
+		return []ServiceInstance{{Service: svc}}
+	}
+	out := make([]ServiceInstance, 0, len(cfg.GetTenants()))
+	for _, tenant := range cfg.GetTenants() {
+		out = append(out, ServiceInstance{Service: svc, Tenant: tenant})
+	}
+	return out
+}
+
 // delegateServiceAccountName returns the Kubernetes ServiceAccount that
-// authenticates as svc. For every service the operator deploys this is the
-// service's own name, because the generated chart names the ServiceAccount
-// after the service. The operator is the exception: its own chart is
+// authenticates as si. For every service the operator deploys this is the
+// instance's own name, because the generated chart names the ServiceAccount
+// after the workload. The operator is the exception: its own chart is
 // hand-written and names its ServiceAccount "schematic-operator".
-func delegateServiceAccountName(svc string) string {
-	if svc == "operator" {
+func delegateServiceAccountName(si ServiceInstance) string {
+	if si.Service == "operator" {
 		return operatorServiceAccountName
 	}
-	return svc
+	return si.InstanceName()
 }
 
 // DeployedKernelAuthServices returns the sorted list of kernel-authenticated
