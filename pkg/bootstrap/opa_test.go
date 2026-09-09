@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/grants"
+	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/filesystem"
 )
 
 func TestLoadOPAPolicyIsStable(t *testing.T) {
@@ -101,7 +103,7 @@ func TestDefaultOPAPolicyUsesGeneratedGrantNames(t *testing.T) {
 // is the only answer for a token that asserts nothing, and every rule that
 // produces roles must read the groups claim to do it.
 func TestDefaultIdpPolicyFailsClosedWithoutGroupsClaim(t *testing.T) {
-	bundle := DefaultOPABundle([]string{"https://idp.example.com"})
+	bundle := DefaultOPABundle([]string{"https://idp.example.com"}, nil)
 	var claims string
 	for _, sub := range bundle.GetDirectories() {
 		if sub.GetName() != "idp" {
@@ -143,4 +145,134 @@ func TestDefaultIdpPolicyFailsClosedWithoutGroupsClaim(t *testing.T) {
 	if rules == 0 {
 		t.Error("idp/claims.rego has no roles rule at all")
 	}
+}
+
+// The generated policy must be able to name a tenant for a configured IDP.
+// Kernel refuses to mint a user token whose namespace the policy did not
+// supply, so without this rule every login in an operator-bootstrapped cluster
+// fails; before the fail-closed kernel change, the same silence minted every
+// IdP user at the cluster ROOT instead. Both halves have to hold together.
+func TestTenantNamespaceRuleForConfiguredIdp(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+		"providers:\n"+
+			"  - enable: true\n"+
+			"    issuer_url: https://idp.acme.example\n"+
+			"    client_id: acme-web\n"+
+			"    client_secret: s\n")
+	// beta shares nothing with acme, and carries a disabled provider that must
+	// not reach the policy.
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
+		"providers:\n"+
+			"  - enable: true\n"+
+			"    issuer_url: https://idp.beta.example\n"+
+			"    client_id: beta-web\n"+
+			"    client_secret: s\n"+
+			"  - enable: false\n"+
+			"    issuer_url: https://old.beta.example\n"+
+			"    client_id: retired\n"+
+			"    client_secret: s\n")
+
+	idps, err := LoadTenantIdps(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantIdps: %v", err)
+	}
+	want := []TenantIdp{
+		{IssuerURL: "https://idp.acme.example", ClientID: "acme-web", TenantNamespace: "/tenants/acme"},
+		{IssuerURL: "https://idp.beta.example", ClientID: "beta-web", TenantNamespace: "/tenants/beta"},
+	}
+	if !reflect.DeepEqual(idps, want) {
+		t.Fatalf("LoadTenantIdps = %+v, want %+v", idps, want)
+	}
+
+	rego := bundleFile(t, DefaultOPABundle(nil, idps), "tenants", "namespace.rego")
+
+	if !strings.Contains(rego, `default namespace := ""`) {
+		t.Error("tenants/namespace.rego does not default the namespace to empty")
+	}
+	if strings.Contains(rego, `namespace := "/"`) {
+		t.Error("tenants/namespace.rego falls back to the cluster root")
+	}
+	for _, want := range []string{
+		"namespace := \"/tenants/acme\" if {\n\tinput.claims.origin_iss == \"https://idp.acme.example\"\n\taud_matches(\"acme-web\")\n}",
+		"namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://idp.beta.example\"\n\taud_matches(\"beta-web\")\n}",
+	} {
+		if !strings.Contains(rego, want) {
+			t.Errorf("tenants/namespace.rego is missing rule:\n%s\n\ngot:\n%s", want, rego)
+		}
+	}
+	if strings.Contains(rego, "retired") {
+		t.Error("a disabled provider reached the generated policy")
+	}
+
+	// The eval rules must actually read it, or the rule above is dead weight.
+	main := bundleFile(t, DefaultOPABundle(nil, idps), "", "main.rego")
+	if !strings.Contains(main, "import data.entitlements.tenants") ||
+		!strings.Contains(main, `"namespace": tenants.namespace`) {
+		t.Errorf("main.rego does not put the tenant namespace in the eval result:\n%s", main)
+	}
+}
+
+// An issuer shared by two tenants gets exact (issuer, client_id) rules only.
+// The audience-less issuer shortcut would otherwise have to pick one of them.
+func TestSharedIssuerGetsNoIssuerOnlyRule(t *testing.T) {
+	rego := bundleFile(t, DefaultOPABundle(nil, []TenantIdp{
+		{IssuerURL: "https://shared.example", ClientID: "a", TenantNamespace: "/tenants/acme"},
+		{IssuerURL: "https://shared.example", ClientID: "b", TenantNamespace: "/tenants/beta"},
+		{IssuerURL: "https://solo.example", ClientID: "c", TenantNamespace: "/tenants/acme"},
+	}), "tenants", "namespace.rego")
+
+	if strings.Contains(rego, "namespace := \"/tenants/acme\" if {\n\tinput.claims.origin_iss == \"https://shared.example\"\n}") ||
+		strings.Contains(rego, "namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://shared.example\"\n}") {
+		t.Errorf("an issuer serving two tenants got an issuer-only rule:\n%s", rego)
+	}
+	if !strings.Contains(rego, "namespace := \"/tenants/acme\" if {\n\tinput.claims.origin_iss == \"https://solo.example\"\n}") {
+		t.Errorf("an issuer serving one tenant got no issuer-only rule:\n%s", rego)
+	}
+}
+
+// Two tenants claiming the same (issuer, client_id) would render a policy OPA
+// rejects at eval time ("complete rules must not produce multiple outputs").
+func TestDuplicateIdpKeyAcrossTenantsIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	body := "providers:\n  - enable: true\n    issuer_url: https://idp.example\n    client_id: shared\n    client_secret: s\n"
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"), body)
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"), body)
+
+	if _, err := LoadTenantIdps(dir); err == nil {
+		t.Fatal("two tenants claiming one IDP key was accepted")
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bundleFile returns the content of subdir/name in the bundle ("" subdir = root).
+func bundleFile(t *testing.T, bundle *protoFilesystem.Directory, subdir, name string) string {
+	t.Helper()
+	files := bundle.GetFiles()
+	if subdir != "" {
+		files = nil
+		for _, d := range bundle.GetDirectories() {
+			if d.GetName() == subdir {
+				files = d.GetFiles()
+			}
+		}
+	}
+	for _, f := range files {
+		if f.GetName() == name {
+			return string(f.GetContent())
+		}
+	}
+	t.Fatalf("generated bundle has no %s/%s", subdir, name)
+	return ""
 }

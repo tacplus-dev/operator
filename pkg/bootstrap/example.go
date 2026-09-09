@@ -250,13 +250,21 @@ func InitOPA(cfgDir string) error {
 		fmt.Printf("  Add providers to services/oauth.yaml when oauth is configured and re-run init-opa.\n")
 	}
 
-	if err := WriteDefaultOPAPolicy(opaDir, issuers); err != nil {
+	tenantIdps, err := LoadTenantIdps(cfgDir)
+	if err != nil {
+		return fmt.Errorf("loading tenant IDP bindings: %w", err)
+	}
+
+	if err := WriteDefaultOPAPolicy(opaDir, issuers, tenantIdps); err != nil {
 		return fmt.Errorf("writing OPA policy: %w", err)
 	}
 
 	fmt.Printf("Generated OPA entitlements policy: %s/\n", opaDir)
 	for _, iss := range issuers {
 		fmt.Printf("  trusted issuer: %s\n", iss)
+	}
+	for _, idp := range tenantIdps {
+		fmt.Printf("  tenant IDP: (%s, %s) -> %s\n", idp.IssuerURL, idp.ClientID, idp.TenantNamespace)
 	}
 	fmt.Printf("\nEdit services/opa/idp/claims.rego to customize IDP claim → role mapping.\n")
 	fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
@@ -417,7 +425,11 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 						}
 					}
 				}
-				opaBundle := DefaultOPABundle(idpIssuers)
+				tenantIdps, err := LoadTenantIdps(cfgDir)
+				if err != nil {
+					return fmt.Errorf("loading tenant IDP bindings: %w", err)
+				}
+				opaBundle := DefaultOPABundle(idpIssuers, tenantIdps)
 				cfg.EntitlementsPolicy = BuildOpaPolicy("data.entitlements.eval", opaBundle)
 			}
 			if policy, err := LoadOptionalOPAPolicy(ProxyPolicyDir(cfgDir), "data.proxypolicy.eval"); err != nil {

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
 	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/filesystem"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/opalib"
 )
@@ -48,8 +50,9 @@ func BuildOpaPolicy(entryPoint string, bundle *protoFilesystem.Directory) *proto
 }
 
 // DefaultOPABundle returns a filesystem.Directory containing a default
-// entitlements policy seeded with trusted_issuer rules for each idpIssuer.
-func DefaultOPABundle(idpIssuers []string) *protoFilesystem.Directory {
+// entitlements policy seeded with trusted_issuer rules for each idpIssuer and
+// (issuer, client_id) → tenant namespace rules for each tenantIdp.
+func DefaultOPABundle(idpIssuers []string, tenantIdps []TenantIdp) *protoFilesystem.Directory {
 	var rules strings.Builder
 	for _, iss := range idpIssuers {
 		fmt.Fprintf(&rules, "trusted_issuer if {\n\tinput.claims.origin_iss == %q\n}\n", iss)
@@ -83,13 +86,134 @@ func DefaultOPABundle(idpIssuers []string) *protoFilesystem.Directory {
 					{Name: "static.rego", Permission: perm644, Content: []byte(defaultGrantsRego)},
 				},
 			},
+			{
+				// tenants/namespace.rego — (IDP issuer, client_id) → tenant
+				// authorization namespace. Kernel stamps the minted user token
+				// with what this emits and refuses the mint when it emits
+				// nothing, so an unlisted issuer cannot obtain a token.
+				Name:       "tenants",
+				Permission: perm755,
+				Files: []*protoFilesystem.File{
+					{Name: "namespace.rego", Permission: perm644, Content: []byte(tenantNamespaceRego(tenantIdps))},
+				},
+			},
 		},
 	}
 }
 
+// TenantIdp binds one tenant-owned IDP provider to the tenant's authorization
+// namespace. Per oauth.OAuthProvider, the (issuer_url, client_id) pair
+// uniquely identifies the tenant — no claim matching is involved.
+type TenantIdp struct {
+	IssuerURL       string
+	ClientID        string
+	TenantNamespace string
+}
+
+// TenantConfigDir returns the directory holding one tenant's config slices
+// within a config dir.
+func TenantConfigDir(cfgDir, tenant string) string {
+	return filepath.Join(cfgDir, "tenants", tenant)
+}
+
+// LoadTenantIdps reads tenants/<name>/oauth.yaml — an oauth.OAuthTenantConfig —
+// for every tenant named in operator.yaml, and returns the bindings its enabled
+// providers declare. A tenant with no file contributes nothing: its users then
+// resolve to no namespace, and kernel refuses to mint for them. That is the
+// intended fail-closed behaviour, not a gap to paper over.
+func LoadTenantIdps(cfgDir string) ([]TenantIdp, error) {
+	cfg, err := LoadConfig(cfgDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Keyed by (issuer_url, client_id) — the pair the proto says identifies the
+	// tenant. Two tenants claiming the same pair is a misconfiguration that
+	// would render a policy OPA rejects at eval time, so reject it here.
+	seen := map[[2]string]string{}
+	var out []TenantIdp
+	for _, tenant := range cfg.GetTenants() {
+		path := filepath.Join(TenantConfigDir(cfgDir, tenant), "oauth.yaml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("reading %s: %w", path, err)
+		}
+		tc, err := protoOauth.OAuthTenantConfigFromBytes(data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", path, err)
+		}
+		ns := tenantNamespacePrefix + tenant
+		for _, p := range tc.GetProviders() {
+			if !p.GetEnable() || p.GetIssuerUrl() == "" || p.GetClientId() == "" {
+				continue
+			}
+			key := [2]string{p.GetIssuerUrl(), p.GetClientId()}
+			if prev, ok := seen[key]; ok {
+				if prev != ns {
+					return nil, fmt.Errorf("IDP (%s, %s) is claimed by both %s and %s",
+						key[0], key[1], prev, ns)
+				}
+				continue
+			}
+			seen[key] = ns
+			out = append(out, TenantIdp{IssuerURL: key[0], ClientID: key[1], TenantNamespace: ns})
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IssuerURL != out[j].IssuerURL {
+			return out[i].IssuerURL < out[j].IssuerURL
+		}
+		return out[i].ClientID < out[j].ClientID
+	})
+	return out, nil
+}
+
+// tenantNamespaceRego renders the entitlements.tenants policy: the
+// (issuer, client_id) → namespace table the eval rule reads.
+//
+// Two rule shapes are emitted per binding. The exact one matches issuer AND
+// audience. The issuer-only one is emitted only when that issuer names exactly
+// one tenant, because the claim set kernel forwards to OPA does not always
+// carry the audience (oauth's BrokerCliAuth re-auth path forwards sub, email,
+// origin_iss and groups only). An issuer shared by two tenants therefore gets
+// the exact rule alone, and a request that cannot prove its audience resolves
+// to no namespace rather than to an arbitrary one of them.
+func tenantNamespaceRego(idps []TenantIdp) string {
+	var b strings.Builder
+	b.WriteString(tenantNamespaceRegoHeader)
+
+	for _, idp := range idps {
+		fmt.Fprintf(&b, "\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n\taud_matches(%q)\n}\n",
+			idp.TenantNamespace, idp.IssuerURL, idp.ClientID)
+	}
+
+	byIssuer := map[string]map[string]bool{}
+	for _, idp := range idps {
+		if byIssuer[idp.IssuerURL] == nil {
+			byIssuer[idp.IssuerURL] = map[string]bool{}
+		}
+		byIssuer[idp.IssuerURL][idp.TenantNamespace] = true
+	}
+	for _, idp := range idps {
+		if len(byIssuer[idp.IssuerURL]) != 1 {
+			continue
+		}
+		delete(byIssuer, idp.IssuerURL)
+		fmt.Fprintf(&b, "\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n}\n",
+			idp.TenantNamespace, idp.IssuerURL)
+	}
+
+	b.WriteString(tenantNamespaceRegoFooter)
+	return b.String()
+}
+
 // WriteDefaultOPAPolicy writes the default OPA entitlements policy to disk.
-func WriteDefaultOPAPolicy(destDir string, idpIssuers []string) error {
-	return WriteOPABundle(DefaultOPABundle(idpIssuers), destDir)
+func WriteDefaultOPAPolicy(destDir string, idpIssuers []string, tenantIdps []TenantIdp) error {
+	return WriteOPABundle(DefaultOPABundle(idpIssuers, tenantIdps), destDir)
 }
 
 // LoadOPAPolicy reads an OPA policy directory from disk and returns an OpaPolicy proto.
@@ -126,6 +250,7 @@ package entitlements
 
 import data.entitlements.idp
 import data.entitlements.grants
+import data.entitlements.tenants
 
 default roles := set()
 roles := merged if {
@@ -134,6 +259,12 @@ roles := merged if {
 }
 
 default eval := {"token_entitlements": {}}
+
+# namespace is the tenant subtree the caller's IDP binds them to, resolved by
+# tenants/namespace.rego from the (issuer, client_id) pair. Kernel stamps the
+# minted user token with it and REFUSES the mint when it is absent or empty --
+# there is no fallback to the cluster root. An issuer this policy cannot name a
+# tenant for therefore cannot log in, which is the point.
 
 # The grants below name only services the platform actually ships. An earlier
 # version of this generator granted MCP_ANY, ANTHROPIC_ANY, GITHUB_ANY,
@@ -144,7 +275,7 @@ default eval := {"token_entitlements": {}}
 # the broken set. Keep this list and the shipped service set in step.
 
 # admin — full access, including kernel's administrative surface.
-eval := {"token_entitlements": {
+eval := {"namespace": tenants.namespace, "token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
 		"ECHO_ANY",
@@ -171,7 +302,7 @@ eval := {"token_entitlements": {
 # a TRAIT (testapp/proto/vservices/query.proto), so its grants are keyed on the
 # contract rather than on the service that hosts it. STRATUM_* is no longer in
 # the generated catalog at all, and the test below is what would have caught it.
-eval := {"token_entitlements": {
+eval := {"namespace": tenants.namespace, "token_entitlements": {
 	"grants": [
 		"SENTINEL_ANY",
 		"ECHO_ANY",
@@ -219,4 +350,35 @@ const defaultGrantsRego = `# Static role grants — not derived from IDP claims.
 package entitlements.grants
 
 default roles := set()
+`
+
+// tenantNamespaceRegoHeader/Footer bracket the generated (issuer, client_id) →
+// namespace rules.
+const tenantNamespaceRegoHeader = `# IDP (issuer, client_id) → tenant authorization namespace.
+# Generated from tenants/<name>/oauth.yaml (oauth.OAuthTenantConfig.providers);
+# the (issuer_url, client_id) pair uniquely identifies the tenant, so no claim
+# matching is involved.
+#
+# ` + "`default namespace := \"\"`" + ` is the answer for an issuer that is not
+# listed. Kernel refuses to mint a user token whose namespace the policy could
+# not name -- it does NOT fall back to the cluster root -- so an unknown issuer
+# authenticates against nothing.
+package entitlements.tenants
+
+default namespace := ""
+`
+
+const tenantNamespaceRegoFooter = `
+# aud is either a string or an array of strings in the JWT spec, and the oauth
+# broker forwards the IDP's ` + "`aud`" + ` claim as ` + "`origin_aud`" + `.
+aud_matches(client_id) if {
+	is_string(input.claims.origin_aud)
+	input.claims.origin_aud == client_id
+}
+
+aud_matches(client_id) if {
+	is_array(input.claims.origin_aud)
+	some a in input.claims.origin_aud
+	a == client_id
+}
 `
