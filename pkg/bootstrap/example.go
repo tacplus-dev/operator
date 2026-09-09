@@ -61,6 +61,13 @@ type SourceDelegate struct {
 	AuthorizedServices        []string                         `yaml:"authorized_services,omitempty"`
 	KubernetesServiceAccounts []SourceKubernetesServiceAccount `yaml:"kubernetes_service_accounts,omitempty"`
 	CustomClaims              map[string]string                `yaml:"custom_claims,omitempty"`
+	// AuthBrokerKinds are the classes of user-authentication proof this
+	// delegate may broker into kernel's MintUserToken, e.g. "idp". Empty —
+	// every delegate but an auth broker — means kernel refuses MintUserToken
+	// for it. Round-tripped rather than derived: without this field every
+	// rewrite of kernel.yaml below would silently strip a deployment's
+	// hand-added broker capability.
+	AuthBrokerKinds []string `yaml:"auth_broker_kinds,omitempty"`
 }
 
 // SourceKubernetesServiceAccount maps a Kubernetes service account to a
@@ -520,6 +527,27 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 	})
 }
 
+// idpAuthBrokerServices are the services that broker an IdP-validated human
+// login into kernel's MintUserToken. Kernel refuses MintUserToken for a
+// delegate whose auth_broker_kinds does not contain the request's kind, so
+// these two need the capability on creation or login fails closed. Only the
+// broker kind is set here — everything else about who may attest a login is
+// still kernel's Delegate record, not this list.
+var idpAuthBrokerServices = map[string]bool{
+	"oauth": true,
+	"saml":  true,
+}
+
+// authBrokerKindsFor returns the auth_broker_kinds a newly created delegate for
+// svc starts with. Nil for every service that is not an auth broker, which is
+// the fail-closed default.
+func authBrokerKindsFor(svc string) []string {
+	if idpAuthBrokerServices[svc] {
+		return []string{"idp"}
+	}
+	return nil
+}
+
 // delegateKey is the identity of a kernel delegate: its name plus the
 // authorization namespace of the tenant it belongs to. Shared services carry an
 // empty namespace, which kernel reads as /system.
@@ -633,6 +661,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
 				KubernetesServiceAccount: delegateServiceAccountName(inst),
 			}},
+			AuthBrokerKinds: authBrokerKindsFor(svc),
 		})
 		existing[delegateKey{svc, inst.TenantNamespace()}] = len(kernelCfg.Delegates) - 1
 		changed = true

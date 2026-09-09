@@ -297,14 +297,14 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
-			KernelNodes:      1,
-			SentinelNodes:    1,
-			EventbusNodes:    1,
-			GatewayNodes:     1,
-			OpaNodes:         1,
-			StratumNodes:     1,
-			OauthNodes:       1,
-			EchoNodes:        1,
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			EventbusNodes: 1,
+			GatewayNodes:  1,
+			OpaNodes:      1,
+			StratumNodes:  1,
+			OauthNodes:    1,
+			EchoNodes:     1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
 			Saml: true,
@@ -425,4 +425,85 @@ func TestEnsureServiceDelegatesAppServiceGetsBroker(t *testing.T) {
 		t.Fatalf("tasks delegate authorized_services %v missing eventbus", d.AuthorizedServices)
 	}
 	t.Fatal("tasks delegate not found")
+}
+
+// TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind verifies that a newly
+// created oauth/saml delegate declares AUTH_BROKER_KIND_IDP. Kernel's
+// MintUserToken refuses a delegate whose auth_broker_kinds does not contain the
+// request's kind, so a generated cluster whose broker delegate lacks it cannot
+// log anyone in.
+func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		want := []string(nil)
+		if d.Name == "oauth" || d.Name == "saml" {
+			want = []string{"idp"}
+		}
+		if len(d.AuthBrokerKinds) != len(want) {
+			t.Errorf("delegate %q auth_broker_kinds = %v, want %v",
+				d.Name, d.AuthBrokerKinds, want)
+			continue
+		}
+		for i := range want {
+			if d.AuthBrokerKinds[i] != want[i] {
+				t.Errorf("delegate %q auth_broker_kinds = %v, want %v",
+					d.Name, d.AuthBrokerKinds, want)
+				break
+			}
+		}
+	}
+}
+
+// TestEnsureServiceDelegatesPreservesAuthBrokerKinds pins the round trip: a
+// deployment that hand-added auth_broker_kinds to a delegate must still have it
+// after the operator rewrites kernel.yaml. Before SourceDelegate carried the
+// field, every rewrite silently dropped it and login broke on the next
+// 'generate'.
+func TestEnsureServiceDelegatesPreservesAuthBrokerKinds(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, []SourceDelegate{{
+		Name:               "acmebroker",
+		AuthorizedServices: []string{"kernel"},
+		AuthBrokerKinds:    []string{"idp"},
+	}})
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+		},
+	}
+
+	// Runs twice: the first call rewrites the file (adding platform delegates),
+	// the second is the idempotent no-op path.
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name != "acmebroker" {
+			continue
+		}
+		if len(d.AuthBrokerKinds) != 1 || d.AuthBrokerKinds[0] != "idp" {
+			t.Fatalf("acmebroker auth_broker_kinds = %v, want [idp]", d.AuthBrokerKinds)
+		}
+		return
+	}
+	t.Fatal("acmebroker delegate not found")
 }
