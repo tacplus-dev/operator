@@ -99,6 +99,7 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"echo", dc.EchoConfig},
 		{"messaging", dc.MessagingConfig},
 		{"mailbox", dc.MailboxConfig},
+		{"personalauth", dc.PersonalauthConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

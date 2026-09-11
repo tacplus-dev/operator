@@ -25,18 +25,19 @@ import (
 
 // DeployConfigs holds all generated per-service configurations.
 type DeployConfigs struct {
-	CACertPEM                []byte
-	BootstrapNames           []string
-	BootstrapYAMLs           [][]byte
-	SentinelConfig           []byte
-	EchoConfig               []byte
-	MessagingConfig          []byte
-	MailboxConfig            []byte
+	CACertPEM          []byte
+	BootstrapNames     []string
+	BootstrapYAMLs     [][]byte
+	SentinelConfig     []byte
+	EchoConfig         []byte
+	MessagingConfig    []byte
+	MailboxConfig      []byte
+	PersonalauthConfig []byte
 	// AppConfigs holds bootstrap YAML for the application's own services, keyed
 	// by service name. Platform services each have a named field above because
 	// the platform's service set is fixed; an app's is not known until its
 	// config declares it, so those cannot be fields.
-	AppConfigs map[string][]byte
+	AppConfigs               map[string][]byte
 	GatewayConfig            []byte
 	EventbusConfig           []byte
 	OauthConfig              []byte
@@ -227,6 +228,13 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 	}
 
 	mailboxConfigYAML, err := buildSvc("mailbox", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// personalauth takes the plain shape too: its only dependency is kernel,
+	// reached s2s through the generated ServiceManager.
+	personalauthConfigYAML, err := buildSvc("personalauth", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -447,6 +455,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 		EchoConfig:               echoConfigYAML,
 		MessagingConfig:          messagingConfigYAML,
 		MailboxConfig:            mailboxConfigYAML,
+		PersonalauthConfig:       personalauthConfigYAML,
 		AppConfigs:               appConfigs,
 		GatewayConfig:            gatewayConfigYAML,
 		EventbusConfig:           eventbusConfigYAML,
@@ -629,6 +638,7 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("echo", &t.EchoNodes)
 	check("messaging", &t.MessagingNodes)
 	check("mailbox", &t.MailboxNodes)
+	check("personalauth", &t.PersonalauthNodes)
 }
 
 // ServiceConfigValues converts a DeployConfigs into a Helm values map.
@@ -650,6 +660,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"echo", dc.EchoConfig},
 		{"messaging", dc.MessagingConfig},
 		{"mailbox", dc.MailboxConfig},
+		{"personalauth", dc.PersonalauthConfig},
 		{"gateway", dc.GatewayConfig},
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},

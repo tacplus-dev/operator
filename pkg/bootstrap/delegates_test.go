@@ -507,3 +507,73 @@ func TestEnsureServiceDelegatesPreservesAuthBrokerKinds(t *testing.T) {
 	}
 	t.Fatal("acmebroker delegate not found")
 }
+
+// TestEnsureServiceDelegatesGivesPersonalauthTheDeviceKind pins the personalauth
+// delegate's shape: exactly auth_broker_kinds [device], and no tenant_namespace.
+//
+// The kind is what makes kernel accept a mint brokered through personalauth —
+// MintUserToken refuses a delegate whose auth_broker_kinds does not contain the
+// request's kind, so without it every device registration and device login fails
+// closed. It must NOT also carry "idp": a broker gets exactly the kinds it
+// verifies.
+//
+// The empty tenant_namespace is the /system root. personalauth mints
+// /people/<pid> tokens, which are not tenant data and have no tenant to name.
+func TestEnsureServiceDelegatesGivesPersonalauthTheDeviceKind(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:       1,
+			GatewayNodes:      1,
+			PersonalauthNodes: 1,
+		},
+		OptionalServices: &protoOperator.OptionalServices{
+			Personalauth: true,
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name != "personalauth" {
+			continue
+		}
+		if len(d.AuthBrokerKinds) != 1 || d.AuthBrokerKinds[0] != "device" {
+			t.Fatalf("personalauth auth_broker_kinds = %v, want [device]", d.AuthBrokerKinds)
+		}
+		if d.TenantNamespace != "" {
+			t.Fatalf("personalauth tenant_namespace = %q, want empty (/system)", d.TenantNamespace)
+		}
+		return
+	}
+	t.Fatal("personalauth delegate not found")
+}
+
+// TestEnsureServiceDelegatesSkipsPersonalauthWhenDisabled is the negative half:
+// personalauth is disabled by default, so a config that does not ask for it must
+// not get a delegate carrying the device broker capability.
+func TestEnsureServiceDelegatesSkipsPersonalauthWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name == "personalauth" {
+			t.Fatalf("personalauth delegate created while optional_services.personalauth is false")
+		}
+	}
+}

@@ -1104,3 +1104,41 @@ func chartFileNames(charts *Charts) []string {
 	sort.Strings(names)
 	return names
 }
+
+// TestPersonalauthRendersOnlyWhenEnabled pins the personalauth workload to its
+// optional_services flag. It is a login broker for PERSONAL principals and is
+// disabled by default, so a cluster that never asks for it must not get a
+// Deployment pulling an image it does not run.
+func TestPersonalauthRendersOnlyWhenEnabled(t *testing.T) {
+	on := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:       1,
+			KmakerNodes:       1,
+			PersonalauthNodes: 2,
+		},
+		OptionalServices: &protoOperator.OptionalServices{Personalauth: true},
+	})
+
+	dep := chartFile(t, on, "templates/personalauth/deployment.yaml")
+	if !strings.Contains(dep, "personalauth") {
+		t.Errorf("personalauth produced no Deployment naming it:\n%s", dep)
+	}
+	if _, ok := on.Files["templates/personalauth/service-0.yaml"]; !ok {
+		t.Error("personalauth produced no Service; it would be unreachable in-cluster")
+	}
+
+	off := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:       1,
+			KmakerNodes:       1,
+			PersonalauthNodes: 2,
+		},
+	})
+	for path := range off.Files {
+		if strings.Contains(path, "personalauth") {
+			t.Errorf("personalauth rendered %s while optional_services.personalauth is false", path)
+		}
+	}
+}

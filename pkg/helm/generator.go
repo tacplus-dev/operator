@@ -630,18 +630,19 @@ func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.
 
 func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	return &protoOperator.Topology{
-		KernelNodes:     t.KernelNodes,
-		SentinelNodes:   t.SentinelNodes,
-		EventbusNodes:   t.EventbusNodes,
-		GatewayNodes:    t.GatewayNodes,
-		OauthNodes:      t.OauthNodes,
-		OpaNodes:        t.OpaNodes,
-		StratumNodes:    t.StratumNodes,
-		SamlNodes:       t.SamlNodes,
-		KmakerNodes:     t.KmakerNodes,
-		EchoNodes:       t.EchoNodes,
-		MessagingNodes:  t.MessagingNodes,
-		MailboxNodes:    t.MailboxNodes,
+		KernelNodes:       t.KernelNodes,
+		SentinelNodes:     t.SentinelNodes,
+		EventbusNodes:     t.EventbusNodes,
+		GatewayNodes:      t.GatewayNodes,
+		OauthNodes:        t.OauthNodes,
+		OpaNodes:          t.OpaNodes,
+		StratumNodes:      t.StratumNodes,
+		SamlNodes:         t.SamlNodes,
+		KmakerNodes:       t.KmakerNodes,
+		EchoNodes:         t.EchoNodes,
+		MessagingNodes:    t.MessagingNodes,
+		MailboxNodes:      t.MailboxNodes,
+		PersonalauthNodes: t.PersonalauthNodes,
 		// Carry the app's services. A field-by-field clone silently drops
 		// anything added later — which is the failure mode a fixed-field message
 		// invites, and it dropped app_services on the first attempt.
@@ -792,6 +793,14 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	if opt.GetMailbox() && topo.GetMailboxNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mailbox", Replicas: topo.MailboxNodes, Image: g.imageRef("mailbox"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+	}
+
+	// personalauth — the login broker for PERSONAL principals. Disabled by
+	// default. Same shape as oauth, which is the other login broker: stateless,
+	// gRPC on 8443, kernel access arranged by the generated ServiceManager.
+	if opt.GetPersonalauth() && topo.GetPersonalauthNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "personalauth", Replicas: topo.PersonalauthNodes, Image: g.imageRef("personalauth"), HasGRPC: true, ListenPort: 8443,
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 	}
 
 	// The application's own services.

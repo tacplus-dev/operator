@@ -209,6 +209,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 	validated := map[string]bool{
 		"BootstrapYAMLs": true, "KmakerConfig": true, "SentinelConfig": true,
 		"EchoConfig": true, "MessagingConfig": true, "MailboxConfig": true,
+		"PersonalauthConfig": true,
 		"AppConfigs": true, "GatewayConfig": true,
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
 		"SamlConfig": true, "StratumConfig": true,

@@ -52,6 +52,9 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.MailboxConfig) > 0 && t.MailboxNodes > 0 && dc.Cfg.GetOptionalServices().GetMailbox() {
 		serviceFiles["mailbox"] = dc.MailboxConfig
 	}
+	if len(dc.PersonalauthConfig) > 0 && t.PersonalauthNodes > 0 && dc.Cfg.GetOptionalServices().GetPersonalauth() {
+		serviceFiles["personalauth"] = dc.PersonalauthConfig
+	}
 	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
 		serviceFiles["stratum"] = dc.StratumConfig
 	}

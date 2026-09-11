@@ -527,25 +527,34 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 	})
 }
 
-// idpAuthBrokerServices are the services that broker an IdP-validated human
-// login into kernel's MintUserToken. Kernel refuses MintUserToken for a
-// delegate whose auth_broker_kinds does not contain the request's kind, so
-// these two need the capability on creation or login fails closed. Only the
-// broker kind is set here — everything else about who may attest a login is
-// still kernel's Delegate record, not this list.
-var idpAuthBrokerServices = map[string]bool{
-	"oauth": true,
-	"saml":  true,
+// authBrokerKinds are the services that broker a human login into kernel's
+// MintUserToken, and the kinds of proof each one is trusted to broker. Kernel
+// refuses MintUserToken for a delegate whose auth_broker_kinds does not contain
+// the request's kind, so a broker needs the capability on creation or login
+// fails closed. Only the broker kind is set here — everything else about who may
+// attest a login is still kernel's Delegate record, not this map.
+//
+// oauth and saml broker an IdP-validated login. personalauth brokers a DEVICE
+// proof: a device-held key registering and logging itself in, for a PERSONAL
+// principal that has no tenant IdP. It is deliberately NOT given "idp" as well
+// — a broker gets exactly the kinds it is built to verify.
+var authBrokerKinds = map[string][]string{
+	"oauth":        {"idp"},
+	"saml":         {"idp"},
+	"personalauth": {"device"},
 }
 
 // authBrokerKindsFor returns the auth_broker_kinds a newly created delegate for
 // svc starts with. Nil for every service that is not an auth broker, which is
 // the fail-closed default.
+// The slice is copied: the returned value is stored on a delegate that later
+// code may append to, and the map's own slice must not be the backing array.
 func authBrokerKindsFor(svc string) []string {
-	if idpAuthBrokerServices[svc] {
-		return []string{"idp"}
+	kinds, ok := authBrokerKinds[svc]
+	if !ok {
+		return nil
 	}
-	return nil
+	return append([]string(nil), kinds...)
 }
 
 // delegateKey is the identity of a kernel delegate: its name plus the
