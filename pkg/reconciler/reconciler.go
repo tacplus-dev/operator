@@ -450,9 +450,9 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 		)
 	}
 
-	deployed, err := cfg.Releases.Deployed(releaseName)
+	deployed, err := rollbackTargetRevision(cfg, latest)
 	if err != nil {
-		return false, fmt.Errorf("helm release %s revision %d is stale %s but no deployed revision is available: %w",
+		return false, fmt.Errorf("helm release %s revision %d is stale %s but no rollback revision is available: %w",
 			latest.Name,
 			latest.Version,
 			latest.Info.Status,
@@ -483,6 +483,37 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 		zap.Int("rollback_revision", deployed.Version),
 	)
 	return true, nil
+}
+
+// rollbackTargetRevision picks the revision a stale pending release should be rolled
+// back to. Normally that is the current deployed revision, but Helm marks the previous
+// revision superseded as soon as an upgrade starts, so an upgrade that dies before the
+// new revision reaches deployed leaves the release with no deployed revision at all. In
+// that case fall back to the most recent superseded revision older than the stuck one.
+func rollbackTargetRevision(cfg *action.Configuration, latest *helmrelease.Release) (*helmrelease.Release, error) {
+	deployed, err := cfg.Releases.Deployed(releaseName)
+	if err == nil {
+		return deployed, nil
+	}
+
+	history, historyErr := cfg.Releases.History(releaseName)
+	if historyErr != nil {
+		return nil, fmt.Errorf("no deployed revision (%v); querying release history: %w", err, historyErr)
+	}
+
+	var target *helmrelease.Release
+	for _, rel := range history {
+		if rel.Info == nil || rel.Info.Status != helmrelease.StatusSuperseded || rel.Version >= latest.Version {
+			continue
+		}
+		if target == nil || rel.Version > target.Version {
+			target = rel
+		}
+	}
+	if target == nil {
+		return nil, err
+	}
+	return target, nil
 }
 
 func isStalePendingRelease(rel *helmrelease.Release, now time.Time) (bool, time.Duration) {

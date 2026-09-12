@@ -3,13 +3,19 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"helm.sh/helm/v3/pkg/action"
+	helmchart "helm.sh/helm/v3/pkg/chart"
+	kubefake "helm.sh/helm/v3/pkg/kube/fake"
 	helmrelease "helm.sh/helm/v3/pkg/release"
+	helmstorage "helm.sh/helm/v3/pkg/storage"
+	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
 	helmtime "helm.sh/helm/v3/pkg/time"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -457,5 +463,114 @@ func TestSetOpaConfigPusher(t *testing.T) {
 	r.pushOpaConfig(context.Background(), opaConfigWithEntryPoint("data.entitlements.eval"))
 	if len(pusher.calls) != 1 {
 		t.Fatalf("got %d pushes after SetOpaConfigPusher, want 1", len(pusher.calls))
+	}
+}
+
+func stalePendingReleaseStorage(t *testing.T, revisions ...*helmrelease.Release) *action.Configuration {
+	t.Helper()
+
+	store := helmstorage.Init(helmdriver.NewMemory())
+	for _, rel := range revisions {
+		if err := store.Create(rel); err != nil {
+			t.Fatalf("seeding release revision %d: %v", rel.Version, err)
+		}
+	}
+
+	return &action.Configuration{
+		Releases:   store,
+		KubeClient: &kubefake.PrintingKubeClient{Out: io.Discard},
+		Log:        func(string, ...interface{}) {},
+	}
+}
+
+func releaseRevision(version int, status helmrelease.Status, lastDeployed time.Time) *helmrelease.Release {
+	return &helmrelease.Release{
+		Name:      releaseName,
+		Namespace: "default",
+		Version:   version,
+		Info: &helmrelease.Info{
+			Status:       status,
+			LastDeployed: helmtime.Time{Time: lastDeployed},
+		},
+		Chart: &helmchart.Chart{
+			Metadata: &helmchart.Metadata{
+				Name:       releaseName,
+				Version:    "0.1.0",
+				APIVersion: helmchart.APIVersionV2,
+			},
+		},
+	}
+}
+
+// Helm marks the previous revision superseded as soon as an upgrade starts, so an
+// upgrade that dies before the new revision reaches deployed leaves the release with
+// no deployed revision at all. Recovery must still roll back to that superseded one.
+func TestRecoverStalePendingReleaseWithoutDeployedRevision(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusSuperseded, stale),
+		releaseRevision(2, helmrelease.StatusSuperseded, stale),
+		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	r := &Reconciler{log: zap.NewNop()}
+	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	if err != nil {
+		t.Fatalf("recovering stale pending release: %v", err)
+	}
+	if !recovered {
+		t.Fatal("expected stale pending release to be recovered")
+	}
+
+	deployed, err := cfg.Releases.Deployed(releaseName)
+	if err != nil {
+		t.Fatalf("reading deployed revision after recovery: %v", err)
+	}
+	if deployed.Version != 4 {
+		t.Fatalf("expected rollback to create revision 4, got %d", deployed.Version)
+	}
+}
+
+func TestRecoverStalePendingReleaseWithoutAnyPriorRevision(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	r := &Reconciler{log: zap.NewNop()}
+	if _, err := r.recoverStalePendingRelease(cfg, latest); err == nil {
+		t.Fatal("expected an error when no rollback revision exists")
+	}
+}
+
+func TestRollbackTargetRevisionPrefersDeployedRevision(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusSuperseded, stale),
+		releaseRevision(2, helmrelease.StatusDeployed, stale),
+		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	target, err := rollbackTargetRevision(cfg, latest)
+	if err != nil {
+		t.Fatalf("picking rollback target: %v", err)
+	}
+	if target.Version != 2 {
+		t.Fatalf("expected deployed revision 2 to be the rollback target, got %d", target.Version)
 	}
 }
