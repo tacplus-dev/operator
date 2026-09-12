@@ -1142,3 +1142,79 @@ func TestPersonalauthRendersOnlyWhenEnabled(t *testing.T) {
 		}
 	}
 }
+
+// TestLlmCredentialServiceConfigsArePackagedAsSecrets guards the generalized
+// version of the plaintext-credential exposure: pkg/bootstrap/deploy.go injects
+// the real llm_credential value into the bootstrap config of every service named
+// in llm_credential_services, but ConfigHasKeyMaterial used to be hardcoded on
+// kernel/kmaker/gateway only — so any app service opted into that list had its
+// credential rendered into a plain ConfigMap by construction. The list is
+// config-driven, so this cannot be fixed by naming more services.
+func TestLlmCredentialServiceConfigsArePackagedAsSecrets(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace:             "schematic",
+		LlmCredentialServices: []string{"tasks"},
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			AppServices: map[string]int32{"tasks": 1, "widgeter": 1},
+		},
+	})
+
+	// tasks holds the credential: Secret, never a ConfigMap.
+	if _, ok := charts.Files["templates/tasks/configmap-0.yaml"]; ok {
+		t.Error("tasks config is emitted as a ConfigMap; it holds the llm_credential value")
+	}
+	secret := chartFile(t, charts, "templates/tasks/secret-0.yaml")
+	for _, want := range []string{"kind: Secret", "type: Opaque", "stringData:", "config.yaml:"} {
+		if !strings.Contains(secret, want) {
+			t.Errorf("tasks secret-0 missing %q\n--- secret ---\n%s", want, secret)
+		}
+	}
+	tasksDep := chartFile(t, charts, "templates/tasks/deployment.yaml")
+	if !strings.Contains(tasksDep, "- name: config\n        secret:\n          secretName: tasks0-config") {
+		t.Errorf("tasks Deployment does not mount its config from a Secret\n--- deployment ---\n%s", tasksDep)
+	}
+	if strings.Contains(tasksDep, "configMap:\n          name: tasks0-config") {
+		t.Errorf("tasks Deployment still mounts its config from a ConfigMap\n--- deployment ---\n%s", tasksDep)
+	}
+
+	// widgeter is not in the list: unchanged, still a plain ConfigMap.
+	if _, ok := charts.Files["templates/widgeter/secret-0.yaml"]; ok {
+		t.Error("widgeter config became a Secret; it carries no key material")
+	}
+	widgeterCM := chartFile(t, charts, "templates/widgeter/configmap-0.yaml")
+	if !strings.Contains(widgeterCM, "kind: ConfigMap") {
+		t.Errorf("widgeter config should still be a ConfigMap\n--- configmap ---\n%s", widgeterCM)
+	}
+	widgeterDep := chartFile(t, charts, "templates/widgeter/deployment.yaml")
+	if !strings.Contains(widgeterDep, "configMap:\n          name: widgeter0-config") {
+		t.Errorf("widgeter Deployment no longer mounts its config from a ConfigMap\n--- deployment ---\n%s", widgeterDep)
+	}
+}
+
+// A tenant-owned service in llm_credential_services gets one config per tenant
+// instance, and deploy.go injects the credential into every one of them.
+func TestLlmCredentialTenantOwnedServiceConfigsArePackagedAsSecrets(t *testing.T) {
+	charts := generateTestChartWithTenantOwned(t, &protoOperator.Config{
+		Namespace:             "schematic",
+		LlmCredentialServices: []string{"tasks"},
+		Tenants:               []string{"acme", "globex"},
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			AppServices: map[string]int32{"tasks": 1},
+		},
+	}, map[string]bool{"tasks": true})
+
+	for _, tenant := range []string{"acme", "globex"} {
+		inst := TenantInstanceName("tasks", tenant)
+		if _, ok := charts.Files[fmt.Sprintf("templates/%s/configmap-0.yaml", inst)]; ok {
+			t.Errorf("%s config is emitted as a ConfigMap; it holds the llm_credential value", inst)
+		}
+		secret := chartFile(t, charts, fmt.Sprintf("templates/%s/secret-0.yaml", inst))
+		if !strings.Contains(secret, "kind: Secret") {
+			t.Errorf("%s secret-0 is not a Secret\n--- secret ---\n%s", inst, secret)
+		}
+	}
+}

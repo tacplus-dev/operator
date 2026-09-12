@@ -816,11 +816,21 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// become "<svc>-<tenant>" so N tenants do not collapse into one Deployment.
 	// The image is still the one service's image — the instances differ only in
 	// identity, which kernel derives from the delegate, never from config here.
+	// A service named in llm_credential_services has the real llm_credential
+	// value injected into its bootstrap config (pkg/bootstrap/deploy.go), so
+	// that config must be packaged as a Secret, not a ConfigMap — same reason
+	// as kernel/kmaker/gateway above. The list is config-driven, so this has to
+	// be read from it rather than hardcoded per service name.
+	llmCredentialServices := map[string]bool{}
+	for _, name := range cfg.GetLlmCredentialServices() {
+		llmCredentialServices[name] = true
+	}
 	for _, name := range appServiceNames(topo) {
 		base := serviceSpec{
 			Name: name, Replicas: topo.GetAppServices()[name], Image: g.imageRef(name),
 			HasGRPC: true, ListenPort: 8443,
-			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
+			ConfigHasKeyMaterial: llmCredentialServices[name],
+			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
 		if !g.tenantOwned[name] {
 			svcs = append(svcs, withKernelServiceAuth(base))
 			continue
