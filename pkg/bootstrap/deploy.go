@@ -69,10 +69,10 @@ type DeployConfigs struct {
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
 // per-service configs, and returns them in a DeployConfigs struct.
 func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
-	return buildDeployConfigs(cfgDir, nil)
+	return buildDeployConfigs(cfgDir, nil, nil)
 }
 
-func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployConfigs, error) {
+func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLSOverride *protoX509.X509CertChain) (*DeployConfigs, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
@@ -83,6 +83,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI) (*DeployC
 			return nil, fmt.Errorf("cloning cached pki")
 		}
 		cfg.Pki = pki
+	}
+	if kmakerTLSOverride != nil {
+		tls, ok := proto.Clone(kmakerTLSOverride).(*protoX509.X509CertChain)
+		if !ok {
+			return nil, fmt.Errorf("cloning cached kmaker serving tls")
+		}
+		if cfg.Kmaker == nil {
+			cfg.Kmaker = &protoKmaker.Config{}
+		}
+		cfg.Kmaker.Tls = tls
 	}
 
 	if cfg.Topology == nil {
@@ -698,11 +708,16 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 // config directory is not yet fully initialized, it returns nil values (no override).
 func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs, error) {
 	var pkiCache *protoOperator.PKI
+	// kmaker's serving cert is not part of cfg.Pki, so it is not persisted to
+	// crypto.yaml and LoadConfig never returns it. Cache it here alongside
+	// pkiCache: without this every reconcile mints a fresh cert, changing the
+	// chart's config checksum and rolling kmaker's pods every interval.
+	var kmakerTLSCache *protoX509.X509CertChain
 	return func() (*reconciler.ServiceConfigs, error) {
 		if cfgDir == "" {
 			return nil, nil
 		}
-		dc, err := buildDeployConfigs(cfgDir, pkiCache)
+		dc, err := buildDeployConfigs(cfgDir, pkiCache, kmakerTLSCache)
 		if err != nil {
 			return nil, err
 		}
@@ -712,6 +727,13 @@ func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs,
 				return nil, fmt.Errorf("cloning pki cache")
 			}
 			pkiCache = pki
+		}
+		if dc.Cfg != nil && dc.Cfg.Kmaker != nil && dc.Cfg.Kmaker.Tls != nil {
+			tls, ok := proto.Clone(dc.Cfg.Kmaker.Tls).(*protoX509.X509CertChain)
+			if !ok {
+				return nil, fmt.Errorf("cloning kmaker serving tls cache")
+			}
+			kmakerTLSCache = tls
 		}
 		return &reconciler.ServiceConfigs{
 			Values: ServiceConfigValues(dc),

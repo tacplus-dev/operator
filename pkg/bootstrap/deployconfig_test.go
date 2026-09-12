@@ -18,6 +18,8 @@ import (
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoTokenRequest "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/tokenrequest"
+	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -1106,5 +1108,84 @@ func TestEnsureKmakerServingTLSIdempotent(t *testing.T) {
 func TestEnsureKmakerServingTLSRequiresClusterCA(t *testing.T) {
 	if _, err := EnsureKmakerServingTLS(&protoOperator.Config{}); err == nil {
 		t.Fatal("expected error when pki.cluster_ca is absent")
+	}
+}
+
+// TestServiceConfigProviderCachesPkiAndKmakerServingTLS simulates two
+// reconciles: the provider closure must reuse the cached PKI and kmaker
+// serving TLS rather than minting fresh material on every call. A fresh
+// kmaker cert each reconcile changes the chart's config checksum and rolls
+// kmaker's pods every interval.
+func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "schematic",
+		Fqdn:         "console.secondstarcavalier.cloud",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := NewServiceConfigProvider(dir)
+
+	serviceConfig := func(svc string, sc *reconciler.ServiceConfigs) string {
+		entry, ok := sc.Values[svc].(map[string]interface{})
+		if !ok {
+			t.Fatalf("service configs missing %s: %#v", svc, sc.Values)
+		}
+		yaml, ok := entry["config"].(string)
+		if !ok || yaml == "" {
+			t.Fatalf("service configs %s has empty config: %#v", svc, entry)
+		}
+		return yaml
+	}
+
+	first, err := provider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := provider()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// kmaker's serving cert and key must be byte-identical across reconciles.
+	firstKmaker, err := protoKmaker.ConfigFromBytes([]byte(serviceConfig("kmaker", first)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondKmaker, err := protoKmaker.ConfigFromBytes([]byte(serviceConfig("kmaker", second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstKmaker.GetTls() == nil || len(firstKmaker.GetTls().GetChain()) == 0 || firstKmaker.GetTls().GetKey() == nil {
+		t.Fatal("first reconcile produced no kmaker serving TLS")
+	}
+	if !proto.Equal(firstKmaker.GetTls(), secondKmaker.GetTls()) {
+		t.Fatalf("kmaker serving TLS changed between reconciles:\nfirst:  %v\nsecond: %v",
+			firstKmaker.GetTls(), secondKmaker.GetTls())
+	}
+
+	// The PKI-derived kernel bootstrap must likewise be stable.
+	if got, want := serviceConfig("kernel0", second), serviceConfig("kernel0", first); got != want {
+		t.Fatal("kernel0 config changed between reconciles")
 	}
 }
