@@ -536,10 +536,13 @@ func TestRecoverStalePendingReleaseWithoutDeployedRevision(t *testing.T) {
 	}
 }
 
+// A first install that crashed mid-flight leaves a pending release with no prior
+// revision of any status. There is nothing to roll back to, so recovery uninstalls the
+// stuck release and lets the next reconcile install from scratch.
 func TestRecoverStalePendingReleaseWithoutAnyPriorRevision(t *testing.T) {
 	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
 	cfg := stalePendingReleaseStorage(t,
-		releaseRevision(1, helmrelease.StatusPendingUpgrade, stale),
+		releaseRevision(1, helmrelease.StatusPendingInstall, stale),
 	)
 
 	latest, err := cfg.Releases.Last(releaseName)
@@ -548,8 +551,98 @@ func TestRecoverStalePendingReleaseWithoutAnyPriorRevision(t *testing.T) {
 	}
 
 	r := &Reconciler{log: zap.NewNop()}
-	if _, err := r.recoverStalePendingRelease(cfg, latest); err == nil {
-		t.Fatal("expected an error when no rollback revision exists")
+	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	if err != nil {
+		t.Fatalf("recovering stale pending release with no history: %v", err)
+	}
+	if !recovered {
+		t.Fatal("expected stale pending release to be recovered")
+	}
+
+	remaining, err := cfg.Releases.Last(releaseName)
+	if err == nil && remaining.Info.Status != helmrelease.StatusUninstalled {
+		t.Fatalf("expected the stuck release to be uninstalled, got revision %d %s", remaining.Version, remaining.Info.Status)
+	}
+}
+
+// The only predecessor being failed rather than superseded (an install that failed, then
+// an upgrade attempt that also died) must still be a valid rollback target.
+func TestRecoverStalePendingReleaseWithFailedPredecessor(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusFailed, stale),
+		releaseRevision(2, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	target, err := rollbackTargetRevision(cfg, latest)
+	if err != nil {
+		t.Fatalf("picking rollback target with a failed predecessor: %v", err)
+	}
+	if target.Version != 1 {
+		t.Fatalf("expected failed revision 1 to be the rollback target, got %d", target.Version)
+	}
+
+	r := &Reconciler{log: zap.NewNop()}
+	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	if err != nil {
+		t.Fatalf("recovering stale pending release: %v", err)
+	}
+	if !recovered {
+		t.Fatal("expected stale pending release to be recovered")
+	}
+
+	deployed, err := cfg.Releases.Deployed(releaseName)
+	if err != nil {
+		t.Fatalf("reading deployed revision after recovery: %v", err)
+	}
+	if deployed.Version != 3 {
+		t.Fatalf("expected rollback to create revision 3, got %d", deployed.Version)
+	}
+}
+
+// Newest-first candidate selection still holds once failed revisions are eligible.
+func TestRollbackTargetRevisionPrefersNewestCandidate(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusSuperseded, stale),
+		releaseRevision(2, helmrelease.StatusFailed, stale),
+		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	target, err := rollbackTargetRevision(cfg, latest)
+	if err != nil {
+		t.Fatalf("picking rollback target: %v", err)
+	}
+	if target.Version != 2 {
+		t.Fatalf("expected revision 2 to be the rollback target, got %d", target.Version)
+	}
+}
+
+// With the stuck pending revision as the only history entry there is no rollback target,
+// and that must be reported distinguishably from a history-query failure.
+func TestRollbackTargetRevisionWithoutAnyPriorRevision(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusPendingInstall, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	if _, err := rollbackTargetRevision(cfg, latest); !errors.Is(err, errNoRollbackTarget) {
+		t.Fatalf("rollbackTargetRevision error = %v, want errNoRollbackTarget", err)
 	}
 }
 

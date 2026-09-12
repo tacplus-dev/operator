@@ -33,7 +33,28 @@ Example:
 func runGenBackendTokens(cmd *cobra.Command, args []string) error {
 	dir := resolveConfigDir()
 
+	regoPath, names, err := writeBackendTokenPolicy(dir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Backend token policy written: %s (%s)\n", regoPath, strings.Join(names, ", "))
+
+	if err := BuildConfigOutput(dir); err != nil {
+		return err
+	}
+	fmt.Printf("Config output: %s/configs/\n", dir)
+	return nil
+}
+
+// writeBackendTokenPolicy reads the documented provider tokens from the environment
+// and writes the backend token Rego policy under dir, returning the policy path and
+// the provider names it contains.
+func writeBackendTokenPolicy(dir string) (string, []string, error) {
 	providers := []struct{ name, env string }{
+		{"anthropic", "ANTHROPIC_TOKEN"},
+		{"gitlab", "GITLAB_TOKEN"},
+		{"openai", "OPENAI_TOKEN"},
+		{"github", "GITHUB_TOKEN"},
 	}
 
 	type entry struct{ name, token string }
@@ -45,12 +66,12 @@ func runGenBackendTokens(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(tokens) == 0 {
-		return fmt.Errorf("no tokens found in environment — set at least one of: ANTHROPIC_TOKEN, GITLAB_TOKEN, OPENAI_TOKEN, GITHUB_TOKEN")
+		return "", nil, fmt.Errorf("no tokens found in environment — set at least one of: ANTHROPIC_TOKEN, GITLAB_TOKEN, OPENAI_TOKEN, GITHUB_TOKEN")
 	}
 
 	destDir := BackendTokenPolicyDir(dir)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("creating backend token policy directory: %w", err)
+		return "", nil, fmt.Errorf("creating backend token policy directory: %w", err)
 	}
 
 	var lines []string
@@ -78,18 +99,12 @@ func runGenBackendTokens(cmd *cobra.Command, args []string) error {
 
 	regoPath := filepath.Join(destDir, "backend_token.rego")
 	if err := os.WriteFile(regoPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
-		return fmt.Errorf("writing backend token policy: %w", err)
+		return "", nil, fmt.Errorf("writing backend token policy: %w", err)
 	}
 
 	names := make([]string, len(tokens))
 	for i, t := range tokens {
 		names[i] = t.name
 	}
-	fmt.Printf("Backend token policy written: %s (%s)\n", regoPath, strings.Join(names, ", "))
-
-	if err := BuildConfigOutput(dir); err != nil {
-		return err
-	}
-	fmt.Printf("Config output: %s/configs/\n", dir)
-	return nil
+	return regoPath, names, nil
 }
