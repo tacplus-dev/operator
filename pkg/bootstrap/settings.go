@@ -46,8 +46,8 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 	return cfg, nil
 }
 
-// SaveSettings writes non-PKI fields to operator.yaml.
-// PKI material is stripped before writing (it lives in crypto.yaml).
+// SaveSettings writes operator.yaml. PKI material and the shared LLM
+// credential are stripped before writing (they live in crypto.yaml).
 func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
@@ -55,6 +55,8 @@ func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 
 	settings := proto.Clone(cfg).(*protoOperator.Config)
 	settings.Pki = nil
+	settings.LlmCredential = ""
+	settings.LlmCredentialServices = nil
 
 	data, err := protoOperator.ConfigToYAML(settings)
 	if err != nil {
@@ -64,14 +66,18 @@ func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 	return os.WriteFile(filepath.Join(cfgDir, OperatorSettingsFile), data, 0644)
 }
 
-// SaveCrypto writes only PKI material to crypto.yaml.
-// Non-PKI fields are stripped before writing.
+// SaveCrypto writes PKI material and the shared LLM credential to crypto.yaml.
+// All other fields are stripped before writing (they live in operator.yaml).
 func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
-	crypto := &protoOperator.Config{Pki: cfg.Pki}
+	crypto := &protoOperator.Config{
+		Pki:                   cfg.Pki,
+		LlmCredential:         cfg.LlmCredential,
+		LlmCredentialServices: cfg.LlmCredentialServices,
+	}
 
 	data, err := protoOperator.ConfigToYAML(crypto)
 	if err != nil {
