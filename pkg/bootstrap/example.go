@@ -26,6 +26,7 @@ import (
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
 	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
 	protoLogger "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/logger"
+	protoTokenRequest "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/tokenrequest"
 )
 
 // KernelSourceConfig is the human-editable kernel.yaml source format.
@@ -313,10 +314,15 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		for _, s := range sd.AuthorizedServices {
 			authSvcs = append(authSvcs, protoServices.ParseServiceNameLiberal(s))
 		}
+		var brokerKinds []protoTokenRequest.AuthBrokerKind
+		for _, k := range sd.AuthBrokerKinds {
+			brokerKinds = append(brokerKinds, protoTokenRequest.ParseAuthBrokerKindLiberal(k))
+		}
 		delegate := &protoKernel.Delegate{
 			Name:               sd.Name,
 			AuthorizedServices: authSvcs,
 			TenantNamespace:    sd.TenantNamespace,
+			AuthBrokerKinds:    brokerKinds,
 		}
 		for _, sa := range sd.KubernetesServiceAccounts {
 			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)

@@ -17,6 +17,7 @@ import (
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
+	protoTokenRequest "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/tokenrequest"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -112,6 +113,44 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 	external := findDelegate(t, cfg.Delegates, "external-client")
 	if len(external.KubernetesServiceAccounts) != 0 {
 		t.Fatalf("external-client should not get a default Kubernetes matcher: %#v", external.KubernetesServiceAccounts)
+	}
+}
+
+// TestBuildKernelConfigRendersAuthBrokerKinds pins the rendered side of the
+// round trip: auth_broker_kinds in kernel.yaml must reach the kernel Config
+// proto the operator emits to the bundle Secret. Preserving the field in
+// SourceDelegate is not enough — when the renderer dropped it, kernel saw a
+// broker with no kinds and refused every MintUserToken, breaking oauth login.
+func TestBuildKernelConfigRendersAuthBrokerKinds(t *testing.T) {
+	dir := t.TempDir()
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	kernelYAML := []byte(`delegates:
+- name: oauth
+  authorized_services: [kernel]
+  auth_broker_kinds: [idp]
+- name: external-client
+  authorized_services: [gateway]
+`)
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), kernelYAML, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := BuildKernelConfigProto(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oauth := findDelegate(t, cfg.Delegates, "oauth")
+	want := []protoTokenRequest.AuthBrokerKind{protoTokenRequest.AuthBrokerKind_AUTH_BROKER_KIND_IDP}
+	if len(oauth.AuthBrokerKinds) != len(want) || oauth.AuthBrokerKinds[0] != want[0] {
+		t.Fatalf("oauth AuthBrokerKinds = %v, want %v", oauth.AuthBrokerKinds, want)
+	}
+	external := findDelegate(t, cfg.Delegates, "external-client")
+	if len(external.AuthBrokerKinds) != 0 {
+		t.Fatalf("external-client AuthBrokerKinds = %v, want none", external.AuthBrokerKinds)
 	}
 }
 
