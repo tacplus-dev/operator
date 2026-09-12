@@ -43,7 +43,33 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 		return nil, fmt.Errorf("reading %s: %w", OperatorCryptoFile, err)
 	}
 
+	// proto.Merge appends repeated fields rather than replacing them, so a
+	// field carried by BOTH files arrives duplicated. llm_credential_services
+	// is the only repeated field either writer can emit into either file
+	// (SaveSettings nils it, SaveCrypto populates it), which makes it the one
+	// that duplicates whenever an operator.yaml predates that split. It is a
+	// set of app service names, so order does not carry meaning beyond
+	// determinism — keep first occurrence, drop the rest.
+	cfg.LlmCredentialServices = dedupe(cfg.LlmCredentialServices)
+
 	return cfg, nil
+}
+
+// dedupe returns in with duplicate entries removed, preserving first-seen order.
+func dedupe(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // SaveSettings writes operator.yaml. PKI material and the shared LLM
