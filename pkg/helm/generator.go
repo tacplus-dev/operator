@@ -197,6 +197,13 @@ const stratumHazelcastPort = 5001
 // mechanism that made the second instance land somewhere nobody could name.
 const stratumWorkingSetPort = 5701
 
+// grpcHealthProbePort is the plaintext grpc.health.v1 listener the kubelet's
+// gRPC probe speaks to (see the grpcProbe* helpers). It is NOT a Service port,
+// so nothing else in the chart names it — but a NetworkPolicy that selects a
+// pod must, because the probe arrives from the NODE address like any other
+// ingress and a policy that forgets it takes the pod NotReady.
+const grpcHealthProbePort = 8444
+
 func stratumSeedMembersEnv(replicas int32) string {
 	return stratumSeedEnv("STRATUM_SEED_MEMBERS", replicas, stratumHazelcastPort) +
 		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", replicas, stratumWorkingSetPort)
@@ -251,7 +258,18 @@ type serviceSpec struct {
 	// separate cluster from the event store. Kernel has a single cluster and must
 	// keep rendering exactly one port block.
 	HasWorkingSetHazelcast bool
-	ListenPort       int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
+	// HazelcastNetworkPolicy, if true, renders a NetworkPolicy that confines the
+	// Hazelcast member ports to this service's own pods. The member protocol has
+	// no TLS and no member authentication and carries Java serialization, so any
+	// pod that can open a TCP connection to it is effectively inside the cluster;
+	// the network is the only control there is.
+	//
+	// Set on stratum only, for now. Kernel has the same open member port on
+	// stratumHazelcastPort and wants the same treatment, but its policy has not
+	// been verified against a live kernel cluster yet — see
+	// decisions/stratum-hazelcast-networkpolicy-2026-09-12.md.
+	HazelcastNetworkPolicy bool
+	ListenPort             int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
 	NodeModes []string
@@ -763,7 +781,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// discoverable peer addresses — so several replicas would each form
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
 			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 	}
@@ -1251,6 +1269,77 @@ func configVolumeSource(svc serviceSpec, name string) string {
 	return fmt.Sprintf("        configMap:\n          name: %s-config\n", name)
 }
 
+// hazelcastNetworkPolicy confines the Hazelcast member ports of one service to
+// that service's own pods.
+//
+// The member protocol is the hole: no TLS, no member authentication, and Java
+// serialization on the wire. Anything that completes a TCP handshake to it is a
+// peer, so "who can open the socket" IS the authentication — and with no
+// NetworkPolicy in the namespace that was every pod in every namespace of the
+// cluster.
+//
+// Shape, and why it is this shape rather than a tighter one:
+//
+//   - Rule 1 names the member ports and admits only pods carrying this service's
+//     own "app" label. A bare podSelector in a NetworkPolicy peer means "in THIS
+//     namespace", which is exactly the intent — a pod called "stratum" in some
+//     other namespace is not a member.
+//   - Rule 2 has no "from" at all, so it admits every source, and names the gRPC
+//     service port and the health port. Selecting a pod turns on default-deny for
+//     everything the policy does not name, so these have to be written down or
+//     locking the member port takes the service off the network. Leaving them open
+//     to the whole cluster preserves today's trust boundary rather than inventing
+//     a new one in the same change: the gRPC port's control is S2S auth, not the
+//     network, and the health port serves grpc.health.v1 and nothing else.
+//   - policyTypes is Ingress only. Egress is left alone deliberately: the exposure
+//     is inbound, and an egress allowlist would have to enumerate DNS, object
+//     storage, the token issuer and every S2S callee — much more to get wrong, for
+//     none of this particular risk.
+func hazelcastNetworkPolicy(svc serviceSpec) []byte {
+	listenPort := svc.ListenPort
+	if listenPort == 0 {
+		listenPort = 5000
+	}
+	var memberPorts bytes.Buffer
+	if svc.HasHazelcast {
+		memberPorts.WriteString(fmt.Sprintf(`    - protocol: TCP
+      port: %d
+`, stratumHazelcastPort))
+	}
+	if svc.HasWorkingSetHazelcast {
+		memberPorts.WriteString(fmt.Sprintf(`    - protocol: TCP
+      port: %d
+`, stratumWorkingSetPort))
+	}
+	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: %s-hazelcast
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: %s
+  policyTypes:
+  - Ingress
+  ingress:
+  # Hazelcast member discovery and cluster join: peers only.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: %s
+    ports:
+%s  # Everything this service actually serves stays reachable as it is today.
+  - ports:
+    - protocol: TCP
+      port: %d
+    - protocol: TCP
+      port: %d
+`, svc.Name, svc.Name, svc.Name, memberPorts.String(), listenPort, grpcHealthProbePort))
+}
+
 func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
 	ns := cfg.Namespace
 	if ns == "" {
@@ -1505,6 +1594,11 @@ spec:
     port: %d
     targetPort: %d
 %s`, svc.Name, svc.Name, listenPort, listenPort, hazelcastHeadless))
+	}
+
+	if svc.HazelcastNetworkPolicy {
+		charts.Files[fmt.Sprintf("templates/%s/networkpolicy.yaml", svc.Name)] =
+			hazelcastNetworkPolicy(svc)
 	}
 
 	listenPort := svc.ListenPort
