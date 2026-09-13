@@ -26,6 +26,10 @@ rules:
       - deployments
       - statefulsets
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # Namespaced RBAC emitted by the generated service chart
   # (e.g. <service>-pod-reader).
