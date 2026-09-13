@@ -1114,6 +1114,30 @@ failureThreshold: 60
 {{- end }}
 
 {{/*
+Liveness/readiness for eventbus only. eventbus embeds its Kafka broker in its
+own JVM, so a restart is also a broker restart: every downstream Subscribe RPC
+reconnects at once (~25 sessions within one second) and the consumer groups
+rebalance. Measured partition-assignment waits in that window are 87-135s, and
+eventbus answers NOT_SERVING for the duration because its health check probes
+Kafka. The shared 30s budget (period 10 x threshold 3) therefore killed it
+mid-rebalance on every restart, and each kill made the next rebalance dirtier —
+7 restarts into CrashLoopBackOff before this was raised.
+
+300s matches the order of magnitude startupProbe8443 already allows for a cold
+start, because a post-restart rebalance is functionally a second cold start.
+eventbus's own UNHEALTHY_STREAK_THRESHOLD trips first at ~240s, so the pod is
+normally restarted by its own verdict and this probe is the backstop.
+*/}}
+{{- define "schematic.grpcProbeEventbus" -}}
+grpc:
+  port: 8444
+initialDelaySeconds: 10
+periodSeconds: 10
+timeoutSeconds: 5
+failureThreshold: 30
+{{- end }}
+
+{{/*
 Startup probe for stratum only. Cold start now includes warm Lucene index open
 plus redo-log replay, which exceeds the shared 300s budget above and got the
 pod SIGTERM'd mid-replay on a live rolling restart. ~30 minutes total.
@@ -1617,6 +1641,12 @@ spec:
 	// longer budget; the shared helper still applies to every other service.
 	if svc.Name == "stratum" {
 		startupProbeHelper = "schematic.startupProbeStratum"
+	}
+	// eventbus needs a far longer liveness budget than the shared 30s: its
+	// embedded broker makes every restart a rebalance storm it must be allowed
+	// to finish. See schematic.grpcProbeEventbus.
+	if svc.Name == "eventbus" {
+		probeHelper = "schematic.grpcProbeEventbus"
 	}
 
 	if svc.IsStatefulSet {

@@ -1261,3 +1261,88 @@ func TestLlmCredentialTenantOwnedServiceConfigsArePackagedAsSecrets(t *testing.T
 		}
 	}
 }
+
+// TestEventbusGetsALongerLivenessBudget guards the k8s half of the 2026-09-13
+// eventbus crash loop.
+//
+// eventbus embeds its Kafka broker in its own JVM, so restarting the pod also
+// restarts the broker: every downstream Subscribe RPC reconnects at once (~25
+// sessions inside one second on the live fleet) and the consumer groups
+// rebalance. eventbus's health check probes Kafka, so it answers NOT_SERVING
+// for as long as that takes — measured at 87-135s.
+//
+// The shared helper allows periodSeconds 10 x failureThreshold 3 = 30s, so the
+// kubelet killed eventbus mid-rebalance on every restart, and each kill made
+// the next rebalance dirtier: 7 restarts into CrashLoopBackOff. A post-restart
+// rebalance is functionally a second cold start and needs a cold-start budget.
+//
+// eventbus's own UNHEALTHY_STREAK_THRESHOLD reports UNHEALTHY at ~240s, so the
+// pod is normally restarted by its own verdict and this probe is the backstop —
+// which is why this budget must stay LONGER than that 240s.
+func TestEventbusGetsALongerLivenessBudget(t *testing.T) {
+	src, err := os.ReadFile("generator.go")
+	if err != nil {
+		t.Fatalf("read generator.go: %v", err)
+	}
+	body := string(src)
+
+	if !strings.Contains(body, `{{- define "schematic.grpcProbeEventbus" -}}`) {
+		t.Fatal("the schematic.grpcProbeEventbus helper is missing")
+	}
+	if !strings.Contains(body, `if svc.Name == "eventbus" {`) ||
+		!strings.Contains(body, `probeHelper = "schematic.grpcProbeEventbus"`) {
+		t.Error("eventbus must select schematic.grpcProbeEventbus as its probe helper")
+	}
+
+	// Pull the helper body out and check the budget it actually encodes.
+	i := strings.Index(body, `{{- define "schematic.grpcProbeEventbus" -}}`)
+	j := strings.Index(body[i:], "{{- end }}")
+	if j < 0 {
+		t.Fatal("schematic.grpcProbeEventbus is not terminated")
+	}
+	helper := body[i : i+j]
+
+	if !strings.Contains(helper, "grpc:\n  port: 8444") {
+		t.Error("the eventbus probe must query grpc.health.v1 on the plaintext port 8444")
+	}
+	if strings.Contains(helper, "tcpSocket") {
+		t.Error("a TCP accept stays true while eventbus's guts are dead")
+	}
+	if !strings.Contains(helper, "timeoutSeconds: 5") {
+		t.Error("the eventbus probe needs timeoutSeconds above the 1s default, or the JVM flaps")
+	}
+
+	period := probeFieldSeconds(t, helper, "periodSeconds")
+	threshold := probeFieldSeconds(t, helper, "failureThreshold")
+	budget := period * threshold
+
+	// Must clear the worst rebalance actually measured (135786ms), with margin.
+	if budget < 270 {
+		t.Errorf("eventbus liveness budget is %ds (period %d x threshold %d); needs >= 270s to "+
+			"clear the observed 136s rebalance with margin", budget, period, threshold)
+	}
+	// Must stay behind eventbus's own 240s UNHEALTHY_STREAK_THRESHOLD so the
+	// service's own verdict is what restarts it and this stays the backstop.
+	if budget <= 240 {
+		t.Errorf("eventbus liveness budget is %ds, which trips at or before eventbus's own "+
+			"240s health verdict; the kubelet must be the backstop, not the trigger", budget)
+	}
+}
+
+// probeFieldSeconds reads an integer "<field>: N" out of a rendered probe helper.
+func probeFieldSeconds(t *testing.T, helper, field string) int {
+	t.Helper()
+	for _, line := range strings.Split(helper, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, field+":") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(strings.TrimPrefix(line, field+":")), "%d", &n); err != nil {
+			t.Fatalf("parse %s from %q: %v", field, line, err)
+		}
+		return n
+	}
+	t.Fatalf("probe helper does not set %s:\n%s", field, helper)
+	return 0
+}
