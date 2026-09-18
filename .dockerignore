@@ -1,0 +1,4 @@
+# The image is one static binary; nothing else in this tree belongs in the
+# build context (model/ alone is tens of MB of generated code).
+*
+!bin/operator
