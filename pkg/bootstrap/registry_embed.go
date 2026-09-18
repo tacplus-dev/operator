@@ -13,5 +13,13 @@ import _ "embed"
 // because registry.json is ~26MB: emitting an embed for it in every service's
 // model would bloat every binary in the fleet for the sake of this one caller.
 //
+// A stale copy is a silent, live-affecting bug: the delegate authorization
+// graph (registry.go) is computed from it, so a rebuild that regenerated model/
+// without refreshing this copy ships an operator that does not know about
+// services added since. `go generate ./pkg/bootstrap` refreshes it, and
+// TestEmbeddedRegistryMatchesGeneratedModel fails the package's tests while
+// the two differ.
+//
+//go:generate cp ../../model/registry.json registry.json
 //go:embed registry.json
 var registryJSON []byte
