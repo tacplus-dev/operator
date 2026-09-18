@@ -8,11 +8,10 @@ import (
 	"syscall"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
@@ -20,6 +19,8 @@ import (
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
+	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
 )
 
@@ -333,6 +334,32 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg.ExternalCertPem = gatewayOpts.ExternalCertPEM
 		gwCfg.ExternalKeyPem = gatewayOpts.ExternalKeyPEM
 		gwCfg.RootCa = gatewayOpts.RootCAs
+	}
+
+	// Seed the real llm_credential into kernel's services holder for every
+	// service named in llm_credential_services. Kernel writes each holder entry
+	// to that service's ConfigState boundary on config load, and the generated
+	// chassis takes a service's typed Config only from there — the copy injected
+	// into the service's own bootstrap YAML above is never read for this field.
+	// The list is config-driven, so the holder entry is resolved by name
+	// (<service>_config) rather than hardcoded per service.
+	if cred := cfg.GetLlmCredential(); cred != "" {
+		if kernelConfig.Configs == nil {
+			kernelConfig.Configs = &protoServicesConfig.Services{}
+		}
+		holder := kernelConfig.Configs.ProtoReflect()
+		for _, name := range cfg.GetLlmCredentialServices() {
+			fd := holder.Descriptor().Fields().ByName(protoreflect.Name(name + "_config"))
+			if fd == nil || fd.Message() == nil {
+				return nil, fmt.Errorf("llm_credential_services names %q, but kernel's services holder has no %s_config entry", name, name)
+			}
+			svcCfg := holder.Mutable(fd).Message()
+			credFd := svcCfg.Descriptor().Fields().ByName("llm_credential")
+			if credFd == nil || credFd.Kind() != protoreflect.StringKind {
+				return nil, fmt.Errorf("llm_credential_services names %q, but its Config declares no llm_credential string field", name)
+			}
+			svcCfg.Set(credFd, protoreflect.ValueOfString(cred))
+		}
 	}
 
 	// Save crypto after all mutations (kernel TLS, kmaker signing CA, gateway external TLS).
