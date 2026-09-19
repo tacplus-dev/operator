@@ -20,14 +20,14 @@
 package helm
 
 import (
-	"sort"
-	"strings"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"text/template"
 
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
@@ -769,7 +769,10 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
+			// Measured 2026-09-19 on the live fleet: ~30m steady. 250m reserved
+			// 8x what it used and, with three fleets' worth of 250m Java pods,
+			// left the 2-vCPU nodes at 99% requested while 6% busy.
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "100m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
@@ -783,7 +786,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// believing it was a cold boot, replaying the whole event log.
 		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
-			MemRequest:   "1Gi", MemLimit: "2Gi", CpuRequest: "250m", JavaHeap: "1g", JavaHeapMin: "128m"}),
+			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
+			// record store is I/O-bound, not CPU-bound. Same reasoning as eventbus.
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
@@ -1017,9 +1022,9 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 
 	var buf bytes.Buffer
 	if err := valuesTmpl.Execute(&buf, map[string]any{
-		"Namespace":        ns,
-		"Services":         svcs,
-		"Dev":              cfg.Dev || os.Getenv("SCHEMATIC_LOCAL_IMAGES") != "",
+		"Namespace":         ns,
+		"Services":          svcs,
+		"Dev":               cfg.Dev || os.Getenv("SCHEMATIC_LOCAL_IMAGES") != "",
 		"PerReplicaConfigs": perReplica,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
