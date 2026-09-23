@@ -36,3 +36,11 @@ rules:
     resources:
       - tokenreviews
     verbs: ["create"]
+
+  # Before growing a StatefulSet's PVCs to a bumped volumeClaimTemplates size,
+  # the reconciler checks the PVC's StorageClass sets allowVolumeExpansion.
+  # StorageClasses are cluster-scoped. The PVCs themselves are namespaced and
+  # granted by templates/role.yaml.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]

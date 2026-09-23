@@ -33,12 +33,18 @@ import (
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
 	helmrelease "helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/releaseutil"
 	helmdriver "helm.sh/helm/v3/pkg/storage/driver"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/rest"
@@ -434,6 +440,9 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 		if err := r.removeKernelHotfixDrift(ctx, ns); err != nil {
 			return fmt.Errorf("removing kernel hotfix drift: %w", err)
 		}
+		if err := r.reconcileImmutableStatefulSetFields(ctx, ns, ch, svcValues); err != nil {
+			return fmt.Errorf("reconciling immutable statefulset fields: %w", err)
+		}
 		return r.helmUpgrade(actionCfg, ch, svcValues)
 	}
 }
@@ -646,6 +655,281 @@ func (r *Reconciler) removeKernelHotfixDrift(ctx context.Context, ns string) err
 		)
 	}
 	return r.client.Update(ctx, &st)
+}
+
+// reconcileImmutableStatefulSetFields brings live StatefulSets into a shape the
+// coming Helm upgrade can patch.
+//
+// Kubernetes forbids patching everything in a StatefulSet's spec except
+// replicas, ordinals, template, updateStrategy, persistentVolumeClaimRetentionPolicy
+// and minReadySeconds. A chart change to any other field — most commonly a
+// volumeClaimTemplates storage bump — makes the whole `helm upgrade` fail at that
+// resource, which leaves every service after it in the single combined release
+// un-rolled. So the forbidden change is serviced here, before Helm sees it:
+//
+//   - A grown volumeClaimTemplates storage request and nothing else: the live
+//     PVCs are expanded in place first (when their StorageClass allows it), then
+//     the StatefulSet is deleted with an orphan propagation policy like any
+//     other forbidden-field case below — its own template still names the old
+//     size, so left alone the very next Helm upgrade hits the identical
+//     rejection Kubernetes gave this one. Expanding first means the PVCs the
+//     recreated StatefulSet re-adopts are already the right size.
+//   - Anything else: the StatefulSet is deleted with an orphan propagation
+//     policy so its pods keep running, and the Helm upgrade recreates it and
+//     re-adopts them.
+func (r *Reconciler) reconcileImmutableStatefulSetFields(ctx context.Context, ns string, ch *helmchart.Chart, vals map[string]interface{}) error {
+	desired, err := renderStatefulSets(ch, ns, vals)
+	if err != nil {
+		return fmt.Errorf("rendering chart statefulsets: %w", err)
+	}
+	if len(desired) == 0 {
+		return nil
+	}
+
+	var liveList appsv1.StatefulSetList
+	if err := r.client.List(ctx, &liveList, &client.ListOptions{
+		Namespace:     ns,
+		LabelSelector: labels.SelectorFromSet(labels.Set{helm.ManagedByLabel: helm.ManagedByValue}),
+	}); err != nil {
+		return fmt.Errorf("listing statefulsets: %w", err)
+	}
+
+	for i := range liveList.Items {
+		live := &liveList.Items[i]
+		want := desired[live.Name]
+		if want == nil {
+			continue
+		}
+
+		forbidden, grown := immutableStatefulSetDiff(live, want)
+		if len(forbidden) == 0 && len(grown) == 0 {
+			continue
+		}
+
+		if len(grown) > 0 {
+			r.expandStatefulSetPVCs(ctx, live, grown)
+		}
+
+		fields := forbidden
+		if len(grown) > 0 {
+			for name := range grown {
+				fields = append(fields, "volumeClaimTemplates["+name+"].storage (grown)")
+			}
+		}
+		r.log.Warn("recreating StatefulSet: the chart changes fields Kubernetes forbids patching; deleting with orphaned pods so the helm upgrade recreates it",
+			zap.String("namespace", ns),
+			zap.String("name", live.Name),
+			zap.Strings("fields", fields),
+		)
+		if err := r.client.Delete(ctx, live, client.PropagationPolicy(metav1.DeletePropagationOrphan)); err != nil {
+			return fmt.Errorf("orphan-deleting statefulset %s: %w", live.Name, err)
+		}
+	}
+	return nil
+}
+
+// renderStatefulSets renders the chart client-side, exactly as the coming
+// upgrade will render it, and returns the StatefulSets it declares by name.
+func renderStatefulSets(ch *helmchart.Chart, ns string, vals map[string]interface{}) (map[string]*appsv1.StatefulSet, error) {
+	install := action.NewInstall(new(action.Configuration))
+	install.ReleaseName = releaseName
+	install.Namespace = ns
+	install.DryRun = true
+	install.ClientOnly = true
+
+	rel, err := install.Run(ch, vals)
+	if err != nil {
+		return nil, fmt.Errorf("helm dry-run render: %w", err)
+	}
+
+	out := map[string]*appsv1.StatefulSet{}
+	for _, doc := range releaseutil.SplitManifests(rel.Manifest) {
+		var head struct {
+			Kind string `json:"kind"`
+		}
+		if err := k8syaml.Unmarshal([]byte(doc), &head); err != nil || head.Kind != "StatefulSet" {
+			continue
+		}
+		var st appsv1.StatefulSet
+		if err := k8syaml.Unmarshal([]byte(doc), &st); err != nil {
+			return nil, fmt.Errorf("decoding rendered statefulset: %w", err)
+		}
+		out[st.Name] = &st
+	}
+	return out, nil
+}
+
+// immutableStatefulSetDiff compares the StatefulSet spec fields Kubernetes
+// refuses to patch on a live object. It returns the ones that genuinely differ,
+// and separately, keyed by volumeClaimTemplate name, the storage requests that
+// only grew — the one forbidden change that can be serviced by expanding the
+// live PVCs instead of recreating the StatefulSet.
+//
+// Only fields the chart actually sets are compared. A live StatefulSet carries
+// server-side defaults (volumeMode, storageClassName, the whole status subtree)
+// that the rendered manifest omits, and comparing those would report drift on
+// every reconcile and orphan-delete the fleet in a loop.
+func immutableStatefulSetDiff(live, desired *appsv1.StatefulSet) ([]string, map[string]resource.Quantity) {
+	var forbidden []string
+	grown := map[string]resource.Quantity{}
+
+	if desired.Spec.ServiceName != "" && desired.Spec.ServiceName != live.Spec.ServiceName {
+		forbidden = append(forbidden, "spec.serviceName")
+	}
+	if desired.Spec.PodManagementPolicy != "" && desired.Spec.PodManagementPolicy != live.Spec.PodManagementPolicy {
+		forbidden = append(forbidden, "spec.podManagementPolicy")
+	}
+	if desired.Spec.Selector != nil && !apiequality.Semantic.DeepEqual(desired.Spec.Selector, live.Spec.Selector) {
+		forbidden = append(forbidden, "spec.selector")
+	}
+
+	if len(desired.Spec.VolumeClaimTemplates) != len(live.Spec.VolumeClaimTemplates) {
+		return append(forbidden, "spec.volumeClaimTemplates"), nil
+	}
+
+	liveTemplates := make(map[string]*corev1.PersistentVolumeClaim, len(live.Spec.VolumeClaimTemplates))
+	for i := range live.Spec.VolumeClaimTemplates {
+		liveTemplates[live.Spec.VolumeClaimTemplates[i].Name] = &live.Spec.VolumeClaimTemplates[i]
+	}
+
+	for i := range desired.Spec.VolumeClaimTemplates {
+		want := &desired.Spec.VolumeClaimTemplates[i]
+		have, ok := liveTemplates[want.Name]
+		if !ok {
+			forbidden = append(forbidden, "spec.volumeClaimTemplates["+want.Name+"]")
+			continue
+		}
+		if !apiequality.Semantic.DeepEqual(want.Spec.AccessModes, have.Spec.AccessModes) ||
+			(want.Spec.StorageClassName != nil && !apiequality.Semantic.DeepEqual(want.Spec.StorageClassName, have.Spec.StorageClassName)) ||
+			(want.Spec.VolumeMode != nil && !apiequality.Semantic.DeepEqual(want.Spec.VolumeMode, have.Spec.VolumeMode)) ||
+			(want.Spec.Selector != nil && !apiequality.Semantic.DeepEqual(want.Spec.Selector, have.Spec.Selector)) {
+			forbidden = append(forbidden, "spec.volumeClaimTemplates["+want.Name+"].spec")
+			continue
+		}
+
+		wantSize := want.Spec.Resources.Requests[corev1.ResourceStorage]
+		haveSize := have.Spec.Resources.Requests[corev1.ResourceStorage]
+		switch wantSize.Cmp(haveSize) {
+		case 1:
+			grown[want.Name] = wantSize
+		case -1:
+			// A PVC cannot shrink, so there is nothing to patch: recreate the
+			// StatefulSet so at least its template matches the chart again.
+			forbidden = append(forbidden, "spec.volumeClaimTemplates["+want.Name+"].spec.resources.requests.storage")
+		}
+	}
+
+	if len(forbidden) > 0 {
+		return forbidden, nil
+	}
+	return nil, grown
+}
+
+// expandStatefulSetPVCs grows the live PVCs of a StatefulSet whose chart
+// volumeClaimTemplates asked for more storage. A StatefulSet's PVCs carry the
+// labels of its selector and are named <template>-<statefulset>-<ordinal>.
+//
+// Nothing here fails the reconcile: a PVC that cannot be grown is a problem for
+// that one volume, not a reason to leave the rest of the fleet un-rolled.
+func (r *Reconciler) expandStatefulSetPVCs(ctx context.Context, st *appsv1.StatefulSet, grown map[string]resource.Quantity) {
+	selector, err := metav1.LabelSelectorAsSelector(st.Spec.Selector)
+	if err != nil {
+		r.log.Warn("cannot expand StatefulSet PVCs: unusable selector",
+			zap.String("name", st.Name),
+			zap.Error(err),
+		)
+		return
+	}
+
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := r.client.List(ctx, &pvcs, &client.ListOptions{
+		Namespace:     st.Namespace,
+		LabelSelector: selector,
+	}); err != nil {
+		r.log.Warn("cannot expand StatefulSet PVCs: listing them failed",
+			zap.String("name", st.Name),
+			zap.Error(err),
+		)
+		return
+	}
+
+	for template, size := range grown {
+		prefix := template + "-" + st.Name + "-"
+		for i := range pvcs.Items {
+			pvc := &pvcs.Items[i]
+			if !strings.HasPrefix(pvc.Name, prefix) {
+				continue
+			}
+			r.expandPVC(ctx, pvc, st.Name, size)
+		}
+	}
+}
+
+func (r *Reconciler) expandPVC(ctx context.Context, pvc *corev1.PersistentVolumeClaim, stName string, size resource.Quantity) {
+	current := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	if size.Cmp(current) <= 0 {
+		return
+	}
+	if !r.storageClassAllowsExpansion(ctx, pvc) {
+		return
+	}
+
+	patch := client.MergeFrom(pvc.DeepCopy())
+	if pvc.Spec.Resources.Requests == nil {
+		pvc.Spec.Resources.Requests = corev1.ResourceList{}
+	}
+	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = size
+	if err := r.client.Patch(ctx, pvc, patch); err != nil {
+		r.log.Warn("expanding PVC failed; StatefulSet left as is",
+			zap.String("statefulset", stName),
+			zap.String("pvc", pvc.Name),
+			zap.Error(err),
+		)
+		return
+	}
+
+	r.log.Warn("expanded StatefulSet PVC to the size the chart now asks for",
+		zap.String("statefulset", stName),
+		zap.String("pvc", pvc.Name),
+		zap.String("from", current.String()),
+		zap.String("to", size.String()),
+	)
+}
+
+// storageClassAllowsExpansion reports whether the PVC's StorageClass permits
+// growing a bound volume. An unknown or non-expandable StorageClass is a loud
+// warning and a skip, never an error: the operator must not fail the whole
+// reconcile over one volume it cannot grow.
+func (r *Reconciler) storageClassAllowsExpansion(ctx context.Context, pvc *corev1.PersistentVolumeClaim) bool {
+	name := ""
+	if pvc.Spec.StorageClassName != nil {
+		name = *pvc.Spec.StorageClassName
+	}
+	if name == "" {
+		r.log.Warn("not expanding PVC: it names no StorageClass, so volume expansion cannot be confirmed safe",
+			zap.String("pvc", pvc.Name),
+		)
+		return false
+	}
+
+	var sc storagev1.StorageClass
+	if err := r.client.Get(ctx, types.NamespacedName{Name: name}, &sc); err != nil {
+		r.log.Warn("not expanding PVC: its StorageClass could not be read",
+			zap.String("pvc", pvc.Name),
+			zap.String("storage_class", name),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	if sc.AllowVolumeExpansion == nil || !*sc.AllowVolumeExpansion {
+		r.log.Warn("not expanding PVC: its StorageClass does not allow volume expansion; grow the volume by hand or recreate the StatefulSet",
+			zap.String("pvc", pvc.Name),
+			zap.String("storage_class", name),
+		)
+		return false
+	}
+	return true
 }
 
 func containsKernelHotfix(values []string) bool {
