@@ -1369,6 +1369,23 @@ spec:
 `, svc.Name, svc.Name, svc.Name, memberPorts.String(), listenPort, grpcHealthProbePort))
 }
 
+// loadBalancerIPLine pins an external LoadBalancer Service to the cluster's
+// reserved static external address. Both the gateway's -lb Service (TCP/443)
+// and the letsencrypt -acme Service (TCP/80) take the same address: fqdn's
+// public A record resolves to it, and ACME HTTP-01 validation connects to
+// port 80 on that same name. Without this the provider hands each Service its
+// own ephemeral address, so a re-render silently moves the gateway off the
+// address DNS points at.
+//
+// An empty external_ip renders nothing, leaving local and dev clusters on the
+// provider-assigned address they have always had.
+func loadBalancerIPLine(cfg *protoOperator.Config) string {
+	if cfg.GetExternalIp() == "" {
+		return ""
+	}
+	return fmt.Sprintf("  loadBalancerIP: %s\n", cfg.GetExternalIp())
+}
+
 func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
 	ns := cfg.Namespace
 	if ns == "" {
@@ -1551,13 +1568,13 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 spec:
   type: LoadBalancer
-  selector:
+%s  selector:
     app: %s
   ports:
   - name: https
     port: %d
     targetPort: %d
-`, name, name, svc.Port, listenPort))
+`, name, loadBalancerIPLine(cfg), name, svc.Port, listenPort))
 		}
 
 		// LoadBalancer for ACME HTTP-01 challenge. External port 80, targetPort = AcmePort.
@@ -1570,13 +1587,13 @@ metadata:
   namespace: {{ .Values.global.namespace }}
 spec:
   type: LoadBalancer
-  selector:
+%s  selector:
     app: %s
   ports:
   - name: http
     port: 80
     targetPort: %d
-`, name, name, svc.AcmePort))
+`, name, loadBalancerIPLine(cfg), name, svc.AcmePort))
 		}
 	}
 

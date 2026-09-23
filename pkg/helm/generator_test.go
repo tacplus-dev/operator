@@ -1346,3 +1346,66 @@ func probeFieldSeconds(t *testing.T, helper, field string) int {
 	t.Fatalf("probe helper does not set %s:\n%s", field, helper)
 	return 0
 }
+
+// TestExternalIPPinsBothExternalLoadBalancers guards the static-address
+// reservation. gateway0-lb carried spec.loadBalancerIP: 34.70.146.195 in the
+// live cluster only because it was kubectl apply'd by hand — the generator
+// rendered no such line, so the next routine re-render would have handed the
+// gateway a fresh ephemeral address and broken the A record pointing at it.
+// The letsencrypt -acme Service must take the SAME address: ACME HTTP-01
+// validation connects to port 80 on the hostname, which resolves to the
+// gateway's address, so an -acme Service on its own ephemeral IP is never
+// reached.
+func TestExternalIPPinsBothExternalLoadBalancers(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace:  "schematic",
+		Fqdn:       "console.seabeam.net",
+		Port:       443,
+		ExternalIp: "34.70.146.195",
+		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			KmakerNodes:  1,
+			GatewayNodes: 1,
+		},
+	})
+
+	gatewayLB := chartFile(t, charts, "templates/gateway/service-0-lb.yaml")
+	if !strings.Contains(gatewayLB, "  type: LoadBalancer\n  loadBalancerIP: 34.70.146.195\n") {
+		t.Errorf("gateway -lb Service does not pin the reserved address:\n%s", gatewayLB)
+	}
+
+	acme := chartFile(t, charts, "templates/letsencrypt/service-0-acme.yaml")
+	if !strings.Contains(acme, "  type: LoadBalancer\n  loadBalancerIP: 34.70.146.195\n") {
+		t.Errorf("letsencrypt -acme Service does not pin the reserved address:\n%s", acme)
+	}
+	if !strings.Contains(acme, "  - name: http\n    port: 80\n") {
+		t.Errorf("the -acme Service must serve port 80 — the port HTTP-01 validation connects to:\n%s", acme)
+	}
+}
+
+// TestUnsetExternalIPRendersNoLoadBalancerIP keeps clusters that reserve no
+// address on the provider-assigned one. An empty external_ip rendering
+// "loadBalancerIP:" with no value is a chart that does not install.
+func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Fqdn:      "cavalier.localtest.me",
+		Port:      8443,
+		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			KmakerNodes:  1,
+			GatewayNodes: 1,
+		},
+	})
+
+	for _, path := range []string{
+		"templates/gateway/service-0-lb.yaml",
+		"templates/letsencrypt/service-0-acme.yaml",
+	} {
+		if body := chartFile(t, charts, path); strings.Contains(body, "loadBalancerIP") {
+			t.Errorf("%s names loadBalancerIP while external_ip is unset:\n%s", path, body)
+		}
+	}
+}

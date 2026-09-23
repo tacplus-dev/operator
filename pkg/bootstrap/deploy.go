@@ -428,12 +428,17 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		if err != nil {
 			return nil, err
 		}
-		letsencryptServiceConfigYAML, err = yaml.Marshal(map[string]any{
+		leSvc := map[string]any{
 			"fqdn":                           cfg.Fqdn,
 			"hostnames":                      []string{cfg.Fqdn},
 			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(8080)},
 			"renewal_check_interval_seconds": int64(3600),
-		})
+		}
+		// Only set when configured; letsencrypt's own default is admin@<fqdn>.
+		if email := cfg.GetTls().GetEmail(); email != "" {
+			leSvc["lets_encrypt_email"] = email
+		}
+		letsencryptServiceConfigYAML, err = yaml.Marshal(leSvc)
 		if err != nil {
 			return nil, fmt.Errorf("marshaling letsencrypt service config: %w", err)
 		}
