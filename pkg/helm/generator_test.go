@@ -499,7 +499,14 @@ func generateTestChart(t *testing.T, cfg *protoOperator.Config) *Charts {
 // services carry registry.json's (spec.service).tenant_owned annotation.
 func generateTestChartWithTenantOwned(t *testing.T, cfg *protoOperator.Config, tenantOwned map[string]bool) *Charts {
 	t.Helper()
-	charts, err := New("test", "1.2", nil, tenantOwned).Generate(cfg, 1)
+	return generateTestChartWithPin(t, cfg, tenantOwned, nil)
+}
+
+// generateTestChartWithPin adds the (spec.service).pinned_tenant half: some of
+// those tenant-owned services are pinned to a single tenant.
+func generateTestChartWithPin(t *testing.T, cfg *protoOperator.Config, tenantOwned map[string]bool, pinnedTenant map[string]string) *Charts {
+	t.Helper()
+	charts, err := New("test", "1.2", nil, tenantOwned, pinnedTenant).Generate(cfg, 1)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -938,7 +945,7 @@ func TestWriteToDiskRemovesSupersededConfigMapTemplate(t *testing.T) {
 		Namespace: "schematic",
 		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	})
-	if err := New("test", "1.2", nil, nil).WriteToDisk(charts, dir); err != nil {
+	if err := New("test", "1.2", nil, nil, nil).WriteToDisk(charts, dir); err != nil {
 		t.Fatalf("WriteToDisk() error = %v", err)
 	}
 
@@ -1016,7 +1023,7 @@ func TestWriteToDiskWritesChartFilesPrivate(t *testing.T) {
 		t.Fatal("generated chart has no templates/kernel/secret-0.yaml — test would not cover key material")
 	}
 
-	if err := New("test", "1.2", nil, nil).WriteToDisk(charts, dir); err != nil {
+	if err := New("test", "1.2", nil, nil, nil).WriteToDisk(charts, dir); err != nil {
 		t.Fatalf("WriteToDisk() error = %v", err)
 	}
 
@@ -1100,7 +1107,7 @@ func TestTenantOwnedServiceRendersOneWorkloadPerTenant(t *testing.T) {
 
 	// The reconciler prunes deployments not in this set; per-tenant workloads
 	// have to be in it or every reconcile would delete them.
-	names := New("test", "1.2", nil, map[string]bool{"docmanager": true}).ExpectedDeploymentNames(&protoOperator.Config{
+	names := New("test", "1.2", nil, map[string]bool{"docmanager": true}, nil).ExpectedDeploymentNames(&protoOperator.Config{
 		Namespace: "schematic",
 		Tenants:   []string{"acme", "beta"},
 		Topology: &protoOperator.Topology{
@@ -1116,6 +1123,90 @@ func TestTenantOwnedServiceRendersOneWorkloadPerTenant(t *testing.T) {
 	}
 	if names["docmanager0"] {
 		t.Errorf("ExpectedDeploymentNames still expects the collapsed docmanager0: %v", names)
+	}
+}
+
+// TestPinnedTenantOwnedServiceRendersOneWorkload covers the other cardinality
+// (spec.service) can declare: a tenant-owned service that also carries
+// pinned_tenant is ONE instance, in that tenant, however many tenants the
+// cluster lists. A service whose rows are keyed by something other than the
+// tenant — one row per person, not per company — is split in half by the
+// per-tenant replication tenant_owned alone gives it.
+func TestPinnedTenantOwnedServiceRendersOneWorkload(t *testing.T) {
+	cfg := &protoOperator.Config{
+		Namespace: "schematic",
+		Tenants:   []string{"acme", "beta", "people"},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"profile": 1, "docmanager": 1},
+		},
+	}
+	charts := generateTestChartWithPin(t, cfg,
+		map[string]bool{"profile": true, "docmanager": true},
+		map[string]string{"profile": "people"})
+
+	// The pinned service exists exactly once, in the tenant it names.
+	dep := chartFile(t, charts, "templates/profile-people/deployment.yaml")
+	if !strings.Contains(dep, "serviceAccountName: profile-people") {
+		t.Errorf("pinned profile does not run as service account profile-people\n--- deployment ---\n%s", dep)
+	}
+	if _, ok := charts.Files["templates/profile/deployment.yaml"]; ok {
+		t.Errorf("pinned profile also rendered a shared deployment")
+	}
+	for _, tenant := range []string{"acme", "beta"} {
+		if _, ok := charts.Files[fmt.Sprintf("templates/profile-%s/deployment.yaml", tenant)]; ok {
+			t.Errorf("pinned profile rendered an instance for tenant %q as well", tenant)
+		}
+	}
+
+	// The unpinned tenant-owned service in the same cluster is unaffected: one
+	// instance per configured tenant, exactly as before.
+	for _, tenant := range []string{"acme", "beta", "people"} {
+		if _, ok := charts.Files[fmt.Sprintf("templates/docmanager-%s/deployment.yaml", tenant)]; !ok {
+			t.Errorf("unpinned tenant-owned docmanager lost its %q instance; files: %v", tenant, chartFileNames(charts))
+		}
+	}
+
+	// The reconciler prunes what ExpectedDeploymentNames does not list, so the
+	// single pinned workload has to be in it and the per-tenant ones must not.
+	names := New("test", "1.2", nil,
+		map[string]bool{"profile": true, "docmanager": true},
+		map[string]string{"profile": "people"}).ExpectedDeploymentNames(cfg, 1)
+	if !names["profile-people0"] {
+		t.Errorf("ExpectedDeploymentNames missing profile-people0: %v", names)
+	}
+	for _, unwanted := range []string{"profile0", "profile-acme0", "profile-beta0"} {
+		if names[unwanted] {
+			t.Errorf("ExpectedDeploymentNames expects %q for a pinned service: %v", unwanted, names)
+		}
+	}
+}
+
+// TestPinnedTenantNotConfiguredFailsGeneration: a pin names where the service's
+// one instance lives, so a pin to a tenant the config does not list has no
+// honest rendering — dropping the service silently would take it out of the
+// fleet, and rendering it anyway would give it an identity kernel mints for
+// nobody. Reconciliation fails instead.
+func TestPinnedTenantNotConfiguredFailsGeneration(t *testing.T) {
+	_, err := New("test", "1.2", nil,
+		map[string]bool{"profile": true},
+		map[string]string{"profile": "people"}).Generate(&protoOperator.Config{
+		Namespace: "schematic",
+		Tenants:   []string{"acme", "beta"},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"profile": 1},
+		},
+	}, 1)
+	if err == nil {
+		t.Fatal("Generate accepted a service pinned to a tenant config.tenants does not list")
+	}
+	for _, want := range []string{"profile", "people", "pinned_tenant"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err.Error(), want)
+		}
 	}
 }
 

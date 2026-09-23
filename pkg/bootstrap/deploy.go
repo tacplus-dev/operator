@@ -266,6 +266,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	if err != nil {
 		return nil, fmt.Errorf("reading tenant-owned services from registry: %w", err)
 	}
+	pinnedTenant, err := pinnedTenantServices()
+	if err != nil {
+		return nil, fmt.Errorf("reading pinned-tenant services from registry: %w", err)
+	}
 	appConfigs := map[string][]byte{}
 	for _, name := range AppServiceNames(cfg) {
 		var extra func(map[string]any)
@@ -278,7 +282,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		if err != nil {
 			return nil, fmt.Errorf("building config for app service %q: %w", name, err)
 		}
-		for _, inst := range serviceInstances(cfg, name, tenantOwned) {
+		for _, inst := range serviceInstances(cfg, name, tenantOwned, pinnedTenant) {
 			appConfigs[inst.InstanceName()] = y
 		}
 	}

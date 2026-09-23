@@ -93,7 +93,11 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
 	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
+	pinnedTenant, err := PinnedTenantServices()
+	if err != nil {
+		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err
@@ -191,7 +195,11 @@ func runApply(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
 	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
+	pinnedTenant, err := PinnedTenantServices()
+	if err != nil {
+		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err

@@ -142,19 +142,29 @@ func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, err
 	if err != nil {
 		return nil, err
 	}
+	pinnedTenant, err := pinnedTenantServices()
+	if err != nil {
+		return nil, err
+	}
 	var out []ServiceInstance
 	for _, svc := range DeployedKernelAuthServices(cfg) {
-		out = append(out, serviceInstances(cfg, svc, tenantOwned)...)
+		out = append(out, serviceInstances(cfg, svc, tenantOwned, pinnedTenant)...)
 	}
 	return out, nil
 }
 
 // serviceInstances expands one service name into the instances the operator
 // deploys for it: exactly one for a shared service, one per Config.tenants
-// entry for a tenant-owned one.
-func serviceInstances(cfg *protoOperator.Config, svc string, tenantOwned map[string]bool) []ServiceInstance {
+// entry for a tenant-owned one, and exactly one — in the pinned tenant — for a
+// tenant-owned service registry.json pins with (spec.service).pinned_tenant.
+// The helm generator refuses to render at all when a pinned tenant is not
+// configured, so nothing here has to second-guess the pin.
+func serviceInstances(cfg *protoOperator.Config, svc string, tenantOwned map[string]bool, pinnedTenant map[string]string) []ServiceInstance {
 	if !tenantOwned[svc] {
 		return []ServiceInstance{{Service: svc}}
+	}
+	if tenant, pinned := pinnedTenant[svc]; pinned {
+		return []ServiceInstance{{Service: svc, Tenant: tenant}}
 	}
 	out := make([]ServiceInstance, 0, len(cfg.GetTenants()))
 	for _, tenant := range cfg.GetTenants() {

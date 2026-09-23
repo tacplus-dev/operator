@@ -73,6 +73,12 @@ type Generator struct {
 	// in Config.tenants instead of once for the whole cluster. May be nil,
 	// which means every service is shared — the fleet's state today.
 	tenantOwned map[string]bool
+	// pinnedTenant maps a tenant-owned service name to the single tenant
+	// registry.json's (spec.service).pinned_tenant pins it to. Such a service
+	// gets exactly one instance, in that tenant, instead of one per entry in
+	// Config.tenants. May be nil, which means no service is pinned — the
+	// fleet's state today.
+	pinnedTenant map[string]string
 }
 
 // New returns a new Generator.
@@ -81,8 +87,11 @@ type Generator struct {
 // resolver provides per-service image tag resolution; pass nil to always use "latest".
 // tenantOwned names the services registry.json marks tenant_owned; pass nil for
 // a fleet with no tenant-owned services.
-func New(series, versionLock string, resolver TagResolver, tenantOwned map[string]bool) *Generator {
-	return &Generator{series: series, versionLock: versionLock, resolver: resolver, tenantOwned: tenantOwned}
+// pinnedTenant names, per tenant-owned service, the single tenant
+// registry.json's pinned_tenant pins it to; pass nil for a fleet with no
+// pinned services.
+func New(series, versionLock string, resolver TagResolver, tenantOwned map[string]bool, pinnedTenant map[string]string) *Generator {
+	return &Generator{series: series, versionLock: versionLock, resolver: resolver, tenantOwned: tenantOwned, pinnedTenant: pinnedTenant}
 }
 
 // TenantInstanceName returns the Kubernetes object name for one tenant's
@@ -93,11 +102,42 @@ func TenantInstanceName(svc, tenant string) string {
 	return svc + "-" + tenant
 }
 
+// checkPinnedTenants fails generation when a deployed service is pinned to a
+// tenant Config.tenants does not list. A pinned service has exactly one
+// instance and the pin names where it lives, so an unconfigured tenant is a
+// config error: rendering nothing would take the whole service out of the
+// fleet silently, and rendering it into a tenant that does not exist would give
+// it an identity kernel mints for nobody. An unpinned tenant-owned service
+// keeps the existing behaviour — no tenants configured means no instances.
+func (g *Generator) checkPinnedTenants(cfg *protoOperator.Config, topo *protoOperator.Topology) error {
+	if len(g.pinnedTenant) == 0 {
+		return nil
+	}
+	configured := make(map[string]bool, len(cfg.GetTenants()))
+	for _, t := range cfg.GetTenants() {
+		configured[t] = true
+	}
+	for _, name := range appServiceNames(topo) {
+		tenant, pinned := g.pinnedTenant[name]
+		if !pinned || !g.tenantOwned[name] {
+			continue
+		}
+		if !configured[tenant] {
+			return fmt.Errorf("service %q is pinned to tenant %q ((spec.service).pinned_tenant) but config.tenants does not list it: %v", name, tenant, cfg.GetTenants())
+		}
+	}
+	return nil
+}
+
 // Generate produces the full schematic Helm chart for the given config.
 // nodeCount is the number of schedulable Kubernetes nodes; it is used to
 // set gateway_nodes when topology.gateway_nodes == 0.
 func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts, error) {
 	topo := effectiveTopology(cfg, nodeCount)
+
+	if err := g.checkPinnedTenants(cfg, topo); err != nil {
+		return nil, err
+	}
 
 	charts := &Charts{Files: make(map[string][]byte)}
 
@@ -891,6 +931,16 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
 		if !g.tenantOwned[name] {
 			svcs = append(svcs, withKernelServiceAuth(base))
+			continue
+		}
+		// A pinned service is one instance in one tenant, never replicated:
+		// its rows are keyed by something other than the tenant, so a second
+		// instance would split them. Generate has already failed if the pinned
+		// tenant is not configured.
+		if tenant, pinned := g.pinnedTenant[name]; pinned {
+			inst := base
+			inst.Name = TenantInstanceName(name, tenant)
+			svcs = append(svcs, withKernelServiceAuth(inst))
 			continue
 		}
 		for _, tenant := range cfg.GetTenants() {

@@ -44,6 +44,12 @@ type registryService struct {
 	// operator runs one instance of this service per tenant. Absent (the proto3
 	// default, and what every entry in today's registry carries) means shared.
 	TenantOwned bool `json:"tenant_owned"`
+	// PinnedTenant mirrors ServiceInfo.pinned_tenant, which tacplus emits from
+	// the service-level (spec.service).pinned_tenant annotation. Non-empty
+	// means this tenant-owned service runs as exactly one instance, in that
+	// tenant, instead of one per configured tenant. Empty (the proto3 default,
+	// and what every entry in today's registry carries) means per-tenant.
+	PinnedTenant string `json:"pinned_tenant"`
 }
 
 type registryClientDep struct {
@@ -212,6 +218,45 @@ func tenantOwnedServicesFrom(data []byte) (map[string]bool, error) {
 		for _, svc := range node.Services {
 			if svc.TenantOwned {
 				out[node.Name] = true
+				return
+			}
+		}
+	})
+	return out, nil
+}
+
+// pinnedTenantServices returns, for each tenant-owned service that registry.json
+// pins, the single tenant it is pinned to. Like tenantOwnedServices this
+// annotation is the ONLY source of truth: the operator carries no list of
+// reserved tenants or singleton services that could disagree with the proto.
+//
+// A service absent from this map is the fleet's normal case — tenant-owned
+// means one instance per configured tenant. A service present in it gets
+// exactly one instance, in the named tenant, and reconciliation fails if that
+// tenant is not configured.
+func pinnedTenantServices() (map[string]string, error) {
+	return pinnedTenantServicesFrom(registryJSON)
+}
+
+// PinnedTenantServices exposes the pinned set to the helm generator and the
+// reconciler, for the same reason TenantOwnedServices does.
+func PinnedTenantServices() (map[string]string, error) {
+	return pinnedTenantServices()
+}
+
+func pinnedTenantServicesFrom(data []byte) (map[string]string, error) {
+	var root registryNode
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parsing registry.json: %w", err)
+	}
+	out := make(map[string]string)
+	walkNodes(&root, func(node *registryNode) {
+		if !strings.HasPrefix(node.FullPath, "services/") {
+			return
+		}
+		for _, svc := range node.Services {
+			if svc.PinnedTenant != "" {
+				out[node.Name] = svc.PinnedTenant
 				return
 			}
 		}

@@ -113,7 +113,11 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 	if err != nil {
 		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
 	}
-	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor(), tenantOwned)
+	pinnedTenant, err := PinnedTenantServices()
+	if err != nil {
+		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
+	}
+	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor(), tenantOwned, pinnedTenant)
 
 	// Register as a managed runnable so the manager starts it AFTER the k8s
 	// cache is ready. This prevents the "cache is not started" error when
@@ -139,7 +143,11 @@ func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
 	if err != nil {
 		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
 	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned)
+	pinnedTenant, err := PinnedTenantServices()
+	if err != nil {
+		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
+	}
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0)
 	if err != nil {
 		return err
