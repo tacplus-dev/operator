@@ -847,6 +847,75 @@ func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
 	}
 }
 
+// TestLetsencryptModeWiresGatewayPort80 covers the operator half of the
+// one-LoadBalancer design: the gateway owns the edge's port 80, so it is the
+// operator that must turn its plaintext listener on and tell it where the
+// letsencrypt HTTP-01 responder lives in-cluster. Neither field has a proto
+// default — the answer depends on external_tls_mode, which tacplus has no
+// conditional default for — so nothing else would set them, and a gateway with
+// an unset http_listener binds nothing at all while the LoadBalancer happily
+// forwards port 80 into a closed port.
+func TestLetsencryptModeWiresGatewayPort80(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "console.seabeam.net",
+		SpiffePrefix: "local.dev",
+		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kernelCfg, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
+	if err != nil {
+		t.Fatalf("parsing kernel bootstrap YAML: %v", err)
+	}
+	gwInKernel := kernelCfg.GetConfigs().GetGatewayConfig()
+	if gwInKernel == nil {
+		t.Fatal("kernel config has no GatewayConfig in services holder")
+	}
+
+	if got := gwInKernel.GetHttpListener(); got.GetHost() != "0.0.0.0" || got.GetPort() != gatewayHttpPort {
+		t.Errorf("gateway http_listener = %v, want 0.0.0.0:%d", got, gatewayHttpPort)
+	}
+	// The name must be the letsencrypt replica's ClusterIP Service in THIS
+	// namespace, in a form host.Host's FQDN assertion accepts.
+	acme := gwInKernel.GetAcmeBackend()
+	if acme.GetHost() != "letsencrypt0.cavalier.svc.cluster.local" || acme.GetPort() != letsencryptAcmePort {
+		t.Errorf("gateway acme_backend = %v, want letsencrypt0.cavalier.svc.cluster.local:%d", acme, letsencryptAcmePort)
+	}
+
+	// The responder it points at must actually be listening there.
+	leCfg := string(dc.LetsencryptServiceConfig)
+	if !strings.Contains(leCfg, "port: 8080") {
+		t.Errorf("letsencrypt http_listener does not match the gateway's acme_backend port:\n%s", leCfg)
+	}
+}
+
 func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
@@ -921,6 +990,15 @@ func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 	}
 	if len(gwInKernel.RootCa) == 0 {
 		t.Fatal("kernel gateway config root_ca is empty")
+	}
+	// Port 80 exists to carry ACME HTTP-01 challenges. Without letsencrypt
+	// there are none, and a listener bound here would only be a second
+	// plaintext surface.
+	if gwInKernel.GetHttpListener() != nil {
+		t.Errorf("cert_chain mode set an http_listener: %v", gwInKernel.GetHttpListener())
+	}
+	if gwInKernel.GetAcmeBackend() != nil {
+		t.Errorf("cert_chain mode set an acme_backend: %v", gwInKernel.GetAcmeBackend())
 	}
 }
 

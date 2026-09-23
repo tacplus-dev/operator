@@ -1347,16 +1347,16 @@ func probeFieldSeconds(t *testing.T, helper, field string) int {
 	return 0
 }
 
-// TestExternalIPPinsBothExternalLoadBalancers guards the static-address
-// reservation. gateway0-lb carried spec.loadBalancerIP: 34.70.146.195 in the
-// live cluster only because it was kubectl apply'd by hand — the generator
-// rendered no such line, so the next routine re-render would have handed the
-// gateway a fresh ephemeral address and broken the A record pointing at it.
-// The letsencrypt -acme Service must take the SAME address: ACME HTTP-01
-// validation connects to port 80 on the hostname, which resolves to the
-// gateway's address, so an -acme Service on its own ephemeral IP is never
-// reached.
-func TestExternalIPPinsBothExternalLoadBalancers(t *testing.T) {
+// TestGatewayLoadBalancerCarriesBothPorts guards the shape of the edge: ONE
+// LoadBalancer on the reserved address, carrying 443 and 80. gateway0-lb held
+// 34.70.146.195 in the live cluster only because it was kubectl apply'd by
+// hand — the generator rendered no loadBalancerIP at all, so the next routine
+// re-render would have handed the gateway a fresh ephemeral address and broken
+// the A record pointing at it. Port 80 must ride the SAME Service: ACME
+// HTTP-01 validation connects to port 80 on the NAME, which resolves to this
+// one address, so a second LoadBalancer for port 80 takes an address of its
+// own and is never reached.
+func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
 		Fqdn:       "console.seabeam.net",
@@ -1374,13 +1374,79 @@ func TestExternalIPPinsBothExternalLoadBalancers(t *testing.T) {
 	if !strings.Contains(gatewayLB, "  type: LoadBalancer\n  loadBalancerIP: 34.70.146.195\n") {
 		t.Errorf("gateway -lb Service does not pin the reserved address:\n%s", gatewayLB)
 	}
-
-	acme := chartFile(t, charts, "templates/letsencrypt/service-0-acme.yaml")
-	if !strings.Contains(acme, "  type: LoadBalancer\n  loadBalancerIP: 34.70.146.195\n") {
-		t.Errorf("letsencrypt -acme Service does not pin the reserved address:\n%s", acme)
+	if !strings.Contains(gatewayLB, "  - name: https\n    port: 443\n    targetPort: 8443\n") {
+		t.Errorf("gateway -lb Service does not serve 443:\n%s", gatewayLB)
 	}
-	if !strings.Contains(acme, "  - name: http\n    port: 80\n") {
-		t.Errorf("the -acme Service must serve port 80 — the port HTTP-01 validation connects to:\n%s", acme)
+	if !strings.Contains(gatewayLB, "  - name: http\n    port: 80\n    targetPort: 8080\n") {
+		t.Errorf("gateway -lb Service does not serve 80 — HTTP-01 validation has nowhere to land:\n%s", gatewayLB)
+	}
+
+	// The gateway pod must actually declare the port the Service targets.
+	gatewayDeploy := chartFile(t, charts, "templates/gateway/deployment.yaml")
+	if !strings.Contains(gatewayDeploy, "        - containerPort: 8080\n          name: http\n") {
+		t.Errorf("gateway Deployment declares no http containerPort:\n%s", gatewayDeploy)
+	}
+}
+
+// TestNoExternalAcmeLoadBalancer is the other half of the one-LB design: the
+// letsencrypt service keeps its HTTP-01 responder, but only in-cluster. The
+// gateway holds port 80 and proxies /.well-known/acme-challenge/* to it, so a
+// second externally-exposed Service would be an address nothing points at and
+// a second public surface to defend.
+func TestNoExternalAcmeLoadBalancer(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace:  "schematic",
+		Fqdn:       "console.seabeam.net",
+		Port:       443,
+		ExternalIp: "34.70.146.195",
+		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			KmakerNodes:  1,
+			GatewayNodes: 1,
+		},
+	})
+
+	for name := range charts.Files {
+		if strings.HasSuffix(name, "-acme.yaml") {
+			t.Errorf("chart still renders an external ACME Service: %s", name)
+		}
+	}
+	for name, body := range charts.Files {
+		if strings.Contains(string(body), "type: LoadBalancer") && name != "templates/gateway/service-0-lb.yaml" {
+			t.Errorf("%s is a second LoadBalancer; the design has exactly one:\n%s", name, body)
+		}
+	}
+
+	// The responder still has to be reachable by the gateway.
+	leSvc := chartFile(t, charts, "templates/letsencrypt/service-0.yaml")
+	if strings.Contains(leSvc, "type: LoadBalancer") {
+		t.Errorf("letsencrypt Service must stay ClusterIP:\n%s", leSvc)
+	}
+	if !strings.Contains(leSvc, "  - name: acme\n    port: 8080\n    targetPort: 8080\n") {
+		t.Errorf("letsencrypt ClusterIP Service does not expose the ACME responder in-cluster:\n%s", leSvc)
+	}
+}
+
+// TestCertChainModeRendersNoPort80 keeps port 80 tied to the reason it exists.
+// Without letsencrypt there is no challenge to carry and no listener bound on
+// 8080, so a port-80 forwarding rule would point into a closed port.
+func TestCertChainModeRendersNoPort80(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace:  "schematic",
+		Fqdn:       "console.seabeam.net",
+		Port:       443,
+		ExternalIp: "34.70.146.195",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			KmakerNodes:  1,
+			GatewayNodes: 1,
+		},
+	})
+
+	gatewayLB := chartFile(t, charts, "templates/gateway/service-0-lb.yaml")
+	if strings.Contains(gatewayLB, "port: 80\n") {
+		t.Errorf("cert_chain mode must not render a port 80 entry:\n%s", gatewayLB)
 	}
 }
 
@@ -1400,12 +1466,7 @@ func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
 		},
 	})
 
-	for _, path := range []string{
-		"templates/gateway/service-0-lb.yaml",
-		"templates/letsencrypt/service-0-acme.yaml",
-	} {
-		if body := chartFile(t, charts, path); strings.Contains(body, "loadBalancerIP") {
-			t.Errorf("%s names loadBalancerIP while external_ip is unset:\n%s", path, body)
-		}
+	if body := chartFile(t, charts, "templates/gateway/service-0-lb.yaml"); strings.Contains(body, "loadBalancerIP") {
+		t.Errorf("gateway -lb names loadBalancerIP while external_ip is unset:\n%s", body)
 	}
 }

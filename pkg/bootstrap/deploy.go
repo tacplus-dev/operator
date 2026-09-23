@@ -327,8 +327,18 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg := kernelConfig.Configs.GatewayConfig
 		if gatewayOpts.LetsEncrypt {
 			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_LETSENCRYPT
+			// The gateway owns the edge's port 80 in this mode: its own
+			// LoadBalancer carries 443 and 80, and the letsencrypt service is
+			// no longer exposed outside the cluster at all. Both fields are
+			// declared without a default (the answer depends on
+			// external_tls_mode, which tacplus cannot express as a conditional
+			// default), so the operator is what turns the listener on.
+			gwCfg.HttpListener = &protoHost.Host{Host: "0.0.0.0", Port: gatewayHttpPort}
+			gwCfg.AcmeBackend = &protoHost.Host{Host: letsencryptAcmeHost(cfg), Port: letsencryptAcmePort}
 		} else {
 			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN
+			gwCfg.HttpListener = nil
+			gwCfg.AcmeBackend = nil
 		}
 		gwCfg.ExternalHostnames = gatewayOpts.Hostnames
 		gwCfg.ExternalCertPem = gatewayOpts.ExternalCertPEM
@@ -431,7 +441,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		leSvc := map[string]any{
 			"fqdn":                           cfg.Fqdn,
 			"hostnames":                      []string{cfg.Fqdn},
-			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(8080)},
+			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(letsencryptAcmePort)},
 			"renewal_check_interval_seconds": int64(3600),
 		}
 		// Only set when configured; letsencrypt's own default is admin@<fqdn>.

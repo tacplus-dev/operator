@@ -11,6 +11,7 @@ import (
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
+	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
 )
@@ -20,6 +21,34 @@ var (
 	sentinelPort   = int32(protoSentinel.DefaultPort)
 	gatewayPort    = int32(protoGateway.DefaultTcpListenerPort)
 )
+
+const (
+	// gatewayHttpPort is the container-side port the gateway binds for the
+	// edge's PLAINTEXT port 80 — ACME HTTP-01 challenges proxied to
+	// letsencrypt, and a 301 to https for everything else. The gateway's
+	// LoadBalancer maps external 80 to it, so the container binds a port above
+	// 1024 and needs no NET_BIND_SERVICE. Must match helm's gatewayHttpPort.
+	gatewayHttpPort = int32(8080)
+
+	// letsencryptAcmePort is the letsencrypt service's HTTP-01 responder port,
+	// reachable in-cluster only: nothing outside the cluster reaches it any
+	// more, only the gateway's port-80 proxy.
+	letsencryptAcmePort = int32(8080)
+)
+
+// letsencryptAcmeHost is the in-cluster DNS name of that responder. The
+// letsencrypt service has exactly one replica, so its per-replica ClusterIP
+// Service is "letsencrypt0". Written in full svc.cluster.local form because
+// host.Host asserts an FQDN and a bare single label is not one — and the
+// short "letsencrypt0.<ns>" form only passes that assertion for namespaces
+// whose name happens to end in letters.
+func letsencryptAcmeHost(cfg *protoOperator.Config) string {
+	ns := cfg.Namespace
+	if ns == "" {
+		ns = "schematic"
+	}
+	return fmt.Sprintf("letsencrypt0.%s.svc.cluster.local", ns)
+}
 
 func defaultLoggerFields() map[string]any {
 	return map[string]any{
