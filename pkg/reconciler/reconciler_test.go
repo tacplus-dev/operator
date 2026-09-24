@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 	"helm.sh/helm/v3/pkg/action"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
@@ -31,10 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	protoOpalib "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/opalib"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 )
 
@@ -368,105 +363,6 @@ func TestPruneStaleDeploymentsSelectsTheChartsManagedByLabel(t *testing.T) {
 		if !apierrors.IsNotFound(err) {
 			t.Fatalf("expected gateway1 %s to be deleted, got err = %v", obj.name, err)
 		}
-	}
-}
-
-// fakeOpaPusher records every UpdateOpaConfig call and can be made to fail.
-type fakeOpaPusher struct {
-	calls []*protoOpa.Config
-	err   error
-}
-
-func (f *fakeOpaPusher) UpdateOpaConfig(_ context.Context, req *protoKernel.UpdateOpaConfigRequest, _ ...grpc.CallOption) error {
-	if f.err != nil {
-		return f.err
-	}
-	f.calls = append(f.calls, req.GetConfig().GetOpaConfig())
-	return nil
-}
-
-func opaConfigWithEntryPoint(entryPoint string) *protoOpa.Config {
-	return &protoOpa.Config{
-		EntitlementsPolicy: &protoOpalib.OpaPolicy{EntryPoint: entryPoint},
-	}
-}
-
-// TestPushOpaConfig covers the whole contract of the kernel push: it happens
-// once per distinct config, it is skipped when there is no kernel identity yet,
-// and a failed push is retried rather than swallowed.
-func TestPushOpaConfig(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("pushes once per distinct config", func(t *testing.T) {
-		pusher := &fakeOpaPusher{}
-		r := &Reconciler{log: zap.NewNop(), opaPusher: pusher}
-
-		first := opaConfigWithEntryPoint("data.entitlements.eval")
-		r.pushOpaConfig(ctx, first)
-		// An identical value on the next tick must not push again: the reconcile
-		// loop runs every 30s and the config carries the whole rego bundle.
-		r.pushOpaConfig(ctx, opaConfigWithEntryPoint("data.entitlements.eval"))
-		r.pushOpaConfig(ctx, opaConfigWithEntryPoint("data.other.eval"))
-
-		if len(pusher.calls) != 2 {
-			t.Fatalf("got %d pushes, want 2", len(pusher.calls))
-		}
-		if got := pusher.calls[0].GetEntitlementsPolicy().GetEntryPoint(); got != "data.entitlements.eval" {
-			t.Fatalf("first push entry point = %q", got)
-		}
-		if got := pusher.calls[1].GetEntitlementsPolicy().GetEntryPoint(); got != "data.other.eval" {
-			t.Fatalf("second push entry point = %q", got)
-		}
-		if !proto.Equal(pusher.calls[0], first) {
-			t.Fatalf("first push did not carry the config it was given")
-		}
-	})
-
-	t.Run("no-ops without a config or a kernel identity", func(t *testing.T) {
-		pusher := &fakeOpaPusher{}
-		r := &Reconciler{log: zap.NewNop(), opaPusher: pusher}
-		r.pushOpaConfig(ctx, nil)
-		if len(pusher.calls) != 0 {
-			t.Fatalf("nil config pushed %d times", len(pusher.calls))
-		}
-
-		// Until the ServiceManager bootstrap finishes there is no pusher, and
-		// the reconcile must carry on regardless.
-		noIdentity := &Reconciler{log: zap.NewNop()}
-		noIdentity.pushOpaConfig(ctx, opaConfigWithEntryPoint("data.entitlements.eval"))
-		if noIdentity.lastOpaPush != nil {
-			t.Fatalf("recorded a push with no pusher installed")
-		}
-	})
-
-	t.Run("retries after a failed push", func(t *testing.T) {
-		pusher := &fakeOpaPusher{err: errors.New("kernel unavailable")}
-		r := &Reconciler{log: zap.NewNop(), opaPusher: pusher}
-		cfg := opaConfigWithEntryPoint("data.entitlements.eval")
-
-		r.pushOpaConfig(ctx, cfg)
-		if r.lastOpaPush != nil {
-			t.Fatalf("a failed push must not be recorded as delivered")
-		}
-
-		pusher.err = nil
-		r.pushOpaConfig(ctx, cfg)
-		if len(pusher.calls) != 1 {
-			t.Fatalf("got %d successful pushes, want 1", len(pusher.calls))
-		}
-	})
-}
-
-// TestSetOpaConfigPusher checks the seam the background ServiceManager
-// bootstrap uses: a pusher installed after the reconciler is running is picked
-// up by the next reconcile.
-func TestSetOpaConfigPusher(t *testing.T) {
-	r := &Reconciler{log: zap.NewNop()}
-	pusher := &fakeOpaPusher{}
-	r.SetOpaConfigPusher(pusher)
-	r.pushOpaConfig(context.Background(), opaConfigWithEntryPoint("data.entitlements.eval"))
-	if len(pusher.calls) != 1 {
-		t.Fatalf("got %d pushes after SetOpaConfigPusher, want 1", len(pusher.calls))
 	}
 }
 

@@ -199,11 +199,6 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"BootstrapNames": true,
 		"GatewayOpts":    true,
 		"Cfg":            true,
-		// Not a generated deploy artifact: the live opa.Config the reconciler
-		// pushes to kernel over UpdateOpaConfig. It is a proto message held in
-		// memory, already validated by the client before it goes on the wire,
-		// and it is never written to disk for a pod to read.
-		"KernelOpaConfig": true,
 	}
 
 	validated := map[string]bool{

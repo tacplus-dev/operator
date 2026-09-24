@@ -17,7 +17,6 @@ import (
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
 	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
@@ -53,18 +52,12 @@ type DeployConfigs struct {
 
 	// OperatorBootstrapConfig is the operator's OWN chassis grpcconfig.Config —
 	// the same shape every other service gets, built from the same kernel
-	// endpoints, trusted CAs and SPIFFE fields. The operator needs a kernel
-	// identity of its own to call kernel.Mint/UpdateOpaConfig, and nothing else
-	// generates this file for it: it is the thing that generates everyone
-	// else's. Carries no private key (bootstrap is a projected k8s token).
+	// endpoints, trusted CAs and SPIFFE fields. Nothing else generates this file
+	// for it: it is the thing that generates everyone else's. Carries no private
+	// key (bootstrap is a projected k8s token). The operator no longer uses its
+	// kernel identity at runtime — the live opa config push it existed for was
+	// retired 2026-09-24 (the bundle is the only config writer).
 	OperatorBootstrapConfig []byte
-
-	// KernelOpaConfig is the policy-bearing opa.Config that kernel serves as
-	// opa's config-state root. It is NOT OpaConfig above: that one is the plain
-	// chassis bootstrap file mounted into the opa pod, which carries no
-	// policies. This is the value the reconciler pushes through
-	// kernel.Mint/UpdateOpaConfig. Nil when services/opa.yaml is absent.
-	KernelOpaConfig *protoOpa.Config
 }
 
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
@@ -525,7 +518,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
 		OperatorBootstrapConfig:  operatorBootstrapYAML,
-		KernelOpaConfig:          cloneOpaConfig(kernelConfig.GetConfigs().GetOpaConfig()),
 	}
 
 	// Every artifact above is a serialized proto its consumer validates at
@@ -536,19 +528,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	}
 
 	return dc, nil
-}
-
-// cloneOpaConfig returns a deep copy so the reconciler cannot observe a
-// later mutation of the kernel config it was taken from.
-func cloneOpaConfig(cfg *protoOpa.Config) *protoOpa.Config {
-	if cfg == nil {
-		return nil
-	}
-	cloned, ok := proto.Clone(cfg).(*protoOpa.Config)
-	if !ok {
-		return nil
-	}
-	return cloned
 }
 
 func isReadOnlyConfigWriteError(err error) bool {
@@ -783,7 +762,6 @@ func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs,
 		}
 		return &reconciler.ServiceConfigs{
 			Values: ServiceConfigValues(dc),
-			Opa:    dc.KernelOpaConfig,
 		}, nil
 	}
 }

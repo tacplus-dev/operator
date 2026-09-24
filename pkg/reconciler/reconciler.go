@@ -23,12 +23,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 	"helm.sh/helm/v3/pkg/action"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
@@ -53,9 +50,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
@@ -80,25 +74,12 @@ type ServiceConfigs struct {
 	// Values are the per-service Helm values (map of service name →
 	// {"config": yaml-string}). Nil means "no overrides — use chart defaults".
 	Values map[string]interface{}
-
-	// Opa is the policy-bearing OPA config kernel serves as opa's config-state
-	// root. It is not the same thing as Values["opa"], which is the plain
-	// chassis bootstrap file the opa pod mounts and carries no policies.
-	// Nil when the config directory declares no opa config.
-	Opa *protoOpa.Config
 }
 
 // ServiceConfigProvider returns the generated configuration on each reconcile.
 // It is called once per reconcile loop iteration. Returning nil, nil means
 // "no overrides — use chart defaults".
 type ServiceConfigProvider func() (*ServiceConfigs, error)
-
-// OpaConfigPusher pushes the OPA config to the kernel, which stores it as
-// opa's config-state root so a running cluster picks up a policy change
-// without a redeploy. The generated kernel MintClient satisfies it.
-type OpaConfigPusher interface {
-	UpdateOpaConfig(ctx context.Context, req *protoKernel.UpdateOpaConfigRequest, opts ...grpc.CallOption) error
-}
 
 // Reconciler manages the schematic Helm release inside the cluster.
 type Reconciler struct {
@@ -113,13 +94,6 @@ type Reconciler struct {
 	operatorNS     string
 	series         string // image series from operator binary, e.g. "1-2"
 	versionLock    string // MAJOR.MINOR from operator binary, e.g. "1.2"
-
-	// opaPusher is nil until the operator's kernel identity is available, and
-	// stays nil forever when the operator has none. Guarded by opaMu because
-	// it is set from the ServiceManager bootstrap goroutine.
-	opaMu       sync.Mutex
-	opaPusher   OpaConfigPusher
-	lastOpaPush *protoOpa.Config
 }
 
 // New creates a Reconciler. Call Run to start the reconciliation loop.
@@ -284,7 +258,6 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	}
 
 	var svcValues map[string]interface{}
-	var opaConfig *protoOpa.Config
 	if r.configProvider != nil {
 		sc, err := r.configProvider()
 		if err != nil {
@@ -292,7 +265,6 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		}
 		if sc != nil {
 			svcValues = sc.Values
-			opaConfig = sc.Opa
 		}
 		r.log.Info("built service configs", zap.Int("services", len(svcValues)))
 	}
@@ -301,8 +273,6 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		return fmt.Errorf("applying charts: %w", err)
 	}
 
-	r.pushOpaConfig(ctx, opaConfig)
-
 	// Prune deployments that are no longer in the chart (e.g. after topology scale-down).
 	if err := r.pruneStaleDeployments(ctx, nodeCount); err != nil {
 		r.log.Warn("failed to prune stale deployments", zap.Error(err))
@@ -310,57 +280,6 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 
 	r.log.Info("reconcile complete", zap.Int("files", len(charts.Files)))
 	return nil
-}
-
-// SetOpaConfigPusher installs the kernel client used to push the OPA config.
-// It is called from the ServiceManager bootstrap goroutine, which cannot run
-// synchronously before the reconciler starts: on a fresh cluster the kernel
-// the operator authenticates against does not exist until this reconciler has
-// deployed it.
-func (r *Reconciler) SetOpaConfigPusher(p OpaConfigPusher) {
-	r.opaMu.Lock()
-	defer r.opaMu.Unlock()
-	r.opaPusher = p
-}
-
-// pushOpaConfig sends the OPA config to the kernel so a running cluster picks
-// up a policy change without a redeploy.
-//
-// Pushed on change rather than on every tick: the reconcile loop runs every 30s
-// and the config carries the whole rego bundle, so an unconditional push would
-// rewrite kernel's config-state root 2880 times a day for nothing. The last
-// pushed value is remembered only in memory, so an operator restart pushes once
-// on its first reconcile — which is what makes cold start correct.
-//
-// Failure is logged, not returned: pushing policy to kernel must never fail the
-// Helm reconcile that keeps the fleet running. lastOpaPush is only updated on
-// success, so a failed push retries on the next reconcile.
-func (r *Reconciler) pushOpaConfig(ctx context.Context, cfg *protoOpa.Config) {
-	if cfg == nil {
-		return
-	}
-
-	r.opaMu.Lock()
-	pusher := r.opaPusher
-	last := r.lastOpaPush
-	r.opaMu.Unlock()
-
-	if pusher == nil || proto.Equal(last, cfg) {
-		return
-	}
-
-	req := &protoKernel.UpdateOpaConfigRequest{
-		Config: &protoServicesConfig.Services{OpaConfig: cfg},
-	}
-	if err := pusher.UpdateOpaConfig(ctx, req); err != nil {
-		r.log.Warn("pushing opa config to kernel failed; retrying next reconcile", zap.Error(err))
-		return
-	}
-
-	r.opaMu.Lock()
-	r.lastOpaPush = cfg
-	r.opaMu.Unlock()
-	r.log.Info("pushed opa config to kernel")
 }
 
 // schedulableNodeCount returns the number of Ready, non-tainted worker nodes.
