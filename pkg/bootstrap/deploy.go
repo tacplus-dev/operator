@@ -108,6 +108,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		return nil, fmt.Errorf("building kernel config: %w", err)
 	}
 	protoKernel.ConfigDefaults(kernelConfig)
+	// kernel.ConfigDefaults only defaults kernel's own scalar fields; it does
+	// not recurse into Configs, the holder kernel re-seeds every service's
+	// ConfigState from. Default each entry there too, or a service the bundle
+	// does not mention boots against an all-zero config.
+	if kernelConfig.Configs == nil {
+		kernelConfig.Configs = &protoServicesConfig.Services{}
+	}
+	if err := ApplyServicesHolderDefaults(kernelConfig.Configs, DeployedKernelAuthServices(cfg)); err != nil {
+		return nil, err
+	}
 	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
 	spiffeLocationPath := kernelConfig.GetLocationPath()
 	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
