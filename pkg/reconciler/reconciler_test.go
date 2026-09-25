@@ -920,8 +920,8 @@ func TestReconcileImmutableStatefulSetFieldsSkipsForeignStatefulSet(t *testing.T
 //     rendered manifest omits server-side defaults (storageClassName, volumeMode)
 //     and spells an empty selector matchExpressions where the stored object has
 //     none; reading either as drift would orphan-delete the fleet every 30s.
-//   - kernel's live 2Gi against the chart's 8Gi is classified as a PVC expansion,
-//     so the change Jody hit is serviced here and never reaches helm upgrade.
+//   - a live PVC smaller than the chart's is classified as a PVC expansion, so
+//     the change Jody hit is serviced here and never reaches helm upgrade.
 func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
 	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(&protoOperator.Config{
 		Namespace: "schematic",
@@ -948,20 +948,20 @@ func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
 		t.Fatal("generated chart rendered no kernel StatefulSet")
 	}
 
-	// In sync: kernel's chart size is 8Gi.
+	// In sync: the live PVC already matches kernel's chart size.
 	live := immutableTestStatefulSet()
-	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("8Gi")
 	if fields, grown := immutableStatefulSetDiff(live, desired); len(fields) != 0 || len(grown) != 0 {
 		t.Fatalf("expected no drift against the generated chart, got fields=%v grown=%v", fields, grown)
 	}
 
-	// The production failure: live is still on the old 2Gi.
+	// The production failure: live is still on a smaller size than the chart.
 	live = immutableTestStatefulSet()
+	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("1Gi")
 	fields, grown := immutableStatefulSetDiff(live, desired)
 	if len(fields) != 0 {
 		t.Fatalf("a pure size grow must not be a forbidden-field change, got %v", fields)
 	}
-	if got, ok := grown["data"]; !ok || got.String() != "8Gi" {
-		t.Fatalf("expected the data template recorded as grown to 8Gi, got %v", grown)
+	if got, ok := grown["data"]; !ok || got.String() != "2Gi" {
+		t.Fatalf("expected the data template recorded as grown to 2Gi, got %v", grown)
 	}
 }

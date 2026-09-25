@@ -779,28 +779,8 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//     with event volume; today's 2Gi limit is the starting point.
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
-	// kernel's `data` volume, sized 8Gi, holds three things: its own
-	// KernelDiskState snapshot, the Ratis storage for the fenced lock, and —
-	// since kernel became the durable store for (spec.persistence) — one
-	// snapshot file per flagged boundary, each retaining three numbered
-	// archives.
-	//
-	// The size comes from what snapshot-on-write can SUSTAIN, not from the
-	// boundaries' declared maxima. A write rewrites its whole boundary file
-	// synchronously before the RPC is acked, so at ~200 MB/s of fsync a 50 ms
-	// p99 write bounds one boundary file at ~10 MB. 53 flagged boundaries x
-	// 10 MB x 4 copies = 2.1 GB, which is what the previous 2Gi covered with
-	// no headroom at all — and an ENOSPC here now fails writes rather than
-	// degrading, because a snapshot that does not land must not be acked. 8Gi
-	// leaves room for kernel's own snapshot, the Ratis tree, and a boundary
-	// that transiently runs past the ceiling.
-	//
-	// The declared maxima do NOT fit any volume: chat_events alone is 10M rows
-	// x 22 KB = 224 GB, and the flagged set totals ~369 GB live / ~1.5 TB with
-	// archives. Boundaries at that scale belong in the record store, not in a
-	// rewrite-the-file-per-write snapshot.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "8Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
