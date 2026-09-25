@@ -298,8 +298,13 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gatewayOpts.Hostnames = []string{cfg.Fqdn}
 	}
 
-	// For CERT_CHAIN mode, ensure gateway has an external TLS cert.
-	if !gatewayOpts.LetsEncrypt && cfg.Fqdn != "" {
+	// Ensure gateway has a cluster-CA external TLS cert in BOTH modes.
+	// CERT_CHAIN mode serves it for the life of the pod. LETSENCRYPT mode
+	// serves it as the interim edge cert at startup: gateway owns port 80,
+	// which answers the HTTP-01 challenge, so it cannot block on a real ACME
+	// cert without deadlocking its own issuance (gateway d29e0f1). Its watcher
+	// hot-swaps the public cert in once LetsEncryptState delivers one.
+	if cfg.Fqdn != "" {
 		gwTLSGenerated, err := EnsureGatewayExternalTLS(cfg, cfg.Fqdn)
 		if err != nil {
 			return nil, fmt.Errorf("ensuring gateway external TLS: %w", err)

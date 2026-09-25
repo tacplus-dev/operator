@@ -803,7 +803,19 @@ func TestGatewayExternalTLSPEMExtraction(t *testing.T) {
 	}
 }
 
-func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
+// TestGatewayLetsencryptModeAlsoGeneratesEdgeCert pins the contract gateway
+// d29e0f1 introduced: in LETSENCRYPT mode gateway no longer blocks startup on
+// a real ACME cert, it builds its TLS listener immediately from
+// external_cert_pem/external_key_pem -- the same cluster-CA edge material
+// CERT_CHAIN mode serves -- and hot-swaps the public cert in once
+// LetsEncryptState delivers one. Gateway owns port 80, which answers the
+// HTTP-01 challenge, so blocking on the cert deadlocked its own issuance.
+//
+// This test previously asserted the opposite (external_cert_pem ABSENT in
+// letsencrypt mode), which is what left a fresh gateway0 rollout crash-looping
+// on `external_cert_pem is empty`. The mode itself is unchanged: gateway must
+// still report EXTERNAL_TLS_MODE_LETSENCRYPT so its watcher keeps running.
+func TestGatewayLetsencryptModeAlsoGeneratesEdgeCert(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
@@ -842,8 +854,59 @@ func TestGatewayLetsencryptModeSkipsCertGeneration(t *testing.T) {
 	if !strings.Contains(gwCfg, "EXTERNAL_TLS_MODE_LETSENCRYPT") {
 		t.Fatalf("letsencrypt mode gateway should have LETSENCRYPT mode:\n%s", gwCfg)
 	}
-	if strings.Contains(gwCfg, "external_cert_pem:") {
-		t.Fatalf("letsencrypt mode gateway should not have external_cert_pem:\n%s", gwCfg)
+	// The interim edge cert must be present and be real PEM, exactly as in
+	// cert_chain mode -- gateway parses it at startup before any ACME issuance.
+	if !strings.Contains(gwCfg, "external_cert_pem:") {
+		t.Fatalf("letsencrypt mode gateway missing external_cert_pem:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "external_key_pem:") {
+		t.Fatalf("letsencrypt mode gateway missing external_key_pem:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "BEGIN CERTIFICATE") {
+		t.Fatalf("letsencrypt mode gateway external_cert_pem not PEM:\n%s", gwCfg)
+	}
+	if !strings.Contains(gwCfg, "PRIVATE KEY") {
+		t.Fatalf("letsencrypt mode gateway external_key_pem not PEM:\n%s", gwCfg)
+	}
+
+	// The generated material must carry the FQDN and localhost SANs, same as
+	// TestGatewayExternalTLSCertHasFQDNAndLocalhost asserts for cert_chain.
+	// BuildDeployConfigs works on its own cfg loaded from cfgDir and persists
+	// the newly minted edge cert back to crypto.yaml, so reload from disk
+	// rather than reading this test's in-memory cfg, which never saw it.
+	persisted, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := GatewayExternalTLSPEM(persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(certPEM, "BEGIN CERTIFICATE") {
+		t.Fatalf("certPEM does not contain PEM certificate:\n%s", certPEM)
+	}
+	if !strings.Contains(keyPEM, "PRIVATE KEY") {
+		t.Fatalf("keyPEM does not contain PEM private key:\n%s", keyPEM)
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(persisted.Pki.EdgeTls[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasFQDN := false
+	hasLocalhost := false
+	for _, dns := range cc.Leaf().X509Certificate().DNSNames {
+		if dns == cfg.Fqdn {
+			hasFQDN = true
+		}
+		if dns == "localhost" {
+			hasLocalhost = true
+		}
+	}
+	if !hasFQDN {
+		t.Fatalf("letsencrypt mode edge cert missing FQDN SAN: %v", cc.Leaf().X509Certificate().DNSNames)
+	}
+	if !hasLocalhost {
+		t.Fatalf("letsencrypt mode edge cert missing localhost SAN: %v", cc.Leaf().X509Certificate().DNSNames)
 	}
 }
 
