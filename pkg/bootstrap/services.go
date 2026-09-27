@@ -29,6 +29,7 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"messaging":    true,
 	"mailbox":      true,
 	"personalauth": true,
+	"blobstore":    true,
 }
 
 // appServiceNames holds the application's own services, seeded from
