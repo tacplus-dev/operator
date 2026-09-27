@@ -205,10 +205,11 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"BootstrapYAMLs": true, "KmakerConfig": true, "SentinelConfig": true,
 		"EchoConfig": true, "MessagingConfig": true, "MailboxConfig": true,
 		"PersonalauthConfig": true,
-		"AppConfigs": true, "GatewayConfig": true,
+		"AppConfigs":         true, "GatewayConfig": true,
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
 		"SamlConfig": true, "StratumConfig": true,
 		"LetsencryptConfig":       true,
+		"BlobstoreConfig":         true,
 		"OperatorBootstrapConfig": true,
 	}
 

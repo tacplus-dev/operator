@@ -82,6 +82,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"stratum", dc.StratumConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
+		{"blobstore", dc.BlobstoreConfig},
 	} {
 		if len(pair.data) > 0 {
 			svcs[pair.name] = string(pair.data)

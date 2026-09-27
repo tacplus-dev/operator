@@ -107,6 +107,7 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
+		{"blobstore", dc.BlobstoreConfig},
 		{"operator", dc.OperatorBootstrapConfig},
 	}
 	for _, s := range svc {

@@ -61,6 +61,9 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.KmakerConfig) > 0 && t.KmakerNodes > 0 {
 		serviceFiles["kmaker"] = dc.KmakerConfig
 	}
+	if len(dc.BlobstoreConfig) > 0 && t.BlobstoreNodes > 0 && dc.Cfg.GetOptionalServices().GetBlobstore() {
+		serviceFiles["blobstore"] = dc.BlobstoreConfig
+	}
 
 	opt := dc.Cfg.GetOptionalServices()
 	if len(dc.OauthConfig) > 0 && opt.GetOauth() {

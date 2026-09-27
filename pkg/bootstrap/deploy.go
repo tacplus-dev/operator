@@ -47,6 +47,7 @@ type DeployConfigs struct {
 	StratumConfig            []byte
 	KmakerConfig             []byte
 	LetsencryptConfig        []byte
+	BlobstoreConfig          []byte
 	LetsencryptServiceConfig []byte
 	GatewayOpts              GatewayOptions
 	Cfg                      *protoOperator.Config
@@ -481,6 +482,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 
+	// blobstore is a StatefulSet on the generic chassis: its per-ordinal
+	// config Secrets copy this one bootstrap, exactly as stratum's do.
+	var blobstoreConfigYAML []byte
+	if opt := cfg.GetOptionalServices(); opt.GetBlobstore() && cfg.GetTopology().GetBlobstoreNodes() > 0 {
+		blobstoreConfigYAML, err = buildSvc("blobstore", nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	var letsencryptConfigYAML []byte
 	var letsencryptServiceConfigYAML []byte
 	if cfg.GetTls().GetLetsencrypt() {
@@ -567,6 +578,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		StratumConfig:            stratumConfigYAML,
 		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
+		BlobstoreConfig:          blobstoreConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
@@ -760,6 +772,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"stratum", dc.StratumConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
+		{"blobstore", dc.BlobstoreConfig},
 	} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
