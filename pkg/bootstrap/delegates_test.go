@@ -342,7 +342,11 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 }
 
 // TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService verifies
-// that an existing delegate missing its own authorized_service gets it added.
+// that an existing delegate missing its own authorized_service gets it added —
+// and, since authorized_services is reconciled to the registry rather than
+// appended to, that an entry the registry does not justify is dropped in the
+// same pass. 'oauth' below is that entry: nothing in sentinel's dependency
+// graph names it.
 func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-existing sentinel delegate authorizing oauth but not itself.
@@ -377,8 +381,8 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 			for _, s := range d.AuthorizedServices {
 				has[s] = true
 			}
-			if !has["oauth"] {
-				t.Fatal("sentinel delegate lost pre-existing authorized_service 'oauth'")
+			if has["oauth"] {
+				t.Fatalf("sentinel delegate kept unjustified authorized_service 'oauth': %v", d.AuthorizedServices)
 			}
 			if !has["sentinel"] {
 				t.Fatal("sentinel delegate missing auto-added authorized_service 'sentinel'")
@@ -576,4 +580,149 @@ func TestEnsureServiceDelegatesSkipsPersonalauthWhenDisabled(t *testing.T) {
 			t.Fatalf("personalauth delegate created while optional_services.personalauth is false")
 		}
 	}
+}
+
+// TestEnsureServiceDelegatesRemovesUnjustifiedAuthorizedService reproduces the
+// drift Jody found live: work, scotty and mailbox each carried a 'stratum'
+// entry in authorized_services left over from an older registry shape, long
+// after nothing in their spec justified it. The old code only ever appended
+// missing entries, so a delegate kept every capability it had ever been
+// granted. authorized_services must be reconciled to exactly the current
+// registry-derived set on every run.
+//
+// opa carries the case here: the live registry resolves its deps to
+// [eventbus kernel opa], with no stratum anywhere in them.
+func TestEnsureServiceDelegatesRemovesUnjustifiedAuthorizedService(t *testing.T) {
+	dir := t.TempDir()
+	stale := SourceDelegate{
+		Name:               "opa",
+		AuthorizedServices: []string{"opa", "kernel", "eventbus", "stratum"},
+	}
+	kernelPath := setupKernelYAML(t, dir, []SourceDelegate{stale})
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			EventbusNodes: 1,
+			GatewayNodes:  1,
+			OpaNodes:      1,
+			StratumNodes:  1,
+			OauthNodes:    1,
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	sd, err := loadServiceDeps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sd.authorizedServicesFor("opa")
+	if toSet(want)["stratum"] {
+		t.Fatalf("test premise broken: registry now justifies stratum for opa (%v)", want)
+	}
+
+	var got []string
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name == "opa" {
+			got = d.AuthorizedServices
+		}
+	}
+	if got == nil {
+		t.Fatal("opa delegate not found")
+	}
+	if toSet(got)["stratum"] {
+		t.Fatalf("opa delegate kept unjustified authorized_service 'stratum': %v", got)
+	}
+	sortedGot := append([]string(nil), got...)
+	sort.Strings(sortedGot)
+	sortedWant := append([]string(nil), want...)
+	sort.Strings(sortedWant)
+	if len(sortedGot) != len(sortedWant) {
+		t.Fatalf("opa authorized_services %v, want exactly %v", got, want)
+	}
+	for i := range sortedWant {
+		if sortedGot[i] != sortedWant[i] {
+			t.Fatalf("opa authorized_services %v, want exactly %v", got, want)
+		}
+	}
+
+	// Idempotence: the reconciled file must not be rewritten a second time.
+	// EnsureServiceDelegates returns only an error, so 'no change' is observed
+	// as a byte-identical kernel.yaml (the same way TestEnsureServiceDelegates-
+	// Idempotent checks it).
+	first, err := os.ReadFile(kernelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(kernelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("second run changed kernel.yaml:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+	}
+}
+
+// TestEnsureServiceDelegatesReorderedListIsNotAChange pins the other half of
+// the reconciliation: a delegate already carrying exactly the right set, but
+// in a different order than the registry emits it, must not be reported as
+// changed — otherwise every generate would rewrite kernel.yaml forever.
+func TestEnsureServiceDelegatesReorderedListIsNotAChange(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			EventbusNodes: 1,
+			GatewayNodes:  1,
+			OpaNodes:      1,
+			StratumNodes:  1,
+			OauthNodes:    1,
+		},
+	}
+
+	sd, err := loadServiceDeps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reversed := append([]string(nil), sd.authorizedServicesFor("opa")...)
+	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+		reversed[i], reversed[j] = reversed[j], reversed[i]
+	}
+	kernelPath := setupKernelYAML(t, dir, []SourceDelegate{{
+		Name:               "opa",
+		AuthorizedServices: reversed,
+		KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
+			KubernetesNamespace:      operatorKubernetesNamespace(cfg),
+			KubernetesServiceAccount: "opa",
+		}},
+	}})
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name != "opa" {
+			continue
+		}
+		if len(d.AuthorizedServices) != len(reversed) {
+			t.Fatalf("opa authorized_services %v, want the same set as %v", d.AuthorizedServices, reversed)
+		}
+		for i := range reversed {
+			if d.AuthorizedServices[i] != reversed[i] {
+				t.Fatalf("already-correct opa authorized_services was rewritten: %v, was %v", d.AuthorizedServices, reversed)
+			}
+		}
+		return
+	}
+	t.Fatal("opa delegate not found")
 }

@@ -576,7 +576,10 @@ type delegateKey struct {
 // is derived from the tacplus registry dependency graph: boundary tags (state/config
 // hosting), s2s client dependencies, and event publish/watch broker tags.
 // Existing delegates (including user-added ones like oauth API-key delegates)
-// are preserved — only missing entries are added or backfilled.
+// are preserved. For a delegate of a deployed service, authorized_services is
+// reconciled to exactly the registry-derived set: newly required services are
+// added and services the registry no longer justifies are removed. Delegates
+// for services the fleet does not deploy are never touched.
 // The function is idempotent: re-running it produces no changes.
 func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
@@ -616,16 +619,14 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		svc := inst.Service
 		required := sd.authorizedServicesFor(svc)
 		if idx, ok := existing[delegateKey{svc, inst.TenantNamespace()}]; ok {
-			// Delegate exists — ensure all required services are authorized.
-			have := make(map[string]bool, len(kernelCfg.Delegates[idx].AuthorizedServices))
-			for _, as := range kernelCfg.Delegates[idx].AuthorizedServices {
-				have[as] = true
-			}
-			for _, req := range required {
-				if !have[req] {
-					kernelCfg.Delegates[idx].AuthorizedServices = append(kernelCfg.Delegates[idx].AuthorizedServices, req)
-					changed = true
-				}
+			// Delegate exists — reconcile authorized_services to exactly what
+			// the registry justifies right now. Not an append-only log: a
+			// service whose dependency on another service goes away in a later
+			// registry generation must LOSE that authorization, or it keeps the
+			// old capability's blast radius forever.
+			if !sameServiceSet(kernelCfg.Delegates[idx].AuthorizedServices, required) {
+				kernelCfg.Delegates[idx].AuthorizedServices = required
+				changed = true
 			}
 			// Backfill the Kubernetes service-account matcher if absent, and
 			// resync its namespace if present but stale (idempotent either way).
@@ -691,6 +692,27 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		return fmt.Errorf("marshaling kernel config: %w", err)
 	}
 	return os.WriteFile(kernelPath, data, 0644)
+}
+
+// sameServiceSet reports whether two authorized_services lists carry the same
+// set of names, ignoring order. Used so reconciling a delegate that is already
+// correct — but written in a different order by an older generate — is not
+// reported as a change. A differing length counts as different, which is what
+// cleans up a list carrying a duplicate entry.
+func sameServiceSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	have := make(map[string]bool, len(a))
+	for _, s := range a {
+		have[s] = true
+	}
+	for _, s := range b {
+		if !have[s] {
+			return false
+		}
+	}
+	return true
 }
 
 // loadServiceConfigFile reads a per-service YAML config file into a map.

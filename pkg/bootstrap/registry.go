@@ -108,8 +108,12 @@ type registryEventPub struct {
 // Only returns deps for services in the known set (kernelAuthenticatedServiceNames).
 // Never emits SERVICE_NAME_ANY.
 func loadServiceDeps() (*serviceDeps, error) {
+	return loadServiceDepsFrom(registryJSON)
+}
+
+func loadServiceDepsFrom(data []byte) (*serviceDeps, error) {
 	var root registryNode
-	if err := json.Unmarshal(registryJSON, &root); err != nil {
+	if err := json.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("parsing registry.json: %w", err)
 	}
 

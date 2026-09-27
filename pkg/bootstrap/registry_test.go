@@ -152,3 +152,71 @@ func toSet(ss []string) map[string]bool {
 	}
 	return m
 }
+
+// recordReadRegistry is a registry.json shaped the way tacplus emits one TODAY
+// for a service that declares a record read against another service's store.
+// The vservices/ half is real — the live registry.json already carries
+// "query.RecordMap" with host_label "stratum", which is what maps the read
+// surface onto the physical record store. The services/ half is the gap: a
+// (spec.record_read) annotation produces NO client_dependencies entry, so
+// nothing in the node connects mailbox to query.RecordMap.
+//
+// For TestRecordReadResolvesStratumDelegate to pass, the mailbox node would
+// need an entry like
+//
+//	{"source_package": "mailbox", "surface_kind": "s2s",
+//	 "target_package": "query", "target_service": "RecordMap"}
+//
+// which resolveTarget would then map through host_label to "stratum".
+const recordReadRegistry = `{
+  "name": "root",
+  "children": [
+    {
+      "name": "query",
+      "full_path": "vservices/query",
+      "services": [
+        {
+          "name": "RecordMap",
+          "package": "query",
+          "grpc_service": "query.RecordMap",
+          "host_label": "stratum"
+        }
+      ]
+    },
+    {
+      "name": "mailbox",
+      "full_path": "services/mailbox",
+      "services": [
+        {
+          "name": "Mailbox",
+          "package": "mailbox",
+          "grpc_service": "mailbox.Mailbox"
+        }
+      ]
+    }
+  ]
+}`
+
+// TestRecordReadResolvesStratumDelegate is the test Jody asked for: a service
+// that declares a record read must resolve a 'stratum' dependency, so its
+// kernel delegate authorizes the record store it actually reads from.
+//
+// EXPECTED RED until tacplus's query.RecordMap client dependency lands.
+// tacplus's registry schema has no record-read surface at all today — there is
+// no field on ServiceInfo or ClientDependencyInfo that a (spec.record_read)
+// annotation lands in — so loadServiceDepsFrom has no input from which to
+// derive stratum. This is a missing generator output, tracked in tacplus's own
+// inbox, NOT a bug in this repo: do not "fix" it here by hand-deriving stratum
+// from something else.
+func TestRecordReadResolvesStratumDelegate(t *testing.T) {
+	sd, err := loadServiceDepsFrom([]byte(recordReadRegistry))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deps := sd.authorizedServicesFor("mailbox")
+	if !toSet(deps)["stratum"] {
+		t.Errorf("mailbox declares a record read; deps %v missing 'stratum' "+
+			"(expected red until tacplus emits the query.RecordMap client dependency)", deps)
+	}
+}
