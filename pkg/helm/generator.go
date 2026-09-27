@@ -772,6 +772,11 @@ func kernelTokenAudience() string {
 	return "schematic-kernel"
 }
 
+// kernelTokenVolumeName is the projected-token volume withKernelServiceAuth
+// adds. Carrying it is what makes a serviceSpec kernel-authenticated, so it is
+// also how KernelAuthServiceNames recognises one.
+const kernelTokenVolumeName = "kernel-token"
+
 func withKernelServiceAuth(svc serviceSpec) serviceSpec {
 	if svc.ServiceAccountName == "" {
 		if svc.SharesServiceIdentityWith != "" {
@@ -784,7 +789,7 @@ func withKernelServiceAuth(svc serviceSpec) serviceSpec {
 		svc.AutomountServiceAccountToken = falsePtr()
 	}
 	svc.ServiceAccountTokenProjections = append(svc.ServiceAccountTokenProjections, &serviceAccountTokenProjection{
-		VolumeName:        "kernel-token",
+		VolumeName:        kernelTokenVolumeName,
 		MountPath:         kernelServiceTokenMountPath,
 		TokenPath:         "token",
 		Audience:          kernelTokenAudience(),
@@ -1171,6 +1176,52 @@ func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount
 		}
 	}
 	return names
+}
+
+// KernelAuthServiceNames returns the sorted, de-duplicated service IDENTITIES
+// this chart renders with a kernel identity for cfg's topology — the specs
+// withKernelServiceAuth stamps a projected kernel token onto.
+//
+// A workload that borrows another service's identity
+// (SharesServiceIdentityWith, which stratum's search members do) reports the
+// identity it borrows, not its own workload name: the identity is what kernel
+// authenticates and what the operator has to know about.
+//
+// It exists for the bootstrap package's coverage test. A new platform service
+// needs a serviceSpec here AND an entry in the operator's kernel-authenticated
+// map, and it is the second of those one-line additions that has been forgotten
+// — twice, each time as a live crash-loop. bootstrap cannot read enabledServices
+// itself and helm cannot import bootstrap (that is the cycle appServiceNames
+// exists to avoid), so the comparison needs this one accessor.
+func (g *Generator) KernelAuthServiceNames(cfg *protoOperator.Config, nodeCount int) []string {
+	topo := effectiveTopology(cfg, nodeCount)
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range g.enabledServices(cfg, topo) {
+		if !hasKernelToken(s) {
+			continue
+		}
+		name := s.Name
+		if s.SharesServiceIdentityWith != "" {
+			name = s.SharesServiceIdentityWith
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hasKernelToken(svc serviceSpec) bool {
+	for _, p := range svc.ServiceAccountTokenProjections {
+		if p.VolumeName == kernelTokenVolumeName {
+			return true
+		}
+	}
+	return false
 }
 
 // --- chart file generators ---

@@ -388,13 +388,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 			protoBlobstore.ConfigDefaults(kernelConfig.Configs.BlobstoreConfig)
 		}
 		kernelConfig.Configs.BlobstoreConfig.TokenHmacKey = cfg.GetPki().GetBlobstoreTokenKey()
-		// volume_groups is deliberately NOT set here. Groups are declared at build
-		// time by each consuming service, through the (spec.volume_group)
-		// annotation tacplus surfaces in registry.json, and rendering them is the
-		// operator's job once that annotation exists — it does not yet (it is
-		// tacplus's slice of the work split). Until then the list is empty, which
-		// is the correct fail-closed state: no group, no upload. See
-		// workers/blobstore-result.md.
+
+		// Render every volume group the fleet declares. Groups are declared at
+		// build time by each consuming service through the (spec.volume_group)
+		// annotation tacplus surfaces in registry.json, and turning those
+		// declarations into blobstore's config is the operator's half of that work
+		// split. An empty registry leaves the list empty, which is the correct
+		// fail-closed state: no group, no upload.
+		if err := setBlobstoreVolumeGroups(kernelConfig.Configs.BlobstoreConfig, registryJSON); err != nil {
+			return nil, err
+		}
 	}
 
 	// Seed the real llm_credential into kernel's services holder for every

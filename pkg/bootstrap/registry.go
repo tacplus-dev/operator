@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+
+	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.
@@ -50,6 +53,37 @@ type registryService struct {
 	// tenant, instead of one per configured tenant. Empty (the proto3 default,
 	// and what every entry in today's registry carries) means per-tenant.
 	PinnedTenant string `json:"pinned_tenant"`
+	// VolumeGroups mirrors ServiceInfo.volume_groups, which tacplus emits from
+	// the service-level (spec.volume_group) annotations. Each entry is one blob
+	// store volume group this service owns; the operator renders the union of
+	// every service's entries into blobstore's own config, because a group is
+	// declared at build time by its consumer and never created at runtime.
+	VolumeGroups []registryVolumeGroup `json:"volume_groups"`
+}
+
+type registryVolumeGroup struct {
+	Name             string         `json:"name"`
+	MaxBlobBytes     registryUint64 `json:"max_blob_bytes"`
+	ContentTypes     []string       `json:"content_types"`
+	TenantQuotaBytes registryUint64 `json:"tenant_quota_bytes"`
+}
+
+// registryUint64 accepts both forms registry.schema.json permits for a 64-bit
+// field: protojson writes it as a quoted string (every int_value in today's
+// registry.json is quoted), while the schema also allows a bare JSON number.
+type registryUint64 uint64
+
+func (v *registryUint64) UnmarshalJSON(data []byte) error {
+	text := strings.Trim(string(data), `"`)
+	if text == "" || text == "null" {
+		return nil
+	}
+	n, err := strconv.ParseUint(text, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parsing %s as uint64: %w", data, err)
+	}
+	*v = registryUint64(n)
+	return nil
 }
 
 type registryClientDep struct {
@@ -262,6 +296,71 @@ func pinnedTenantServicesFrom(data []byte) (map[string]string, error) {
 		}
 	})
 	return out, nil
+}
+
+// setBlobstoreVolumeGroups renders every volume group declared anywhere in the
+// registry into blobstore's config. A group is declared at BUILD TIME by the
+// service that owns it, through the (spec.volume_group) annotation tacplus
+// surfaces as ServiceInfo.volume_groups; blobstore never creates one at
+// runtime, so this rendering is the only way a group reaches it.
+//
+// Platform and app services are walked identically — the registry the operator
+// embeds is the merged one, so an app's declarations are already in it and need
+// no separate traversal.
+//
+// A name declared by two services is an ERROR, not a merge: the name is the
+// first path segment of every file in the group, so two services that disagree
+// about a group's rules would silently write into each other's namespace. The
+// error names both services so the duplicate is fixable from the message alone.
+// tacplus refuses a duplicate at generation, but the operator merges registries
+// from more than one proto repo and is the last place the two can meet.
+//
+// Zero declared groups leaves the list empty, which is blobstore's correct
+// fail-closed state: no group, no upload.
+func setBlobstoreVolumeGroups(cfg *protoBlobstore.Config, data []byte) error {
+	var root registryNode
+	if err := json.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("parsing registry.json: %w", err)
+	}
+
+	declaredBy := make(map[string]string)
+	var walkErr error
+	var groups []*protoBlobstore.VolumeGroup
+	walkNodes(&root, func(node *registryNode) {
+		if walkErr != nil || !strings.HasPrefix(node.FullPath, "services/") {
+			return
+		}
+		for _, svc := range node.Services {
+			for _, vg := range svc.VolumeGroups {
+				if owner, ok := declaredBy[vg.Name]; ok {
+					if owner == node.Name {
+						// The annotation is service-level, so tacplus stamps it onto
+						// every ServiceInfo one proto file produces. The same service
+						// re-declaring its own group is that duplication, not a clash.
+						continue
+					}
+					walkErr = fmt.Errorf("volume group %q is declared by both %q and %q: group names are unique fleet-wide", vg.Name, owner, node.Name)
+					return
+				}
+				declaredBy[vg.Name] = node.Name
+				groups = append(groups, &protoBlobstore.VolumeGroup{
+					Name:             vg.Name,
+					MaxBlobBytes:     int64(vg.MaxBlobBytes),
+					ContentTypes:     vg.ContentTypes,
+					TenantQuotaBytes: int64(vg.TenantQuotaBytes),
+				})
+			}
+		}
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+
+	// Sorted by name so the rendered config -- and every checksum taken over it
+	// -- does not change with registry node order.
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+	cfg.VolumeGroups = groups
+	return nil
 }
 
 func walkNodes(node *registryNode, fn func(*registryNode)) {
