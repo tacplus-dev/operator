@@ -213,6 +213,9 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	if opt.GetPersonalauth() && topo.GetPersonalauthNodes() > 0 {
 		out = append(out, "personalauth")
 	}
+	if opt.GetBlobstore() && topo.GetBlobstoreNodes() > 0 {
+		out = append(out, "blobstore")
+	}
 	// The application's own services, declared by name rather than by a proto
 	// field the platform had to add for them.
 	out = append(out, AppServiceNames(cfg)...)

@@ -759,3 +759,34 @@ func decodeKeyPEM(k *protoKey.Key) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("cannot decode key base64")
 }
+
+// blobstoreTokenKeyBytes is the length of blobstore's upload-token signing key.
+// 32 bytes is HMAC-SHA256's block-optimal key length and is the minimum the
+// service accepts (NewTokenSigner refuses anything shorter).
+const blobstoreTokenKeyBytes = 32
+
+// EnsureBlobstoreTokenKey generates the upload-token signing key if the cluster
+// has none, and leaves an existing one alone.
+//
+// IDEMPOTENT ON PURPOSE, and that is the whole contract: both blobstore pods must
+// verify the same signature, and a key regenerated on a later `deploy` would
+// invalidate every upload token a client is holding at that moment. So this is
+// generate-if-absent, never rotate. Rotating it is a deliberate act — delete the
+// field and redeploy, accepting that in-flight upload tokens stop working — and is
+// not something a routine deploy should be able to do by accident.
+func EnsureBlobstoreTokenKey(cfg *protoOperator.Config) error {
+	if cfg.GetPki().GetBlobstoreTokenKey() != "" {
+		return nil
+	}
+	key := make([]byte, blobstoreTokenKeyBytes)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("generating blobstore token key: %w", err)
+	}
+	if cfg.Pki == nil {
+		cfg.Pki = &protoOperator.PKI{}
+	}
+	// Standard base64: the service accepts either alphabet, and this is the one
+	// every other base64 value in this config uses.
+	cfg.Pki.BlobstoreTokenKey = base64.StdEncoding.EncodeToString(key)
+	return nil
+}

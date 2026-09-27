@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
+	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
@@ -65,6 +66,7 @@ var servicesHolderDefaulters = map[string]func(proto.Message){
 	"weather_config":        func(m proto.Message) { protoWeather.ConfigDefaults(m.(*protoWeather.Config)) },
 	"llmproxy_config":       func(m proto.Message) { protoLlmproxy.ConfigDefaults(m.(*protoLlmproxy.Config)) },
 	"profile_config":        func(m proto.Message) { protoProfile.ConfigDefaults(m.(*protoProfile.Config)) },
+	"blobstore_config":      func(m proto.Message) { protoBlobstore.ConfigDefaults(m.(*protoBlobstore.Config)) },
 }
 
 // servicesHolderDefaultsSkipped are holder entries the operator deliberately

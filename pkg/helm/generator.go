@@ -251,26 +251,90 @@ const grpcHealthProbePort = 8444
 // gateway's config (pkg/bootstrap).
 const gatewayHttpPort = 8080
 
-func stratumSeedMembersEnv(replicas int32) string {
-	return stratumSeedEnv("STRATUM_SEED_MEMBERS", replicas, stratumHazelcastPort) +
-		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", replicas, stratumWorkingSetPort)
+// stratumSearchName is the volume-less second workload: search members, joining
+// the same Hazelcast cluster as the writers with the member attribute
+// stratum.role=search. Pods are stratum-search-0..M and the headless Service is
+// "stratum-search", which is what puts them in the seed list below.
+const stratumSearchName = "stratum-search"
+
+// stratumMemberRoleEnv is the env var one stratum pod declares its role in. The
+// writers' StatefulSet says writer explicitly rather than leaning on the binary's
+// default: the two workloads run the same image, and a chart that names the role on
+// one of them and not the other is a chart where the durability-bearing half is the
+// one left to a default.
+func stratumMemberRoleEnv(role string) string {
+	return fmt.Sprintf("        - name: STRATUM_MEMBER_ROLE\n          value: %q\n", role)
 }
 
-func stratumSeedEnv(name string, replicas int32, port int) string {
-	if replicas <= 0 {
+// stratumSeedMembersEnv renders the seed lists for both of stratum's Hazelcast
+// clusters, spanning BOTH workloads.
+//
+// Every member has to be able to find every other one, so the list is the writers
+// plus the search members. Leaving the search members out would work by accident —
+// they would find the writers and join through them — right up to a cold start in
+// which no writer is up yet, where a search member would resolve nothing, decide it
+// was alone and form its own cluster of one. That is the same failure the seed list
+// was introduced for.
+func stratumSeedMembersEnv(writers, searchers int32) string {
+	return stratumSeedEnv("STRATUM_SEED_MEMBERS", writers, searchers, stratumHazelcastPort) +
+		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", writers, searchers, stratumWorkingSetPort)
+}
+
+func stratumSeedEnv(name string, writers, searchers int32, port int) string {
+	if writers <= 0 {
 		return ""
 	}
 	var members []string
-	for i := int32(0); i < replicas; i++ {
-		// <pod>.<headless service>:<hazelcast port>. A StatefulSet-shaped
-		// service is named for the service itself — pods are stratum-0,
-		// stratum-1, ... and the headless Service is "stratum" — NOT the
-		// stratum0 form a Deployment uses. Getting this wrong produces seed
-		// addresses that never resolve, and Hazelcast simply never forms a
-		// cluster: no error, just members that each sit alone.
+	// <pod>.<headless service>:<hazelcast port>. A StatefulSet-shaped
+	// service is named for the service itself — pods are stratum-0,
+	// stratum-1, ... and the headless Service is "stratum" — NOT the
+	// stratum0 form a Deployment uses. Getting this wrong produces seed
+	// addresses that never resolve, and Hazelcast simply never forms a
+	// cluster: no error, just members that each sit alone.
+	for i := int32(0); i < writers; i++ {
 		members = append(members, fmt.Sprintf("stratum-%d.stratum:%d", i, port))
 	}
+	for i := int32(0); i < searchers; i++ {
+		members = append(members, fmt.Sprintf("%s-%d.%s:%d", stratumSearchName, i, stratumSearchName, port))
+	}
 	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
+}
+
+// blobstore's two in-cluster ports, which are `Config.http_listener`'s and
+// `Config.peer_listener`'s defaults in blobstore.proto. They are stated here, not
+// derived: the chart has to publish them before any config is delivered, and a
+// port the chart and the service disagree about is a listener nothing can reach.
+//
+// NEITHER IS EXPOSED OUTSIDE THE CLUSTER. The gateway holds the edge and proxies
+// `/upload/` and `/b/` to the bytes port; the peer port is dialled only by the
+// other blobstore pod, at its stable per-pod DNS name.
+const (
+	blobstoreBytesPort = 8080
+	blobstorePeerPort  = 8081
+)
+
+// blobstorePeersEnv renders BLOBSTORE_PEERS: the peer-listener address of EVERY
+// replica, this pod's own included, from the StatefulSet's stable per-pod DNS.
+//
+// The service picks itself out of the list by hostname and treats the remainder as
+// its peer, so the list is deliberately complete rather than per-pod — which is
+// what lets one env value serve both pods and one ConfigMap serve the StatefulSet.
+//
+// Delivered by env for the same reason stratum's STRATUM_SEED_MEMBERS is: peer
+// wiring is deployment topology the operator already knows, and a second typed
+// config path for it would only let the two disagree.
+func blobstorePeersEnv(replicas int32) string {
+	if replicas <= 0 {
+		return ""
+	}
+	var peers []string
+	for i := int32(0); i < replicas; i++ {
+		// <pod>.<headless service>:<peer port>. A StatefulSet's pods are
+		// blobstore-0, blobstore-1 and its headless Service is "blobstore" — NOT
+		// the blobstore0 form a Deployment uses.
+		peers = append(peers, fmt.Sprintf("blobstore-%d.blobstore:%d", i, blobstorePeerPort))
+	}
+	return fmt.Sprintf("        - name: BLOBSTORE_PEERS\n          value: %q\n", strings.Join(peers, ","))
 }
 
 // appServiceNames returns the application's service names in sorted order, so
@@ -288,6 +352,13 @@ func appServiceNames(topo *protoOperator.Topology) []string {
 }
 
 // --- internal types ---
+
+// namedPort is one additional in-cluster port: the container port and the name it
+// is published under.
+type namedPort struct {
+	Name string
+	Port int32
+}
 
 type serviceSpec struct {
 	Name             string
@@ -316,7 +387,18 @@ type serviceSpec struct {
 	// been verified against a live kernel cluster yet — see
 	// decisions/stratum-hazelcast-networkpolicy-2026-09-12.md.
 	HazelcastNetworkPolicy bool
-	ListenPort             int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
+	// HazelcastPeerApps names the OTHER workloads whose pods are members of this
+	// service's Hazelcast cluster, as `app` label values, so HazelcastNetworkPolicy
+	// admits them to the member ports.
+	//
+	// It exists because stratum is two workloads in one cluster: the writers and the
+	// volume-less search members. The policy's peer selector is the service's own
+	// `app` label, which is exactly right for a one-workload cluster and silently
+	// wrong for this one — the search members' join would be dropped, and Hazelcast
+	// answers a blocked member port by forming a separate cluster rather than by
+	// failing.
+	HazelcastPeerApps []string
+	ListenPort        int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
 	NodeModes []string
@@ -339,6 +421,16 @@ type serviceSpec struct {
 	// ExtraPortName is the port name used in the Service spec (required when ExtraPort != 0).
 	ExtraPort     int32
 	ExtraPortName string
+	// NamedPorts are additional container ports, each also published on this
+	// service's ClusterIP Service and — for a StatefulSet — on its headless
+	// Service, which is what makes a port reachable at a pod's stable DNS name.
+	//
+	// IN-CLUSTER ONLY, every one of them: nothing here reaches a LoadBalancer.
+	// AcmePort above is the single-port special case of the same idea, kept as it
+	// is because it is letsencrypt's and is referenced by name; this is the general
+	// form, added for blobstore, which needs two (its byte listener, which the
+	// gateway proxies, and its peer listener, which only the other pod dials).
+	NamedPorts []namedPort
 	// SkipProbes, if true, omits the readiness and liveness probes from the Deployment.
 	// Use for services that do not expose a health-check endpoint.
 	SkipProbes bool
@@ -377,6 +469,17 @@ type serviceSpec struct {
 	// populates, so all three pods started with an empty config and died with
 	// "data is null or empty".
 	PerReplicaConfig bool
+	// SharesServiceIdentityWith names the service this workload is a SECOND WORKLOAD
+	// OF, rather than a service of its own. Set on stratum-search, and on nothing
+	// else.
+	//
+	// A search member is stratum: same image, same config, same identity to kernel.
+	// So it reuses that service's ServiceAccount (and therefore the identity kernel
+	// resolves by TokenReview) and that service's values.yaml config key, and this
+	// workload emits no ServiceAccount or RBAC objects of its own — a second object
+	// with the same name is a duplicate resource helm refuses, and a service account
+	// of its own would be a principal kernel has never heard of.
+	SharesServiceIdentityWith string
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
@@ -671,7 +774,11 @@ func kernelTokenAudience() string {
 
 func withKernelServiceAuth(svc serviceSpec) serviceSpec {
 	if svc.ServiceAccountName == "" {
-		svc.ServiceAccountName = svc.Name
+		if svc.SharesServiceIdentityWith != "" {
+			svc.ServiceAccountName = svc.SharesServiceIdentityWith
+		} else {
+			svc.ServiceAccountName = svc.Name
+		}
 	}
 	if svc.AutomountServiceAccountToken == nil {
 		svc.AutomountServiceAccountToken = falsePtr()
@@ -703,19 +810,20 @@ func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.
 
 func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	return &protoOperator.Topology{
-		KernelNodes:       t.KernelNodes,
-		SentinelNodes:     t.SentinelNodes,
-		EventbusNodes:     t.EventbusNodes,
-		GatewayNodes:      t.GatewayNodes,
-		OauthNodes:        t.OauthNodes,
-		OpaNodes:          t.OpaNodes,
-		StratumNodes:      t.StratumNodes,
-		SamlNodes:         t.SamlNodes,
-		KmakerNodes:       t.KmakerNodes,
-		EchoNodes:         t.EchoNodes,
-		MessagingNodes:    t.MessagingNodes,
-		MailboxNodes:      t.MailboxNodes,
-		PersonalauthNodes: t.PersonalauthNodes,
+		KernelNodes:        t.KernelNodes,
+		SentinelNodes:      t.SentinelNodes,
+		EventbusNodes:      t.EventbusNodes,
+		GatewayNodes:       t.GatewayNodes,
+		OauthNodes:         t.OauthNodes,
+		OpaNodes:           t.OpaNodes,
+		StratumNodes:       t.StratumNodes,
+		StratumSearchNodes: t.StratumSearchNodes,
+		SamlNodes:          t.SamlNodes,
+		KmakerNodes:        t.KmakerNodes,
+		EchoNodes:          t.EchoNodes,
+		MessagingNodes:     t.MessagingNodes,
+		MailboxNodes:       t.MailboxNodes,
+		PersonalauthNodes:  t.PersonalauthNodes,
 		// Carry the app's services. A field-by-field clone silently drops
 		// anything added later — which is the failure mode a fixed-field message
 		// invites, and it dropped app_services on the first attempt.
@@ -839,11 +947,44 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// discoverable peer addresses — so several replicas would each form
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, ListenPort: 8443, IsStatefulSet: true,
-			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes),
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{stratumSearchName}, ListenPort: 8443, IsStatefulSet: true,
+			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes, topo.GetStratumSearchNodes()) +
+				stratumMemberRoleEnv("writer"),
 			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
 			// record store is I/O-bound, not CPU-bound. Same reasoning as eventbus.
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}),
+	}
+
+	// stratum's SEARCH members: the same image and the same config, joining the same
+	// Hazelcast cluster with the member attribute stratum.role=search, and with NO
+	// volume.
+	//
+	// A search member holds partitions and answers the parallel scatter-gather a
+	// predicate query is, and persists nothing: no redo log, no record index, no
+	// checkpoint. It is never counted for min_durable_copies and never a restore
+	// contributor, so this count is free to move with query load and says nothing
+	// about durability — stratum_nodes is the number that does.
+	//
+	// A StatefulSet rather than a Deployment, and volume-less: the members need the
+	// stable per-pod DNS the seed list is written from (stratum-search-0.stratum-search),
+	// which a Deployment's pods do not have. Everything a StatefulSet usually brings a
+	// volume for is exactly what this workload does not do.
+	if topo.StratumNodes > 0 && topo.GetStratumSearchNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: stratumSearchName,
+			SharesServiceIdentityWith: "stratum",
+			Replicas:                  topo.GetStratumSearchNodes(),
+			Image:                     g.imageRef("stratum"),
+			HasGRPC:                   true, ListenPort: 8443, IsStatefulSet: true,
+			HasHazelcast: true, HasWorkingSetHazelcast: true,
+			HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{"stratum"},
+			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes, topo.GetStratumSearchNodes()) +
+				stratumMemberRoleEnv("search"),
+			// The same memory as a writer and none of its disk. A search member holds
+			// its share of the partitions and never evicts them — the idle clock is
+			// wired to the disk leg it does not have — so memory is the whole of what
+			// it is sized for, and it is sized like a writer because it holds the same
+			// kind of share of the same partitions.
+			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}))
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
@@ -879,6 +1020,43 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	if opt.GetPersonalauth() && topo.GetPersonalauthNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "personalauth", Replicas: topo.PersonalauthNodes, Image: g.imageRef("personalauth"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
+	}
+
+	// blobstore — the platform's binary blob primitive. Disabled by default.
+	//
+	// A STATEFULSET WITH A PVC PER POD, and the only service of that shape that is
+	// not a Hazelcast cluster. The reasons are different from kernel's and
+	// stratum's: it needs stable per-pod DNS because the pods MIRROR to each other
+	// by name (blob-store-2026-09-25.md R2 — an upload is acked only when both pods
+	// have the bytes), and it needs a volumeClaimTemplate because each pod holds its
+	// own full copy of the files. As per-replica Deployments they would have no
+	// stable name to dial and the peers could not find each other.
+	//
+	// ConfigHasKeyMaterial: the config carries token_hmac_key, the secret the upload
+	// tokens are signed with, so it is packaged as a Secret and not a ConfigMap —
+	// the same reason kernel's, kmaker's and gateway's are.
+	//
+	// Storage 20Gi is a starting point and is the one number here that is a guess:
+	// it is the mirrored copy of every blob every tenant holds, so it is the field
+	// to grow first. Growing it is supported — reconcileImmutableStatefulSetFields
+	// expands the live PVCs and recreates the StatefulSet — and shrinking it is not.
+	if opt.GetBlobstore() && topo.GetBlobstoreNodes() > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+			Name: "blobstore", Replicas: topo.BlobstoreNodes, Image: g.imageRef("blobstore"),
+			HasGRPC: true, ListenPort: 8443,
+			HasPVC: true, Storage: "20Gi", IsStatefulSet: true,
+			ConfigHasKeyMaterial: true,
+			NamedPorts: []namedPort{
+				{Name: "bytes", Port: blobstoreBytesPort},
+				{Name: "peer", Port: blobstorePeerPort},
+			},
+			ExtraEnvVars: blobstorePeersEnv(topo.BlobstoreNodes),
+			// Measured nowhere yet: this service streams bytes through a 64 KiB
+			// buffer and holds no working set, so its memory is the Go runtime plus
+			// one buffer per in-flight upload. Sized like the other small Go
+			// services until a live cluster says otherwise.
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB",
+		}))
 	}
 
 	// The application's own services.
@@ -1014,7 +1192,9 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 {{- range .Services }}
 {{ .Name }}:
   image: {{ .Image }}
+{{- if not .SharesServiceIdentityWith }}
   config: ""
+{{- end }}
 {{- if .HasPVC }}
   storage: {{ .Storage }}
 {{- end }}
@@ -1059,6 +1239,12 @@ func valuesRef(key, field string) string {
 func configValueKey(svc serviceSpec, i int) string {
 	if svc.PerReplicaConfig {
 		return fmt.Sprintf("%s%d", svc.Name, i)
+	}
+	// A second workload of another service reads that service's config: the bundle
+	// supplies one entry per SERVICE, and stratum's search members run the same
+	// binary against the same config as its writers.
+	if svc.SharesServiceIdentityWith != "" {
+		return svc.SharesServiceIdentityWith
 	}
 	return svc.Name
 }
@@ -1416,6 +1602,17 @@ func hazelcastNetworkPolicy(svc serviceSpec) []byte {
       port: %d
 `, stratumWorkingSetPort))
 	}
+	// This workload's own pods, plus every other workload in the same Hazelcast
+	// cluster. One selector per app label rather than one with several labels: a
+	// single matchLabels is an AND, so listing two app values there would match
+	// nothing at all.
+	var peerSelectors bytes.Buffer
+	for _, app := range append([]string{svc.Name}, svc.HazelcastPeerApps...) {
+		peerSelectors.WriteString(fmt.Sprintf(`    - podSelector:
+        matchLabels:
+          app: %s
+`, app))
+	}
 	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1432,17 +1629,14 @@ spec:
   ingress:
   # Hazelcast member discovery and cluster join: peers only.
   - from:
-    - podSelector:
-        matchLabels:
-          app: %s
-    ports:
+%s    ports:
 %s  # Everything this service actually serves stays reachable as it is today.
   - ports:
     - protocol: TCP
       port: %d
     - protocol: TCP
       port: %d
-`, svc.Name, svc.Name, svc.Name, memberPorts.String(), listenPort, grpcHealthProbePort))
+`, svc.Name, svc.Name, peerSelectors.String(), memberPorts.String(), listenPort, grpcHealthProbePort))
 }
 
 // loadBalancerIPLine pins the cluster's one external LoadBalancer Service —
@@ -1470,7 +1664,10 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 		svc.AutomountServiceAccountToken = falsePtr()
 	}
 
-	if svc.ServiceAccountName != "" {
+	// A second workload of another service emits no ServiceAccount and no RBAC of its
+	// own: it USES that service's, so a second object of the same name here would be
+	// a duplicate resource helm refuses to apply.
+	if svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -1480,7 +1677,7 @@ metadata:
     {{- include "schematic.labels" . | nindent 4 }}
 `, svc.ServiceAccountName))
 	}
-	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" {
+	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		// ClusterRole/ClusterRoleBinding are cluster-scoped, so their names must be
 		// namespace-qualified: two fleets in two namespaces on one cluster would
 		// otherwise collide on the same fixed name, with the second deploy silently
@@ -1513,7 +1710,7 @@ subjects:
   namespace: {{ .Values.global.namespace }}
 `, tokenReviewName, tokenReviewName, tokenReviewName, svc.ServiceAccountName))
 	}
-	if svc.PodReadRBAC && svc.ServiceAccountName != "" {
+	if svc.PodReadRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		charts.Files[fmt.Sprintf("templates/%s/pod-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1620,6 +1817,12 @@ spec:
     targetPort: %d
 `, svc.AcmePort, svc.AcmePort)
 		}
+		for _, np := range svc.NamedPorts {
+			extraPort += fmt.Sprintf(`  - name: %s
+    port: %d
+    targetPort: %d
+`, np.Name, np.Port, np.Port)
+		}
 		// Per-replica ClusterIP service for direct gRPC addressing.
 		var svcSelector string
 		if svc.IsStatefulSet {
@@ -1694,6 +1897,16 @@ spec:
     targetPort: %d
 `, stratumWorkingSetPort, stratumWorkingSetPort)
 		}
+		// A StatefulSet's headless Service is what makes `<pod>.<service>:<port>`
+		// resolve, so a port a PEER dials has to be here and not only on the
+		// per-replica ClusterIP Service. blobstore's mirror addresses its peer
+		// exactly that way.
+		for _, np := range svc.NamedPorts {
+			hazelcastHeadless += fmt.Sprintf(`  - name: %s
+    port: %d
+    targetPort: %d
+`, np.Name, np.Port, np.Port)
+		}
 		charts.Files[fmt.Sprintf("templates/%s/service-headless.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -1739,7 +1952,13 @@ spec:
 	// which the shared 300s startup budget is too tight for — stratum-2 was
 	// SIGTERM'd twice mid-replay on a live rolling restart. Give stratum alone a
 	// longer budget; the shared helper still applies to every other service.
-	if svc.Name == "stratum" {
+	// Both stratum workloads. A search member opens no Lucene index and replays no
+	// redo log, but it does wait at the same cluster-formation and hot-restore
+	// barriers the writers do — it is handed partitions the moment it joins, so it
+	// must not answer a query before the writers have recovered. The shared 300s
+	// budget is too tight for that wait for the same reason it is too tight for a
+	// writer's.
+	if svc.Name == "stratum" || svc.Name == stratumSearchName {
 		startupProbeHelper = "schematic.startupProbeStratum"
 	}
 	// eventbus needs a far longer liveness budget than the shared 30s: its
@@ -1849,6 +2068,11 @@ spec:
 			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
           name: hazelcast-ws
 `, stratumWorkingSetPort))
+		}
+		for _, np := range svc.NamedPorts {
+			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
+          name: %s
+`, np.Port, np.Name))
 		}
 		ssBuf.WriteString(`        volumeMounts:
         - name: bootstrap

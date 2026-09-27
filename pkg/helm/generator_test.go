@@ -117,14 +117,14 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		Namespace: "schematic",
 		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
-			SentinelNodes:   1,
-			EventbusNodes:   1,
-			GatewayNodes:    1,
-			OauthNodes:      1,
-			EchoNodes:       1,
-			OpaNodes:        1,
-			StratumNodes:    1,
-			SamlNodes:       1,
+			SentinelNodes: 1,
+			EventbusNodes: 1,
+			GatewayNodes:  1,
+			OauthNodes:    1,
+			EchoNodes:     1,
+			OpaNodes:      1,
+			StratumNodes:  1,
+			SamlNodes:     1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
 			Saml:  true,
@@ -487,6 +487,145 @@ func TestStratumHazelcastNetworkPolicy(t *testing.T) {
 	// it must keep rendering none rather than acquire one by accident.
 	if _, ok := charts.Files["templates/kernel/networkpolicy.yaml"]; ok {
 		t.Error("kernel must not render a NetworkPolicy until its policy is verified")
+	}
+}
+
+// stratum_search_nodes renders a SECOND, VOLUME-LESS stratum workload: search
+// members, joining the same Hazelcast cluster as the writers with
+// STRATUM_MEMBER_ROLE=search.
+//
+// The things that make it a search member rather than a fourth writer are all
+// absences, so they are asserted as absences: no volumeClaimTemplate, no data
+// mount, no storage value, no ServiceAccount or config of its own. A writer is
+// what you get by forgetting any one of them, and a fourth writer with no volume
+// would be counted for min_durable_copies and for the restore barrier while holding
+// nothing durable at all.
+func TestStratumSearchNodesRenderAVolumeLessWorkload(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:        1,
+			StratumNodes:       2,
+			StratumSearchNodes: 3,
+		},
+	})
+
+	ss := chartFile(t, charts, "templates/stratum-search/statefulset.yaml")
+	if !strings.Contains(ss, "replicas: 3") {
+		t.Fatalf("guard: expected a 3-replica search StatefulSet\n--- statefulset ---\n%s", ss)
+	}
+	for _, want := range []string{
+		`- name: STRATUM_MEMBER_ROLE`,
+		`value: "search"`,
+		"containerPort: 5001",
+		"containerPort: 5701",
+		`image: {{ index .Values "stratum-search" "image" }}`,
+	} {
+		if !strings.Contains(ss, want) {
+			t.Errorf("search statefulset missing %q\n--- statefulset ---\n%s", want, ss)
+		}
+	}
+	// The absences. A volume is the whole of what a writer has and a search member
+	// does not.
+	for _, unwanted := range []string{"volumeClaimTemplates", "mountPath: /app/data", "name: data"} {
+		if strings.Contains(ss, unwanted) {
+			t.Errorf("search statefulset carries %q; a search member has no volume\n--- statefulset ---\n%s",
+				unwanted, ss)
+		}
+	}
+
+	// The writers say writer OUT LOUD rather than leaning on the binary's default:
+	// the durability-bearing half must not be the one left to a default.
+	writers := chartFile(t, charts, "templates/stratum/statefulset.yaml")
+	if !strings.Contains(writers, `- name: STRATUM_MEMBER_ROLE`) ||
+		!strings.Contains(writers, `value: "writer"`) {
+		t.Errorf("the writers' statefulset does not declare its role\n--- statefulset ---\n%s", writers)
+	}
+
+	// Both seed lists span BOTH workloads, in both clusters. A search member that
+	// could not resolve a writer at a cold start would form its own cluster of one.
+	wantSeeds := []string{
+		`"stratum-0.stratum:5001,stratum-1.stratum:5001,stratum-search-0.stratum-search:5001,` +
+			`stratum-search-1.stratum-search:5001,stratum-search-2.stratum-search:5001"`,
+		`"stratum-0.stratum:5701,stratum-1.stratum:5701,stratum-search-0.stratum-search:5701,` +
+			`stratum-search-1.stratum-search:5701,stratum-search-2.stratum-search:5701"`,
+	}
+	for _, f := range []string{"templates/stratum/statefulset.yaml", "templates/stratum-search/statefulset.yaml"} {
+		body := chartFile(t, charts, f)
+		for _, want := range wantSeeds {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing seed list %s\n--- statefulset ---\n%s", f, want, body)
+			}
+		}
+	}
+
+	// It IS stratum: same identity to kernel, same config, so no ServiceAccount and
+	// no config key of its own. A second ServiceAccount object named "stratum" is a
+	// duplicate resource, and one named "stratum-search" is a principal kernel has
+	// never heard of.
+	if !strings.Contains(ss, "serviceAccountName: stratum\n") {
+		t.Errorf("search pods must run as stratum's service account\n--- statefulset ---\n%s", ss)
+	}
+	if _, ok := charts.Files["templates/stratum-search/serviceaccount.yaml"]; ok {
+		t.Error("the search workload emitted a ServiceAccount of its own")
+	}
+	for i := range 3 {
+		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum-search/configmap-%d.yaml", i))
+		if !strings.Contains(cm, `index .Values "stratum" "config"`) {
+			t.Errorf("search configmap-%d must read stratum's config\n--- configmap ---\n%s", i, cm)
+		}
+	}
+	values := chartFile(t, charts, "values.yaml")
+	if !strings.Contains(values, "stratum-search:") {
+		t.Errorf("values.yaml has no stratum-search entry, so its image is unresolvable\n--- values.yaml ---\n%s", values)
+	}
+	if strings.Contains(values, "stratum-search:\n  image: {{ .Image }}") {
+		t.Errorf("values.yaml did not render the search image\n--- values.yaml ---\n%s", values)
+	}
+
+	// The member protocol has no authentication, so each workload's policy must admit
+	// the other's pods — separate podSelectors, because one matchLabels is an AND and
+	// two app values there would match nothing.
+	for _, f := range []string{"templates/stratum/networkpolicy.yaml", "templates/stratum-search/networkpolicy.yaml"} {
+		np := chartFile(t, charts, f)
+		for _, want := range []string{
+			"        matchLabels:\n          app: stratum\n",
+			"        matchLabels:\n          app: stratum-search\n",
+			"      port: 5001",
+			"      port: 5701",
+			"      port: 8444",
+		} {
+			if !strings.Contains(np, want) {
+				t.Errorf("%s missing %q\n--- networkpolicy ---\n%s", f, want, np)
+			}
+		}
+	}
+}
+
+// The default is zero search members, and zero renders NOTHING — not an empty
+// StatefulSet, not a dangling values key, not a seed address that resolves to no
+// pod.
+func TestNoSearchNodesRendersNoSearchWorkload(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			StratumNodes: 3,
+		},
+	})
+
+	for path := range charts.Files {
+		if strings.HasPrefix(path, "templates/stratum-search/") {
+			t.Errorf("a fleet with no search nodes rendered %s", path)
+		}
+	}
+	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
+	if strings.Contains(ss, "stratum-search") {
+		t.Errorf("the writers' seed list names search pods that do not exist\n--- statefulset ---\n%s", ss)
+	}
+	values := chartFile(t, charts, "values.yaml")
+	if strings.Contains(values, "stratum-search:") {
+		t.Errorf("values.yaml carries a stratum-search entry for a workload that is not deployed\n--- values.yaml ---\n%s", values)
 	}
 }
 
@@ -1559,5 +1698,109 @@ func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
 
 	if body := chartFile(t, charts, "templates/gateway/service-0-lb.yaml"); strings.Contains(body, "loadBalancerIP") {
 		t.Errorf("gateway -lb names loadBalancerIP while external_ip is unset:\n%s", body)
+	}
+}
+
+// TestBlobstoreRendersAMirroredStatefulSetPair is the operator half of
+// blob-store-2026-09-25.md: a 2-replica StatefulSet, a PVC per pod, both
+// in-cluster ports published on the headless Service so the pods can dial each
+// other by name, the peer list in the environment, and the config as a Secret.
+//
+// Each assertion is a way this service silently does not work. Rendered as
+// Deployments the pods would have no stable name to mirror to; without the peer
+// port on the HEADLESS Service `blobstore-1.blobstore:8081` would not resolve;
+// without the PVC the blobs would live on an ephemeral filesystem and every write
+// would still succeed.
+func TestBlobstoreRendersAMirroredStatefulSetPair(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:    1,
+			KmakerNodes:    1,
+			BlobstoreNodes: 2,
+		},
+		OptionalServices: &protoOperator.OptionalServices{Blobstore: true},
+	})
+
+	ss := chartFile(t, charts, "templates/blobstore/statefulset.yaml")
+	if !strings.Contains(ss, "kind: StatefulSet") {
+		t.Fatalf("blobstore must be a StatefulSet:\n%s", ss)
+	}
+	if !strings.Contains(ss, "replicas: 2") {
+		t.Errorf("blobstore must render 2 replicas — the mirror is a pair:\n%s", ss)
+	}
+	if !strings.Contains(ss, "volumeClaimTemplates") {
+		t.Errorf("blobstore must own a volumeClaimTemplate; each pod holds its own copy of every blob:\n%s", ss)
+	}
+	for _, want := range []string{"name: bytes", "name: peer"} {
+		if !strings.Contains(ss, want) {
+			t.Errorf("the StatefulSet is missing container port %q:\n%s", want, ss)
+		}
+	}
+	// The peer list names both pods at their stable per-pod DNS, this pod's own
+	// included: the service picks itself out by hostname.
+	if !strings.Contains(ss, "BLOBSTORE_PEERS") {
+		t.Errorf("the StatefulSet does not carry BLOBSTORE_PEERS; neither pod would find the other:\n%s", ss)
+	}
+	for _, want := range []string{"blobstore-0.blobstore:8081", "blobstore-1.blobstore:8081"} {
+		if !strings.Contains(ss, want) {
+			t.Errorf("BLOBSTORE_PEERS does not name %s:\n%s", want, ss)
+		}
+	}
+	// And NOT the blobstore0 form a Deployment would use — that name resolves to
+	// nothing for a StatefulSet.
+	if strings.Contains(ss, "blobstore0.blobstore") {
+		t.Errorf("BLOBSTORE_PEERS uses the Deployment pod-name form, which never resolves:\n%s", ss)
+	}
+
+	headless := chartFile(t, charts, "templates/blobstore/service-headless.yaml")
+	if !strings.Contains(headless, "clusterIP: None") {
+		t.Errorf("blobstore has no headless Service, so per-pod DNS would not exist:\n%s", headless)
+	}
+	for _, want := range []string{"name: peer", "port: 8081", "name: bytes", "port: 8080"} {
+		if !strings.Contains(headless, want) {
+			t.Errorf("the headless Service is missing %q — a peer could not reach that port:\n%s", want, headless)
+		}
+	}
+
+	// The gateway reaches the bytes port through the per-replica ClusterIP Service.
+	svc := chartFile(t, charts, "templates/blobstore/service-0.yaml")
+	if !strings.Contains(svc, "name: bytes") || !strings.Contains(svc, "port: 8080") {
+		t.Errorf("the per-replica Service does not publish the bytes port; the gateway could not proxy /b/:\n%s", svc)
+	}
+
+	// The config carries token_hmac_key, so it must be a Secret.
+	if _, ok := charts.Files["templates/blobstore/configmap-0.yaml"]; ok {
+		t.Error("blobstore's config is a ConfigMap; it carries the upload-token signing key and must be a Secret")
+	}
+	secret := chartFile(t, charts, "templates/blobstore/secret-0.yaml")
+	if !strings.Contains(secret, "kind: Secret") {
+		t.Errorf("blobstore's config is not packaged as a Secret:\n%s", secret)
+	}
+
+	// Nothing is exposed outside the cluster: neither byte path has a
+	// LoadBalancer, because the gateway owns the edge.
+	for path, body := range charts.Files {
+		if strings.Contains(path, "blobstore") && strings.Contains(string(body), "type: LoadBalancer") {
+			t.Errorf("%s exposes blobstore outside the cluster; the gateway is the only route to it", path)
+		}
+	}
+}
+
+// TestBlobstoreRendersNothingWhenDisabled — it costs two PersistentVolumeClaims,
+// so a cluster that has not asked for it must not get them.
+func TestBlobstoreRendersNothingWhenDisabled(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:    1,
+			KmakerNodes:    1,
+			BlobstoreNodes: 2,
+		},
+	})
+	for path := range charts.Files {
+		if strings.Contains(path, "blobstore") {
+			t.Errorf("blobstore rendered %s while optional_services.blobstore is false", path)
+		}
 	}
 }

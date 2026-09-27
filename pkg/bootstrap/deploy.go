@@ -13,6 +13,7 @@ import (
 
 	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
 	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
+	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
 	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
@@ -358,6 +359,43 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg.RootCa = gatewayOpts.RootCAs
 	}
 
+	// Seed blobstore's upload-token signing key into its holder entry.
+	//
+	// The key is GENERATED ONCE and kept in the operator's own config (PKI
+	// .blobstore_token_key), because both pods have to hold the same one and a key
+	// that changed on every deploy would invalidate every upload token in flight.
+	// It reaches the pods only through this holder entry: kernel writes each entry
+	// to that service's ConfigState boundary, which is where the generated chassis
+	// takes a service's typed Config from — the same path the llm_credential seed
+	// below uses, and for the same reason.
+	//
+	// The field is assert_required with no default, so blobstore is one of the
+	// services whose holder entry the operator must fill rather than leave to
+	// ConfigDefaults. Without this, kernel would re-seed blobstore's ConfigState
+	// from an all-zero config on every boot and blobstore would crash-loop on its
+	// own validation, which is exactly the failure mailbox, messaging and weather
+	// each hit before ApplyServicesHolderDefaults existed.
+	if opt := cfg.GetOptionalServices(); opt.GetBlobstore() && cfg.GetTopology().GetBlobstoreNodes() > 0 {
+		if err := EnsureBlobstoreTokenKey(cfg); err != nil {
+			return nil, err
+		}
+		if kernelConfig.Configs == nil {
+			kernelConfig.Configs = &protoServicesConfig.Services{}
+		}
+		if kernelConfig.Configs.BlobstoreConfig == nil {
+			kernelConfig.Configs.BlobstoreConfig = &protoBlobstore.Config{}
+			protoBlobstore.ConfigDefaults(kernelConfig.Configs.BlobstoreConfig)
+		}
+		kernelConfig.Configs.BlobstoreConfig.TokenHmacKey = cfg.GetPki().GetBlobstoreTokenKey()
+		// volume_groups is deliberately NOT set here. Groups are declared at build
+		// time by each consuming service, through the (spec.volume_group)
+		// annotation tacplus surfaces in registry.json, and rendering them is the
+		// operator's job once that annotation exists — it does not yet (it is
+		// tacplus's slice of the work split). Until then the list is empty, which
+		// is the correct fail-closed state: no group, no upload. See
+		// workers/blobstore-result.md.
+	}
+
 	// Seed the real llm_credential into kernel's services holder for every
 	// service named in llm_credential_services. Kernel writes each holder entry
 	// to that service's ConfigState boundary on config load, and the generated
@@ -683,6 +721,9 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("oauth", &t.OauthNodes)
 	check("opa", &t.OpaNodes)
 	check("stratum", &t.StratumNodes)
+	// The search members are the same service, so they are filtered by the same
+	// name: a fleet that does not deploy stratum does not deploy half of it.
+	check("stratum", &t.StratumSearchNodes)
 	check("saml", &t.SamlNodes)
 	check("kmaker", &t.KmakerNodes)
 	check("echo", &t.EchoNodes)
