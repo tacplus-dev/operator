@@ -360,26 +360,22 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg.RootCa = gatewayOpts.RootCAs
 	}
 
-	// Seed blobstore's upload-token signing key into its holder entry.
+	// blobstore's holder entry.
 	//
-	// The key is GENERATED ONCE and kept in the operator's own config (PKI
-	// .blobstore_token_key), because both pods have to hold the same one and a key
-	// that changed on every deploy would invalidate every upload token in flight.
-	// It reaches the pods only through this holder entry: kernel writes each entry
-	// to that service's ConfigState boundary, which is where the generated chassis
-	// takes a service's typed Config from — the same path the llm_credential seed
-	// below uses, and for the same reason.
+	// IT CARRIES NO SECRET. The upload token blobstore mints is raw randomness
+	// whose sha256 keys the UploadSession row holding the grant, so verification
+	// is a lookup and there is no signing key to generate, deliver or rotate
+	// (decided 2026-09-27, blob-store-2026-09-25.md R3). Nothing on
+	// blobstore.Config is secret, which is why this entry can live in kernel's
+	// combined seed at all — that seed is one blob every config-holder in the
+	// fleet, and any tombstone of one, can read.
 	//
-	// The field is assert_required with no default, so blobstore is one of the
-	// services whose holder entry the operator must fill rather than leave to
-	// ConfigDefaults. Without this, kernel would re-seed blobstore's ConfigState
-	// from an all-zero config on every boot and blobstore would crash-loop on its
-	// own validation, which is exactly the failure mailbox, messaging and weather
-	// each hit before ApplyServicesHolderDefaults existed.
+	// The entry is created and defaulted rather than left out: without it kernel
+	// re-seeds blobstore's ConfigState from an all-zero config on every boot and
+	// blobstore crash-loops on its own validation, which is exactly the failure
+	// mailbox, messaging and weather each hit before ApplyServicesHolderDefaults
+	// existed.
 	if opt := cfg.GetOptionalServices(); opt.GetBlobstore() && cfg.GetTopology().GetBlobstoreNodes() > 0 {
-		if err := EnsureBlobstoreTokenKey(cfg); err != nil {
-			return nil, err
-		}
 		if kernelConfig.Configs == nil {
 			kernelConfig.Configs = &protoServicesConfig.Services{}
 		}
@@ -387,7 +383,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 			kernelConfig.Configs.BlobstoreConfig = &protoBlobstore.Config{}
 			protoBlobstore.ConfigDefaults(kernelConfig.Configs.BlobstoreConfig)
 		}
-		kernelConfig.Configs.BlobstoreConfig.TokenHmacKey = cfg.GetPki().GetBlobstoreTokenKey()
 
 		// Render every volume group the fleet declares. Groups are declared at
 		// build time by each consuming service through the (spec.volume_group)
@@ -407,6 +402,19 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	// into the service's own bootstrap YAML above is never read for this field.
 	// The list is config-driven, so the holder entry is resolved by name
 	// (<service>_config) rather than hardcoded per service.
+	//
+	// THIS IS THE SAME EXPOSURE blobstore's token_hmac_key had, and it is still
+	// here on purpose. The combined seed is one blob every config-holder in the
+	// fleet can read, so this hands the fleet's one real LLM API key to every
+	// service. The fix is identical to blobstore's — move the field off
+	// llmproxy.Config onto an llmproxy.Secrets message and deliver it with
+	// serviceSpec.SecretEnvVars — the generic per-pod Secret mechanism in
+	// pkg/helm/generator.go, which is built and tested and has no declarer yet.
+	// It cannot be made here: llmproxy.proto lives in the application proto repo,
+	// not in platform/proto. Removing the seed WITHOUT that proto change is a
+	// known outage: llmproxy reads this field from ConfigState and nowhere else,
+	// and ran with an empty key answering 401 the last time it only reached the
+	// bootstrap YAML (TestKernelBootstrapSeedsLlmCredentialIntoServicesHolder).
 	if cred := cfg.GetLlmCredential(); cred != "" {
 		if kernelConfig.Configs == nil {
 			kernelConfig.Configs = &protoServicesConfig.Services{}

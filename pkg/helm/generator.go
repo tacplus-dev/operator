@@ -360,6 +360,26 @@ type namedPort struct {
 	Port int32
 }
 
+// secretEnvVar is one field delivered to a pod as an environment variable read
+// from a Kubernetes Secret, instead of through kernel's combined config seed.
+// See serviceSpec.SecretEnvVars.
+type secretEnvVar struct {
+	// EnvName is the variable the service reads. It is the name tacplus's
+	// generated <Msg>FromEnvVar looks for — PROTO_<PROTO PATH>_<MESSAGE>_<FIELD>
+	// upper-snaked — so it must be taken from the generated helper, not spelled
+	// by hand here.
+	EnvName string
+	// Key is the entry inside the Secret. One Secret per service holds every one
+	// of its secret fields.
+	Key string
+	// ValuesField is the field under the service's own values.yaml key holding
+	// the value. The secret travels the same route the fleet's other generated
+	// key material already takes — operator crypto -> DeployConfigs -> helm
+	// values -> a rendered Secret — rather than being baked into the chart
+	// templates, so a chart written to disk carries no secret at all.
+	ValuesField string
+}
+
 type serviceSpec struct {
 	Name             string
 	Replicas         int32
@@ -457,6 +477,28 @@ type serviceSpec struct {
 	// gateway's (the external TLS key). A ConfigMap is not secret storage —
 	// no encryption at rest, and readable by anything holding configmap get.
 	ConfigHasKeyMaterial bool
+	// SecretEnvVars are configuration fields that MUST NOT travel in kernel's
+	// combined seed, delivered to the pod as environment variables sourced from
+	// a per-service Kubernetes Secret this generator renders.
+	//
+	// WHY THIS EXISTS. Everything on a service's Config message reaches the pod
+	// through kernel: the operator fills kernelConfig.Configs.<svc>_config and
+	// kernel republishes it to that service's ConfigState. That seed is ONE blob
+	// carrying every service's Config, so a signing secret on a Config message is
+	// a signing secret every config-holder in the fleet can read — which is how
+	// blobstore's upload-token key leaked
+	// (looper/schematic/decisions/blobstore-rev22-defects-2026-09-27.md).
+	//
+	// ConfigHasKeyMaterial is NOT the same thing and does not solve this: it only
+	// decides whether the pod's own bootstrap config is packaged as a Secret
+	// rather than a ConfigMap. The seed copy exists either way.
+	//
+	// A field declared here lives on its own message (blobstore.Secrets, not
+	// blobstore.Config), so the seed has nowhere to put it, and the value moves
+	// operator crypto.yaml -> k8s Secret -> pod env and nowhere else. EnvName is
+	// the name tacplus's generated <Msg>FromEnvVar reads, so it is derived from
+	// the proto package and message, never invented here.
+	SecretEnvVars []secretEnvVar
 	// PerReplicaConfig, if true, gives each replica its own values.yaml config key
 	// (kernel0, kernel1, …) instead of sharing one key named for the service.
 	//
@@ -1041,9 +1083,11 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// own full copy of the files. As per-replica Deployments they would have no
 	// stable name to dial and the peers could not find each other.
 	//
-	// ConfigHasKeyMaterial: the config carries token_hmac_key, the secret the upload
-	// tokens are signed with, so it is packaged as a Secret and not a ConfigMap —
-	// the same reason kernel's, kmaker's and gateway's are.
+	// ConfigHasKeyMaterial is deliberately NOT set. blobstore's config carries no
+	// key material at all — its upload token is raw randomness verified by a
+	// record lookup, not something signed — so a ConfigMap is the honest
+	// packaging. It once carried token_hmac_key and was a Secret for that reason;
+	// that key does not exist any more (decided 2026-09-27).
 	//
 	// Storage 20Gi is a starting point and is the one number here that is a guess:
 	// it is the mirrored copy of every blob every tenant holds, so it is the field
@@ -1054,7 +1098,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			Name: "blobstore", Replicas: topo.BlobstoreNodes, Image: g.imageRef("blobstore"),
 			HasGRPC: true, ListenPort: 8443,
 			HasPVC: true, Storage: "20Gi", IsStatefulSet: true,
-			ConfigHasKeyMaterial: true,
 			NamedPorts: []namedPort{
 				{Name: "bytes", Port: blobstoreBytesPort},
 				{Name: "peer", Port: blobstorePeerPort},
@@ -1258,6 +1301,9 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 {{- end }}
 {{- if .WebAppHostPath }}
   webappHostPath: {{ .WebAppHostPath }}
+{{- end }}
+{{- range .SecretEnvVars }}
+  {{ .ValuesField }}: ""
 {{- end }}
 {{- end }}
 {{- range .PerReplicaConfigs }}
@@ -1606,6 +1652,49 @@ spec:
 {{- end }}
 `))
 
+// secretEnvSecretName is the Secret holding every secret-env field of one
+// service. Named for the service, not the pod: see addService.
+func secretEnvSecretName(svc serviceSpec) string {
+	return svc.Name + "-secrets"
+}
+
+// secretEnvSecret renders that Secret, or nil when the service declares no
+// secret-env fields.
+func secretEnvSecret(svc serviceSpec) []byte {
+	if len(svc.SecretEnvVars) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+`, secretEnvSecretName(svc)))
+	for _, e := range svc.SecretEnvVars {
+		buf.WriteString(fmt.Sprintf("  %s: {{ %s | quote }}\n", e.Key, valuesRef(svc.Name, e.ValuesField)))
+	}
+	return buf.Bytes()
+}
+
+// secretEnvLines renders the container env entries that read that Secret.
+func secretEnvLines(svc serviceSpec) string {
+	var buf bytes.Buffer
+	for _, e := range svc.SecretEnvVars {
+		buf.WriteString(fmt.Sprintf(`        - name: %s
+          valueFrom:
+            secretKeyRef:
+              name: %s
+              key: %s
+`, e.EnvName, secretEnvSecretName(svc), e.Key))
+	}
+	return buf.String()
+}
+
 // configVolumeSource renders the volume source for a service's config volume:
 // a secret for key-bearing configs, a configMap otherwise.
 func configVolumeSource(svc serviceSpec, name string) string {
@@ -1794,6 +1883,15 @@ subjects:
   name: %s
   namespace: {{ .Values.global.namespace }}
 `, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
+	}
+
+	// The service's secret-env Secret: one object per SERVICE, not per replica.
+	// blobstore's two pods must sign with the same key — an upload arriving at
+	// one is mirrored to the other, which verifies the same signature — so a
+	// per-ordinal Secret would be two different keys and every mirror hop would
+	// fail its own verification.
+	if secret := secretEnvSecret(svc); secret != nil {
+		charts.Files[fmt.Sprintf("templates/%s/secret-env.yaml", svc.Name)] = secret
 	}
 
 	// ConfigMap — or a Secret, for configs that embed private key material.
@@ -2110,6 +2208,7 @@ spec:
 		if svc.ExtraEnvVars != "" {
 			ssBuf.WriteString(svc.ExtraEnvVars)
 		}
+		ssBuf.WriteString(secretEnvLines(svc))
 		ssBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d
           name: grpc
@@ -2249,6 +2348,7 @@ spec:
 			if svc.ExtraEnvVars != "" {
 				deployBuf.WriteString(svc.ExtraEnvVars)
 			}
+			deployBuf.WriteString(secretEnvLines(svc))
 			if len(svc.NodeModes) > 0 {
 				nodeMode := "alpha"
 				if i < len(svc.NodeModes) {

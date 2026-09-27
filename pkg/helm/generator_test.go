@@ -1769,13 +1769,22 @@ func TestBlobstoreRendersAMirroredStatefulSetPair(t *testing.T) {
 		t.Errorf("the per-replica Service does not publish the bytes port; the gateway could not proxy /b/:\n%s", svc)
 	}
 
-	// The config carries token_hmac_key, so it must be a Secret.
-	if _, ok := charts.Files["templates/blobstore/configmap-0.yaml"]; ok {
-		t.Error("blobstore's config is a ConfigMap; it carries the upload-token signing key and must be a Secret")
+	// blobstore's config is a plain ConfigMap. It carries no key material: the
+	// upload token is raw randomness verified by a record lookup, so there is no
+	// signing key to package. It WAS a Secret when it carried token_hmac_key, and
+	// that field no longer exists (decided 2026-09-27).
+	cm := chartFile(t, charts, "templates/blobstore/configmap-0.yaml")
+	if !strings.Contains(cm, "kind: ConfigMap") {
+		t.Errorf("blobstore's config is not a ConfigMap:\n%s", cm)
 	}
-	secret := chartFile(t, charts, "templates/blobstore/secret-0.yaml")
-	if !strings.Contains(secret, "kind: Secret") {
-		t.Errorf("blobstore's config is not packaged as a Secret:\n%s", secret)
+	if _, ok := charts.Files["templates/blobstore/secret-0.yaml"]; ok {
+		t.Error("blobstore's config is still packaged as a Secret; it holds no key material")
+	}
+	// And no chart file names a signing key for it anywhere.
+	for path, body := range charts.Files {
+		if strings.Contains(string(body), "token_hmac_key") || strings.Contains(string(body), "tokenHmacKey") {
+			t.Errorf("%s references an upload-token signing key; no such key exists", path)
+		}
 	}
 
 	// Nothing is exposed outside the cluster: neither byte path has a
