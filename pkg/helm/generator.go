@@ -824,9 +824,13 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		MessagingNodes:     t.MessagingNodes,
 		MailboxNodes:       t.MailboxNodes,
 		PersonalauthNodes:  t.PersonalauthNodes,
+		BlobstoreNodes:     t.BlobstoreNodes,
 		// Carry the app's services. A field-by-field clone silently drops
 		// anything added later — which is the failure mode a fixed-field message
-		// invites, and it dropped app_services on the first attempt.
+		// invites, and it dropped app_services on the first attempt. It dropped
+		// blobstore_nodes on this one too, so the warning is doing its job as a
+		// warning and not as a fix: a `proto.Clone` here would end the class, and
+		// changing it is outside what this change is for.
 		AppServices: t.AppServices,
 	}
 }
