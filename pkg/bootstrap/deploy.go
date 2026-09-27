@@ -536,10 +536,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		if i < len(cfg.Pki.NodeSigningCa) {
 			nodeConfig.SigningCa = cfg.Pki.NodeSigningCa[i]
 		}
-		// Override persistence_dir to match the Helm PVC mount path (/app/data).
+		// Override disk_dir to match the Helm PVC mount path (/app/data).
 		// The default "data/kernel" resolves to /data/kernel in the container
 		// (working dir is /), which is not the mounted volume.
-		nodeConfig.PersistenceDir = "/app/data/kernel"
+		nodeConfig.DiskDir = "/app/data/kernel"
 
 		bsYAML, err := protoKernel.ConfigToYAML(nodeConfig)
 		if err != nil {
