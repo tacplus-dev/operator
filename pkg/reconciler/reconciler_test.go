@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -587,8 +588,8 @@ func immutableTestScheme(t *testing.T) *runtime.Scheme {
 
 // immutableTestChart is a one-StatefulSet stand-in for the generated chart,
 // shaped like the kernel StatefulSet the generator emits: headless serviceName,
-// Parallel pod management, an app selector and a single "data" volumeClaimTemplate
-// whose size comes from values.
+// OrderedReady pod management, an app selector and a single "data"
+// volumeClaimTemplate whose size comes from values.
 func immutableTestChart(t *testing.T) *helmchart.Chart {
 	t.Helper()
 	ch, err := helmloader.LoadFiles([]*helmloader.BufferedFile{
@@ -604,7 +605,7 @@ metadata:
 spec:
   serviceName: {{ .Values.kernel.serviceName }}
   replicas: 1
-  podManagementPolicy: Parallel
+  podManagementPolicy: OrderedReady
   selector:
     matchLabels:
       app: kernel
@@ -635,6 +636,11 @@ spec:
 // immutableTestStatefulSet is the live kernel StatefulSet as the chart last
 // created it: 2Gi, and carrying the server-side defaults (storageClassName,
 // volumeMode) a rendered manifest never has.
+//
+// Its metadata is what Helm leaves on the object, not what the chart renders:
+// Helm stamps its release annotations and overwrites the chart's managed-by
+// label with "Helm" on every resource it installs or upgrades (checked on the
+// live kernel StatefulSet, 2026-09-28).
 func immutableTestStatefulSet() *appsv1.StatefulSet {
 	sc := "standard"
 	volumeMode := corev1.PersistentVolumeFilesystem
@@ -642,11 +648,15 @@ func immutableTestStatefulSet() *appsv1.StatefulSet {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kernel",
 			Namespace: "schematic",
-			Labels:    map[string]string{helm.ManagedByLabel: helm.ManagedByValue},
+			Labels:    map[string]string{helm.ManagedByLabel: "Helm"},
+			Annotations: map[string]string{
+				"meta.helm.sh/release-name":      "schematic",
+				"meta.helm.sh/release-namespace": "schematic",
+			},
 		},
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName:         "kernel",
-			PodManagementPolicy: appsv1.ParallelPodManagement,
+			PodManagementPolicy: appsv1.OrderedReadyPodManagement,
 			Selector:            &metav1.LabelSelector{MatchLabels: map[string]string{"app": "kernel"}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "kernel"}},
@@ -878,15 +888,19 @@ func TestReconcileImmutableStatefulSetFieldsLeavesUnchangedStatefulSetAlone(t *t
 	}
 }
 
-// TestReconcileImmutableStatefulSetFieldsSkipsForeignStatefulSet: the label gate
-// is the only thing establishing ownership, and deleting somebody else's
-// StatefulSet would be a much worse outage than the one this code prevents.
+// TestReconcileImmutableStatefulSetFieldsSkipsForeignStatefulSet: Helm's
+// release annotations are the only thing establishing ownership, and deleting
+// somebody else's StatefulSet would be a much worse outage than the one this
+// code prevents. A same-named StatefulSet of another Helm release is not ours.
 func TestReconcileImmutableStatefulSetFieldsSkipsForeignStatefulSet(t *testing.T) {
 	scheme := immutableTestScheme(t)
 	ctx := context.Background()
 
 	foreign := immutableTestStatefulSet()
-	foreign.Labels = map[string]string{helm.ManagedByLabel: "Helm"}
+	foreign.Annotations = map[string]string{
+		"meta.helm.sh/release-name":      "other",
+		"meta.helm.sh/release-namespace": "schematic",
+	}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		foreign,
@@ -923,23 +937,7 @@ func TestReconcileImmutableStatefulSetFieldsSkipsForeignStatefulSet(t *testing.T
 //   - a live PVC smaller than the chart's is classified as a PVC expansion, so
 //     the change Jody hit is serviced here and never reaches helm upgrade.
 func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
-	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(&protoOperator.Config{
-		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 1},
-	}, 1)
-	if err != nil {
-		t.Fatalf("generating chart: %v", err)
-	}
-	buffered := make([]*helmloader.BufferedFile, 0, len(charts.Files))
-	for name, data := range charts.Files {
-		buffered = append(buffered, &helmloader.BufferedFile{Name: name, Data: data})
-	}
-	ch, err := helmloader.LoadFiles(buffered)
-	if err != nil {
-		t.Fatalf("loading generated chart: %v", err)
-	}
-
-	rendered, err := renderStatefulSets(ch, "schematic", map[string]interface{}{})
+	rendered, err := renderStatefulSets(generatedTestChart(t), "schematic", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("rendering generated chart: %v", err)
 	}
@@ -964,4 +962,106 @@ func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
 	if got, ok := grown["data"]; !ok || got.String() != "2Gi" {
 		t.Fatalf("expected the data template recorded as grown to 2Gi, got %v", grown)
 	}
+
+	// The org-rename roll: live was created at 8Gi by f980a22's chart, and the
+	// chart has since been reverted to 2Gi. A PVC cannot shrink, so this is a
+	// forbidden change that only a recreate can clear, never a PVC expansion.
+	live = immutableTestStatefulSet()
+	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("8Gi")
+	fields, grown = immutableStatefulSetDiff(live, desired)
+	if !slices.Equal(fields, []string{"spec.volumeClaimTemplates[data].spec.resources.requests.storage"}) || len(grown) != 0 {
+		t.Fatalf("expected a storage shrink reported as forbidden, got fields=%v grown=%v", fields, grown)
+	}
+
+	// Kernel moved from Parallel to OrderedReady pod management, which
+	// Kubernetes will not patch either.
+	live = immutableTestStatefulSet()
+	live.Spec.PodManagementPolicy = appsv1.ParallelPodManagement
+	fields, grown = immutableStatefulSetDiff(live, desired)
+	if !slices.Equal(fields, []string{"spec.podManagementPolicy"}) || len(grown) != 0 {
+		t.Fatalf("expected the Parallel kernel reported as a forbidden podManagementPolicy change, got fields=%v grown=%v", fields, grown)
+	}
+}
+
+// TestReconcileImmutableStatefulSetFieldsRecreatesTheLiveKernel is the
+// org-rename roll (2026-09-28) end to end against the generated chart: the live
+// kernel StatefulSet, as Helm left it in the cluster, had an 8Gi template and
+// Parallel pod management; the chart says 2Gi and OrderedReady. Helm's upgrade
+// was rejected on kernel because this path never saw the object — it selected
+// on the chart's managed-by label, which Helm overwrites with "Helm". The live
+// object must be orphan-deleted so the upgrade can recreate it, and the 8Gi
+// PVCs, which cannot shrink, must not be touched.
+func TestReconcileImmutableStatefulSetFieldsRecreatesTheLiveKernel(t *testing.T) {
+	scheme := immutableTestScheme(t)
+	ctx := context.Background()
+	ch := generatedTestChart(t)
+
+	rendered, err := renderStatefulSets(ch, "schematic", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("rendering generated chart: %v", err)
+	}
+	live := rendered["kernel"].DeepCopy()
+	live.Labels[helm.ManagedByLabel] = "Helm"
+	live.Annotations = map[string]string{
+		"meta.helm.sh/release-name":      "schematic",
+		"meta.helm.sh/release-namespace": "schematic",
+	}
+	live.Spec.PodManagementPolicy = appsv1.ParallelPodManagement
+	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("8Gi")
+
+	var deletePolicy *metav1.DeletionPropagation
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		live,
+		immutableTestPVC("8Gi"),
+		immutableTestStorageClass(true),
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			var o client.DeleteOptions
+			for _, opt := range opts {
+				opt.ApplyToDelete(&o)
+			}
+			deletePolicy = o.PropagationPolicy
+			return c.Delete(ctx, obj, opts...)
+		},
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			t.Fatalf("unexpected patch of %s: a PVC cannot shrink", obj.GetName())
+			return nil
+		},
+	}).Build()
+
+	r := &Reconciler{client: cl, log: zap.NewNop()}
+	if err := r.reconcileImmutableStatefulSetFields(ctx, "schematic", ch, map[string]interface{}{}); err != nil {
+		t.Fatalf("reconciling immutable fields: %v", err)
+	}
+
+	var st appsv1.StatefulSet
+	err = r.client.Get(ctx, types.NamespacedName{Namespace: "schematic", Name: "kernel"}, &st)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected the live kernel statefulset to be deleted, got err=%v", err)
+	}
+	if deletePolicy == nil || *deletePolicy != metav1.DeletePropagationOrphan {
+		t.Fatalf("expected an orphan delete so kernel pods keep running, got %v", deletePolicy)
+	}
+}
+
+// generatedTestChart loads the chart the generator actually emits for a
+// one-kernel, one-stratum topology.
+func generatedTestChart(t *testing.T) *helmchart.Chart {
+	t.Helper()
+	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(&protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 1},
+	}, 1)
+	if err != nil {
+		t.Fatalf("generating chart: %v", err)
+	}
+	buffered := make([]*helmloader.BufferedFile, 0, len(charts.Files))
+	for name, data := range charts.Files {
+		buffered = append(buffered, &helmloader.BufferedFile{Name: name, Data: data})
+	}
+	ch, err := helmloader.LoadFiles(buffered)
+	if err != nil {
+		t.Fatalf("loading generated chart: %v", err)
+	}
+	return ch
 }

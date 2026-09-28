@@ -470,6 +470,13 @@ type serviceSpec struct {
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
 	IsStatefulSet bool
+	// OrderedReady, if true, renders the StatefulSet with podManagementPolicy
+	// OrderedReady instead of Parallel, so pod N+1 is not created until pod N is
+	// Running and Ready. Set on kernel: its state lives only in memory,
+	// replicated between members, and Parallel brought every missing kernel pod
+	// up at once with no member holding state (the 0→3 scale, 2026-09-23).
+	// Rolling updates are one pod at a time under either policy.
+	OrderedReady bool
 	// ConfigHasKeyMaterial, if true, packages the service's generated config as
 	// a Secret instead of a ConfigMap. Three configs embed private keys: kernel's
 	// per-node config (node TLS key, node signing CA key, and the gateway
@@ -939,7 +946,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
@@ -2124,6 +2131,10 @@ spec:
 	if svc.IsStatefulSet {
 		// Generate a StatefulSet with an init container that selects the
 		// per-ordinal ConfigMap based on the pod's hostname (kernel-0 → 0).
+		podManagementPolicy := "Parallel"
+		if svc.OrderedReady {
+			podManagementPolicy = "OrderedReady"
+		}
 		var ssBuf bytes.Buffer
 		ssBuf.WriteString(fmt.Sprintf(`---
 apiVersion: apps/v1
@@ -2136,7 +2147,7 @@ metadata:
 spec:
   serviceName: %s
   replicas: %d
-  podManagementPolicy: Parallel
+  podManagementPolicy: %s
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -2149,7 +2160,7 @@ spec:
       labels:
         app: %s
         {{- include "schematic.labels" . | nindent 8 }}
-`, svc.Name, svc.Name, svc.Replicas, svc.Name, svc.Name))
+`, svc.Name, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name))
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {

@@ -990,6 +990,23 @@ func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
 	}
 }
 
+// TestKernelStatefulSetStartsPodsOneAtATime: kernel's state lives only in
+// memory, replicated between members. With Parallel pod management every
+// missing kernel pod is created at once — the 0→3 scale on 2026-09-23 put the
+// whole cluster up together with nobody holding state. OrderedReady does not
+// create pod N+1 until pod N is Running and Ready.
+func TestKernelStatefulSetStartsPodsOneAtATime(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 3},
+	})
+
+	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
+	if !strings.Contains(ss, "podManagementPolicy: OrderedReady") {
+		t.Errorf("kernel StatefulSet must use OrderedReady pod management:\n%s", ss)
+	}
+}
+
 // TestKeyMaterialConfigsArePackagedAsSecrets: kernel's per-node config carries
 // the node TLS key and its signing CA key, kmaker's carries the cluster CA
 // signing key, and gateway's carries the external TLS key. All three were

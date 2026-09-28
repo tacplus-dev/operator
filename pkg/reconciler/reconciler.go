@@ -65,6 +65,15 @@ const StalePendingReleaseAge = 5 * time.Minute
 
 const releaseName = "schematic"
 
+// Helm stamps these release annotations on every resource it installs or
+// upgrades, and they are what Helm itself uses to decide a resource belongs to
+// a release. The chart's managed-by label is no such marker: the same step
+// overwrites it with "Helm".
+const (
+	helmReleaseNameAnnotation      = "meta.helm.sh/release-name"
+	helmReleaseNamespaceAnnotation = "meta.helm.sh/release-namespace"
+)
+
 // DefaultNamespace is the namespace the fleet is deployed into when
 // operator.yaml does not set one.
 const DefaultNamespace = "schematic"
@@ -606,10 +615,7 @@ func (r *Reconciler) reconcileImmutableStatefulSetFields(ctx context.Context, ns
 	}
 
 	var liveList appsv1.StatefulSetList
-	if err := r.client.List(ctx, &liveList, &client.ListOptions{
-		Namespace:     ns,
-		LabelSelector: labels.SelectorFromSet(labels.Set{helm.ManagedByLabel: helm.ManagedByValue}),
-	}); err != nil {
+	if err := r.client.List(ctx, &liveList, &client.ListOptions{Namespace: ns}); err != nil {
 		return fmt.Errorf("listing statefulsets: %w", err)
 	}
 
@@ -617,6 +623,9 @@ func (r *Reconciler) reconcileImmutableStatefulSetFields(ctx context.Context, ns
 		live := &liveList.Items[i]
 		want := desired[live.Name]
 		if want == nil {
+			continue
+		}
+		if live.Annotations[helmReleaseNameAnnotation] != releaseName || live.Annotations[helmReleaseNamespaceAnnotation] != ns {
 			continue
 		}
 
