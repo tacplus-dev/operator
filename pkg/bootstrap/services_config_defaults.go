@@ -6,29 +6,31 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
-	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
-	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoLetsencrypt "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/letsencrypt"
-	protoLlmproxy "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/llmproxy"
-	protoLlmsettings "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/llmsettings"
-	protoMailbox "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/mailbox"
-	protoMessaging "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/messaging"
-	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/opa"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	protoPersonalauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/personalauth"
-	protoProfile "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/profile"
-	protoSamlsvc "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/samlsvc"
-	protoScotty "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/scotty"
-	protoScottyagent "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/scottyagent"
-	protoScottypersonal "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/scottypersonal"
-	protoSentinel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/sentinel"
-	protoStratum "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/stratum"
-	protoWeather "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/weather"
-	protoWork "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/work"
+	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
+	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
+	protoDocmanager "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/docmanager"
+	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
+	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
+	protoLlmproxy "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/llmproxy"
+	protoLlmsettings "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/llmsettings"
+	protoMailbox "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/mailbox"
+	protoMessaging "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/messaging"
+	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
+	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/opa"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoPersonalauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/personalauth"
+	protoProfile "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/profile"
+	protoReveille "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/reveille"
+	protoSamlsvc "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/samlsvc"
+	protoScotty "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scotty"
+	protoScottyagent "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottyagent"
+	protoScottypersonal "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottypersonal"
+	protoSentinel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/sentinel"
+	protoStratum "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/stratum"
+	protoWeather "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/weather"
+	protoWork "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/work"
 )
 
 // servicesHolderDefaulters routes each entry of kernel's services holder to its
@@ -67,6 +69,8 @@ var servicesHolderDefaulters = map[string]func(proto.Message){
 	"llmproxy_config":       func(m proto.Message) { protoLlmproxy.ConfigDefaults(m.(*protoLlmproxy.Config)) },
 	"profile_config":        func(m proto.Message) { protoProfile.ConfigDefaults(m.(*protoProfile.Config)) },
 	"blobstore_config":      func(m proto.Message) { protoBlobstore.ConfigDefaults(m.(*protoBlobstore.Config)) },
+	"docmanager_config":     func(m proto.Message) { protoDocmanager.ConfigDefaults(m.(*protoDocmanager.Config)) },
+	"reveille_config":       func(m proto.Message) { protoReveille.ConfigDefaults(m.(*protoReveille.Config)) },
 }
 
 // servicesHolderDefaultsSkipped are holder entries the operator deliberately
