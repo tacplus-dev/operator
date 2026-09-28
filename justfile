@@ -6,12 +6,12 @@ default: local-binary container
 
 local-binary: generate validate-generated-output
     mkdir -p target
-    go build -trimpath -ldflags="-s -w -X gitlab.com/secondstarcavalier/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o target/schematic-operator ./cmd/cavalier-operator
+    go build -trimpath -ldflags="-s -w -X gitlab.com/seabeam/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o target/schematic-operator ./cmd/cavalier-operator
 
 container: generate validate-generated-output
     mkdir -p bin
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X gitlab.com/secondstarcavalier/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o bin/operator ./cmd/cavalier-operator
-    docker buildx build --platform linux/arm64 -t registry.gitlab.com/secondstarcavalier/schematic/platform/operator/schematic-operator-1-1:latest --load .
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X gitlab.com/seabeam/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o bin/operator ./cmd/cavalier-operator
+    docker buildx build --platform linux/arm64 -t registry.gitlab.com/seabeam/schematic/platform/operator/schematic-operator-1-1:latest --load .
     rm -f bin/operator
 
 # Generated-output gate. Every artifact `schematic-operator generate` emits is a

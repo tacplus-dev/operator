@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // serviceSpec.SecretEnvVars is the generic per-pod secret delivery mechanism: a

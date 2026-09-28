@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
+	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.

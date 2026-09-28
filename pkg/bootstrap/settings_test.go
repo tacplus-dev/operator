@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // llm_credential is a real API key. It used to land in operator.yaml, which the

@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
-	wrapperSpiffe "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/spiffe"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
+	wrapperSpiffe "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/spiffe"
+	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
+	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 const (

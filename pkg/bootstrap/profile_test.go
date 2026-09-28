@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/grants"
+	"gitlab.com/seabeam/schematic/platform/services/operator/model/grants"
 )
 
 // allServiceGrants used to reflect over TokenEntitlements looking for

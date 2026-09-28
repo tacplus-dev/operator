@@ -30,7 +30,7 @@ import (
 	"strings"
 	"text/template"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // ManagedByLabel is the label key every generated chart resource carries, and
@@ -909,7 +909,7 @@ func (g *Generator) imageRefProj(proj, svc string) string {
 	}
 	tag := g.resolveTag(proj, svc)
 	return fmt.Sprintf(
-		"registry.gitlab.com/secondstarcavalier/schematic/platform/services/%s/%s-%s:%s",
+		"registry.gitlab.com/seabeam/schematic/platform/services/%s/%s-%s:%s",
 		proj, svc, g.series, tag,
 	)
 }

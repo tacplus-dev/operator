@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // setupKernelYAML creates a minimal kernel.yaml with TLS stubs and optional

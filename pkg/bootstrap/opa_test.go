@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/grants"
-	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/filesystem"
+	"gitlab.com/seabeam/schematic/platform/services/operator/model/grants"
+	protoFilesystem "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/filesystem"
 )
 
 func TestLoadOPAPolicyIsStable(t *testing.T) {

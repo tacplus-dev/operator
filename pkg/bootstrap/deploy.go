@@ -11,17 +11,17 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoBlobstore "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/blobstore"
-	protoEventbus "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/eventbus"
-	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
+	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
+	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
+	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
+	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
+	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
+	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 )
 
 // DeployConfigs holds all generated per-service configurations.

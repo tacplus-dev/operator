@@ -1,4 +1,4 @@
-module gitlab.com/secondstarcavalier/schematic/platform/services/operator
+module gitlab.com/seabeam/schematic/platform/services/operator
 
 go 1.25.5
 

@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
 
-	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/jwk"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
+	protoJwk "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/jwk"
+	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
 )
 
 var (

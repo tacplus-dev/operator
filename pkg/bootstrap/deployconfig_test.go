@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoGateway "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/gateway"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	protoHost "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/host"
-	protoTokenRequest "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/tokenrequest"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
+	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
+	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
+	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
+	protoTokenRequest "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/tokenrequest"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -390,7 +390,7 @@ func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.secondstarcavalier.cloud",
+		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
@@ -450,7 +450,7 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.secondstarcavalier.cloud",
+		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   2,
@@ -1081,7 +1081,7 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.secondstarcavalier.cloud",
+		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
@@ -1261,7 +1261,7 @@ func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.secondstarcavalier.cloud",
+		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,

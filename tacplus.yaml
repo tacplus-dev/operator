@@ -1,4 +1,4 @@
 language: go
-pkg: com.gitlab.secondstarcavalier.schematic.platform.services.operator
+pkg: com.gitlab.seabeam.schematic.platform.services.operator
 output-dir: .
-src: https://gitlab.com/secondstarcavalier/schematic/platform/proto.git
+src: https://gitlab.com/seabeam/schematic/platform/proto.git

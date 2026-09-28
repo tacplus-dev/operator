@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // llmCredentialDeployDir writes a minimal operator config dir whose crypto

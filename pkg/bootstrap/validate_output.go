@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	protoGrpcConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/grpcconfig"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
+	protoGrpcConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 )
 
 // Every artifact BuildDeployConfigs emits is a serialized proto message that

@@ -12,11 +12,11 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	loggerchassis "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/logger"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/reconciler"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
+	loggerchassis "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/logger"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
 )
 
 // --- run (default) ---

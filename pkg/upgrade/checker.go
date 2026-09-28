@@ -34,7 +34,7 @@ import (
 
 const (
 	registryHost   = "registry.gitlab.com"
-	registryBase   = "secondstarcavalier/schematic/platform/services"
+	registryBase   = "seabeam/schematic/platform/services"
 	operatorBase   = registryBase + "/operator"
 	gitlabTokenURL = "https://gitlab.com/jwt/auth"
 

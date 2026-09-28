@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	protoKmaker "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kmaker"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {

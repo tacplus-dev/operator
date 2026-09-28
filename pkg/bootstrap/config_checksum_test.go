@@ -16,8 +16,8 @@ import (
 	"helm.sh/helm/v3/pkg/releaseutil"
 	k8syaml "sigs.k8s.io/yaml"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 )
 
 // TestSeedChangeRollsKernelPods pins the link between kernel's rendered config
@@ -37,7 +37,7 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.secondstarcavalier.cloud",
+		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,

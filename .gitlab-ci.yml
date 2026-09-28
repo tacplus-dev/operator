@@ -38,7 +38,7 @@ compute-image:
       DOTPART="${V%%-*}"
       MAJOR="$(echo "$DOTPART" | cut -d. -f1)"
       MINOR="$(echo "$DOTPART" | cut -d. -f2)"
-      echo "TACPLUS_IMAGE=${CI_REGISTRY}/secondstarcavalier/schematic/tacplus/tacplus-${MAJOR}-${MINOR}:latest" > ci.env
+      echo "TACPLUS_IMAGE=${CI_REGISTRY}/seabeam/schematic/tacplus/tacplus-${MAJOR}-${MINOR}:latest" > ci.env
       cat ci.env
   artifacts:
     reports:
@@ -61,7 +61,7 @@ proto-validate:
   before_script:
     - printf "machine gitlab.com\nlogin gitlab-ci-token\npassword %s\n" "$CI_JOB_TOKEN" > ~/.netrc
   script:
-    - git clone --quiet https://gitlab.com/secondstarcavalier/schematic/platform/proto.git proto
+    - git clone --quiet https://gitlab.com/seabeam/schematic/platform/proto.git proto
     - git -C proto checkout --quiet "$PROTO_VERSION"
     - tacplus build --src proto
     - go mod download
@@ -88,7 +88,7 @@ proto-validate:
   before_script:
     - printf "machine gitlab.com\nlogin gitlab-ci-token\npassword %s\n" "$CI_JOB_TOKEN" > ~/.netrc
   script:
-    - git clone --quiet https://gitlab.com/secondstarcavalier/schematic/platform/proto.git proto
+    - git clone --quiet https://gitlab.com/seabeam/schematic/platform/proto.git proto
     # Resolve the proto tag for our (version, channel). A tag's channel
     # segment identifies the branch it lives on (`-main.` ⇒ proto's main
     # branch, `-demo.` ⇒ proto's demo branch, etc.) and proto's per-channel
@@ -115,7 +115,7 @@ proto-validate:
     # than crash-looping a pod after deploy.
     - go test ./pkg/bootstrap/ -run 'TestGeneratedOutputSatisfiesConsumerProtos|TestGeneratedKernelConfigCarriesEveryRequiredField|TestValidateDeployConfigsNamesTheMissingField|TestEveryDeployArtifactIsClassified' -count=1
     - VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
-    - PKG="gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/bootstrap"
+    - PKG="gitlab.com/seabeam/schematic/platform/services/operator/pkg/bootstrap"
     - |
       CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
         go build -trimpath -ldflags="-s -w -X ${PKG}.Version=${VERSION}" \

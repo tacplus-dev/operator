@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	protoServicesConfig "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/services_config"
-	protoKernel "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // Every message entry of kernel's services holder must have a defaulter. A new

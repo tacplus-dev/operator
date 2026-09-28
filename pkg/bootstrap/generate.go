@@ -16,8 +16,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // --- generate ---

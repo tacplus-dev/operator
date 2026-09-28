@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	wrapperKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/key"
-	wrapperX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/chassis/x509"
-	protoJwk "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/jwk"
-	protoKey "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/key"
-	protoX509 "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/x509"
+	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
+	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
+	protoJwk "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/jwk"
+	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
+	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 )
 
 const tlsTTL = 1 * time.Hour

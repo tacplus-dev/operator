@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	protoOauth "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/oauth"
-	protoFilesystem "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/filesystem"
-	protoOpa "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/sys/opalib"
+	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
+	protoFilesystem "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/filesystem"
+	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/opalib"
 )
 
 // Minimum accepted by the generated OPA policy validators.

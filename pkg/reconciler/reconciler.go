@@ -50,9 +50,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/helm"
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/pkg/upgrade"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
 )
 
 // ReconcileInterval is how often the reconciler re-checks cluster state

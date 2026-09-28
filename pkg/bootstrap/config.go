@@ -12,11 +12,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 const (
-	configProjectID = "secondstarcavalier%2Fcontrolplane%2Fschematic%2Fconfig-templates"
+	configProjectID = "seabeam%2Fcontrolplane%2Fschematic%2Fconfig-templates"
 	configAPIBase   = "https://gitlab.com/api/v4"
 )
 

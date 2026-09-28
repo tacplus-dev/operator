@@ -8,9 +8,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
-	"gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/grants"
-	protoEntitlements "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/generated/entitlements"
-	protoOperator "gitlab.com/secondstarcavalier/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/model/grants"
+	protoEntitlements "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/entitlements"
+	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
 // ApplyTopologyPreset sets topology fields from a named preset.
