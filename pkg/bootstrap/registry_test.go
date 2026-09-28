@@ -153,21 +153,14 @@ func toSet(ss []string) map[string]bool {
 	return m
 }
 
-// recordReadRegistry is a registry.json shaped the way tacplus emits one TODAY
-// for a service that declares a record read against another service's store.
-// The vservices/ half is real — the live registry.json already carries
-// "query.RecordMap" with host_label "stratum", which is what maps the read
-// surface onto the physical record store. The services/ half is the gap: a
-// (spec.record_read) annotation produces NO client_dependencies entry, so
-// nothing in the node connects mailbox to query.RecordMap.
-//
-// For TestRecordReadResolvesStratumDelegate to pass, the mailbox node would
-// need an entry like
-//
-//	{"source_package": "mailbox", "surface_kind": "s2s",
-//	 "target_package": "query", "target_service": "RecordMap"}
-//
-// which resolveTarget would then map through host_label to "stratum".
+// recordReadRegistry is a registry.json shaped the way tacplus emits one for a
+// service that declares a record read against another service's store: the
+// vservices/ half carries "query.RecordMap" with host_label "stratum" (which
+// maps the read surface onto the physical record store), and the services/
+// half carries the client_dependencies entry tacplus derives from
+// (spec.record_read) — landed in tacplus@45b5db9f, confirmed present in a real
+// generate as of 2026-09-27 (mailbox/letsencrypt/blobstore's own
+// (spec.record_read) annotations each now produce exactly this entry).
 const recordReadRegistry = `{
   "name": "root",
   "children": [
@@ -192,6 +185,14 @@ const recordReadRegistry = `{
           "package": "mailbox",
           "grpc_service": "mailbox.Mailbox"
         }
+      ],
+      "client_dependencies": [
+        {
+          "source_package": "mailbox",
+          "surface_kind": "s2s",
+          "target_package": "query",
+          "target_service": "RecordMap"
+        }
       ]
     }
   ]
@@ -201,13 +202,10 @@ const recordReadRegistry = `{
 // that declares a record read must resolve a 'stratum' dependency, so its
 // kernel delegate authorizes the record store it actually reads from.
 //
-// EXPECTED RED until tacplus's query.RecordMap client dependency lands.
-// tacplus's registry schema has no record-read surface at all today — there is
-// no field on ServiceInfo or ClientDependencyInfo that a (spec.record_read)
-// annotation lands in — so loadServiceDepsFrom has no input from which to
-// derive stratum. This is a missing generator output, tracked in tacplus's own
-// inbox, NOT a bug in this repo: do not "fix" it here by hand-deriving stratum
-// from something else.
+// tacplus@45b5db9f added the client_dependencies entry a (spec.record_read)
+// annotation produces; confirmed against a real generate of platform/proto
+// (mailbox, letsencrypt, blobstore) on 2026-09-27 that authorizedServicesFor
+// resolves 'stratum' for all three via this exact path.
 func TestRecordReadResolvesStratumDelegate(t *testing.T) {
 	sd, err := loadServiceDepsFrom([]byte(recordReadRegistry))
 	if err != nil {
@@ -216,7 +214,6 @@ func TestRecordReadResolvesStratumDelegate(t *testing.T) {
 
 	deps := sd.authorizedServicesFor("mailbox")
 	if !toSet(deps)["stratum"] {
-		t.Errorf("mailbox declares a record read; deps %v missing 'stratum' "+
-			"(expected red until tacplus emits the query.RecordMap client dependency)", deps)
+		t.Errorf("mailbox declares a record read; deps %v missing 'stratum'", deps)
 	}
 }
