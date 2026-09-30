@@ -1830,3 +1830,28 @@ func TestBlobstoreRendersNothingWhenDisabled(t *testing.T) {
 		}
 	}
 }
+
+// A digest in image_digests pins that image to <repository>@<digest> in place
+// of its tag; images with no entry keep the tag they had.
+func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
+	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "localhost:5001")
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+		},
+		ImageDigests: map[string]string{"kernel": digest},
+	})
+
+	values := chartFile(t, charts, "values.yaml")
+	for _, want := range []string{
+		"kernel:\n  image: localhost:5001/schematic/kernel@" + digest + "\n",
+		"sentinel:\n  image: localhost:5001/schematic/sentinel:local\n",
+	} {
+		if !strings.Contains(values, want) {
+			t.Errorf("values.yaml missing %q\n--- values.yaml ---\n%s", want, values)
+		}
+	}
+}

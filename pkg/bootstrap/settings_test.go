@@ -127,3 +127,37 @@ func writeFileString(t *testing.T, path, content string) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
+
+// images.yaml is the release manifest scripts/promote.sh writes. LoadConfig
+// must merge its image_digests in, and SaveSettings must not copy them into
+// operator.yaml: a pin left there would outlive the manifest that set it.
+func TestImageDigestsLoadFromImagesYAMLOnly(t *testing.T) {
+	dir := t.TempDir()
+	digest := "sha256:" + strings.Repeat("cd", 32)
+	manifest := "image_digests:\n  kernel: " + digest + "\n"
+	if err := os.WriteFile(filepath.Join(dir, OperatorImagesFile), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, &protoOperator.Config{Fqdn: "cluster.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.GetImageDigests()["kernel"]; got != digest {
+		t.Fatalf("image_digests[kernel] = %q, want %q", got, digest)
+	}
+
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, OperatorSettingsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "image_digests") {
+		t.Errorf("operator.yaml carries image_digests:\n%s", data)
+	}
+}

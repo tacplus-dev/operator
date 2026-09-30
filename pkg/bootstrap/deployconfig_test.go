@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
 	protoTokenRequest "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/tokenrequest"
@@ -976,6 +978,68 @@ func TestLetsencryptModeWiresGatewayPort80(t *testing.T) {
 	leCfg := string(dc.LetsencryptServiceConfig)
 	if !strings.Contains(leCfg, "port: 8080") {
 		t.Errorf("letsencrypt http_listener does not match the gateway's acme_backend port:\n%s", leCfg)
+	}
+}
+
+// extra_hostnames adds public names alongside fqdn. Both consumers of the public
+// name list must see all of them — the gateway (external_hostnames) and
+// letsencrypt (hostnames) — with fqdn first, while the OIDC issuer stays fqdn.
+func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:      "cavalier",
+		Fqdn:           "console.seabeam.net",
+		ExtraHostnames: []string{"console.example.org"},
+		Port:           443,
+		SpiffePrefix:   "local.dev",
+		Tls:            &protoOperator.TLSConfig{Letsencrypt: true},
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			SentinelNodes: 1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"console.seabeam.net", "console.example.org"}
+
+	kernelCfg, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
+	if err != nil {
+		t.Fatalf("parsing kernel bootstrap YAML: %v", err)
+	}
+	if got := kernelCfg.GetConfigs().GetGatewayConfig().GetExternalHostnames(); !slices.Equal(got, want) {
+		t.Errorf("gateway external_hostnames = %v, want %v", got, want)
+	}
+	if got := kernelCfg.GetIssuer(); got != "https://console.seabeam.net" {
+		t.Errorf("kernel issuer = %q, want https://console.seabeam.net", got)
+	}
+
+	leCfg, err := protoLetsencrypt.ConfigFromBytes(dc.LetsencryptServiceConfig)
+	if err != nil {
+		t.Fatalf("parsing letsencrypt service config: %v", err)
+	}
+	if got := leCfg.GetHostnames(); !slices.Equal(got, want) {
+		t.Errorf("letsencrypt hostnames = %v, want %v", got, want)
 	}
 }
 

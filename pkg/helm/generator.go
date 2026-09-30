@@ -894,13 +894,15 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 // serviceSpec.NodeModes plumbing they fed is left in place but now has no caller
 // — noted rather than removed, since it is not this change's business.
 
-func (g *Generator) imageRef(svc string) string {
-	return g.imageRefProj(svc, svc)
+func (g *Generator) imageRef(cfg *protoOperator.Config, svc string) string {
+	return g.imageRefProj(cfg, svc, svc)
 }
 
 // imageRefProj builds an image reference where the GitLab registry project name
-// differs from the service name.
-func (g *Generator) imageRefProj(proj, svc string) string {
+// differs from the service name. A digest in cfg.image_digests for proj
+// replaces the tag: <repository>@<digest>.
+func (g *Generator) imageRefProj(cfg *protoOperator.Config, proj, svc string) string {
+	var repo, tag string
 	// Local-images mode (SCHEMATIC_LOCAL_IMAGES): reference locally-built images
 	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
 	// docker-desktop clusters where k8s shares the docker daemon, so
@@ -910,15 +912,19 @@ func (g *Generator) imageRefProj(proj, svc string) string {
 		// SCHEMATIC_LOCAL_IMAGES=localhost:5001 -> localhost:5001/schematic/<proj>:local.
 		// Any other non-empty value uses the bare local tag (shared image store).
 		if strings.ContainsAny(v, "/:") {
-			return fmt.Sprintf("%s/schematic/%s:local", v, proj)
+			repo = fmt.Sprintf("%s/schematic/%s", v, proj)
+		} else {
+			repo = fmt.Sprintf("schematic/%s", proj)
 		}
-		return fmt.Sprintf("schematic/%s:local", proj)
+		tag = "local"
+	} else {
+		repo = fmt.Sprintf("registry.gitlab.com/seabeam/schematic/platform/services/%s/%s-%s", proj, svc, g.series)
+		tag = g.resolveTag(proj, svc)
 	}
-	tag := g.resolveTag(proj, svc)
-	return fmt.Sprintf(
-		"registry.gitlab.com/seabeam/schematic/platform/services/%s/%s-%s:%s",
-		proj, svc, g.series, tag,
-	)
+	if digest := cfg.GetImageDigests()[proj]; digest != "" {
+		return repo + "@" + digest
+	}
+	return repo + ":" + tag
 }
 
 // resolveTag returns the image tag for a service via the resolver,
@@ -946,7 +952,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef("kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef(cfg, "kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
@@ -973,7 +979,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
           value: %s
 `, kernelTokenAudience()),
 			MemRequest: "384Mi", MemLimit: "1Gi", CpuRequest: "250m", JavaHeap: "512m", JavaHeapMin: "128m"},
-		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef("kmaker"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
+		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef(cfg, "kmaker"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			ServiceAccountName:           "kmaker",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
@@ -987,16 +993,16 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			TokenReviewRBAC: true, PodReadRBAC: true,
 			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
 			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
-		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef("sentinel"), HasGRPC: true, ListenPort: 8443,
+		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef(cfg, "sentinel"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
-		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef("eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
+		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef(cfg, "eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
 			// Measured 2026-09-19 on the live fleet: ~30m steady. 250m reserved
 			// 8x what it used and, with three fleets' worth of 250m Java pods,
 			// left the 2-vCPU nodes at 99% requested while 6% busy.
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "100m", JavaHeap: "1g", JavaHeapMin: "128m"}),
-		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef("gateway"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
+		withKernelServiceAuth(serviceSpec{Name: "gateway", Replicas: topo.GatewayNodes, Image: g.imageRef(cfg, "gateway"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
-		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef("opa"), HasGRPC: true, ListenPort: 8443,
+		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef(cfg, "opa"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		// stratum is a StatefulSet with a headless Service, like kernel, because
 		// its event store is a Hazelcast cluster: the members need stable
@@ -1005,7 +1011,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// discoverable peer addresses — so several replicas would each form
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef("stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{stratumSearchName}, ListenPort: 8443, IsStatefulSet: true,
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef(cfg, "stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{stratumSearchName}, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes, topo.GetStratumSearchNodes()) +
 				stratumMemberRoleEnv("writer"),
 			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
@@ -1031,7 +1037,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: stratumSearchName,
 			SharesServiceIdentityWith: "stratum",
 			Replicas:                  topo.GetStratumSearchNodes(),
-			Image:                     g.imageRef("stratum"),
+			Image:                     g.imageRef(cfg, "stratum"),
 			HasGRPC:                   true, ListenPort: 8443, IsStatefulSet: true,
 			HasHazelcast: true, HasWorkingSetHazelcast: true,
 			HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{"stratum"},
@@ -1046,13 +1052,13 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	}
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
-	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef("oauth"), HasGRPC: true, ListenPort: 8443,
+	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef(cfg, "oauth"), HasGRPC: true, ListenPort: 8443,
 		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 
 	// Echo sample service — disabled by default. Stateless, no S2S deps, so it
 	// needs nothing beyond the standard kernel service auth every service gets.
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "echo", Replicas: topo.EchoNodes, Image: g.imageRef("echo"), HasGRPC: true, ListenPort: 8443,
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "echo", Replicas: topo.EchoNodes, Image: g.imageRef(cfg, "echo"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
 	}
 
@@ -1061,14 +1067,14 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// arranged by the generated ServiceManager, so like echo it needs nothing
 	// beyond the standard kernel service auth.
 	if opt.GetMessaging() && topo.GetMessagingNodes() > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "messaging", Replicas: topo.MessagingNodes, Image: g.imageRef("messaging"), HasGRPC: true, ListenPort: 8443,
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "messaging", Replicas: topo.MessagingNodes, Image: g.imageRef(cfg, "messaging"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
 	}
 
 	// Mailbox — pull delivery over messaging's deliveries. Disabled by default,
 	// same shape as messaging.
 	if opt.GetMailbox() && topo.GetMailboxNodes() > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mailbox", Replicas: topo.MailboxNodes, Image: g.imageRef("mailbox"), HasGRPC: true, ListenPort: 8443,
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mailbox", Replicas: topo.MailboxNodes, Image: g.imageRef(cfg, "mailbox"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
 	}
 
@@ -1076,7 +1082,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// default. Same shape as oauth, which is the other login broker: stateless,
 	// gRPC on 8443, kernel access arranged by the generated ServiceManager.
 	if opt.GetPersonalauth() && topo.GetPersonalauthNodes() > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "personalauth", Replicas: topo.PersonalauthNodes, Image: g.imageRef("personalauth"), HasGRPC: true, ListenPort: 8443,
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "personalauth", Replicas: topo.PersonalauthNodes, Image: g.imageRef(cfg, "personalauth"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 	}
 
@@ -1102,7 +1108,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// expands the live PVCs and recreates the StatefulSet — and shrinking it is not.
 	if opt.GetBlobstore() && topo.GetBlobstoreNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
-			Name: "blobstore", Replicas: topo.BlobstoreNodes, Image: g.imageRef("blobstore"),
+			Name: "blobstore", Replicas: topo.BlobstoreNodes, Image: g.imageRef(cfg, "blobstore"),
 			HasGRPC: true, ListenPort: 8443,
 			HasPVC: true, Storage: "20Gi", IsStatefulSet: true,
 			NamedPorts: []namedPort{
@@ -1142,7 +1148,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	}
 	for _, name := range appServiceNames(topo) {
 		base := serviceSpec{
-			Name: name, Replicas: topo.GetAppServices()[name], Image: g.imageRef(name),
+			Name: name, Replicas: topo.GetAppServices()[name], Image: g.imageRef(cfg, name),
 			HasGRPC: true, ListenPort: 8443,
 			ConfigHasKeyMaterial: llmCredentialServices[name],
 			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
@@ -1169,7 +1175,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 
 	// SAML bridge — disabled by default.
 	if opt.GetSaml() {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef("saml"), HasGRPC: true, ListenPort: 8443,
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef(cfg, "saml"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 	}
 
@@ -1189,7 +1195,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
 			Name:             "letsencrypt",
 			Replicas:         1,
-			Image:            g.imageRef("letsencrypt"),
+			Image:            g.imageRef(cfg, "letsencrypt"),
 			HasGRPC:          true,
 			ListenPort:       8443,
 			AcmePort:         8080,

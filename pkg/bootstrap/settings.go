@@ -13,11 +13,15 @@ import (
 const (
 	OperatorSettingsFile = "operator.yaml"
 	OperatorCryptoFile   = "crypto.yaml"
+	// OperatorImagesFile is the release manifest scripts/promote.sh writes: an
+	// operator Config carrying only image_digests.
+	OperatorImagesFile   = "images.yaml"
 	OperatorBootstrapDir = "bootstrap"
 )
 
-// LoadConfig loads operator.yaml and crypto.yaml from cfgDir, deserializes
-// both as OperatorConfig, and deep-merges them. Missing files are silently skipped.
+// LoadConfig loads operator.yaml, crypto.yaml and images.yaml from cfgDir,
+// deserializes each as OperatorConfig, and deep-merges them. Missing files are
+// silently skipped.
 func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 	cfg := &protoOperator.Config{}
 
@@ -41,6 +45,17 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 		proto.Merge(cfg, part)
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", OperatorCryptoFile, err)
+	}
+
+	imagesPath := filepath.Join(cfgDir, OperatorImagesFile)
+	if data, err := os.ReadFile(imagesPath); err == nil {
+		part, err := protoOperator.ConfigFromBytes(data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", OperatorImagesFile, err)
+		}
+		proto.Merge(cfg, part)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("reading %s: %w", OperatorImagesFile, err)
 	}
 
 	// proto.Merge appends repeated fields rather than replacing them, so a
@@ -73,7 +88,8 @@ func dedupe(in []string) []string {
 }
 
 // SaveSettings writes operator.yaml. PKI material and the shared LLM
-// credential are stripped before writing (they live in crypto.yaml).
+// credential are stripped before writing (they live in crypto.yaml), and so
+// are image digests (they live in images.yaml).
 func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
@@ -83,6 +99,7 @@ func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 	settings.Pki = nil
 	settings.LlmCredential = ""
 	settings.LlmCredentialServices = nil
+	settings.ImageDigests = nil
 
 	data, err := protoOperator.ConfigToYAML(settings)
 	if err != nil {

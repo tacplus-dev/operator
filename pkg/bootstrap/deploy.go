@@ -296,8 +296,12 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	if cfg.GetTls() != nil && cfg.GetTls().GetLetsencrypt() {
 		gatewayOpts.LetsEncrypt = true
 	}
+	// Every public name, fqdn first. letsencrypt defaults its ACME email to
+	// admin@<hostnames[0]>; the OIDC issuer is built from fqdn alone (Issuer)
+	// and extra_hostnames never reaches it.
+	publicHostnames := append([]string{cfg.Fqdn}, cfg.GetExtraHostnames()...)
 	if cfg.Fqdn != "" {
-		gatewayOpts.Hostnames = []string{cfg.Fqdn}
+		gatewayOpts.Hostnames = publicHostnames
 	}
 
 	// Ensure gateway has a cluster-CA external TLS cert in BOTH modes.
@@ -512,7 +516,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		}
 		leSvc := map[string]any{
 			"fqdn":                           cfg.Fqdn,
-			"hostnames":                      []string{cfg.Fqdn},
+			"hostnames":                      publicHostnames,
 			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(letsencryptAcmePort)},
 			"renewal_check_interval_seconds": int64(3600),
 		}
