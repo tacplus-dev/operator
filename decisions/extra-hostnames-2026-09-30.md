@@ -1,5 +1,14 @@
 # extra_hostnames: extra public names, fqdn stays primary (2026-09-30)
 
+**Status (2026-09-30): decided — cutover Q1 = option (c), single-name cert.
+The field is kept but is not usable; `extra_hostnames` stays empty
+everywhere.** certmagic issues one single-name certificate per name, not a
+multi-SAN certificate, and the gateway serves one certificate with no SNI
+selection. Making the field usable needs N certificates plus gateway SNI
+selection (option b), recorded at
+looper/schematic/decisions/n-cert-sni-option-b-2026-09-30.md — low priority,
+not scheduled.
+
 ## Decision
 
 `operator.Config.extra_hostnames` (field 24) lists public names served in
@@ -29,9 +38,9 @@ email to `admin@<hostnames[0]>`.
 - **The certificate.** certmagic v0.25.2 does not issue multi-SAN certificates:
   `ManageAsync(list)` obtains one single-name certificate per entry, and
   letsencrypt stores only `hostnames[0]`'s for the gateway. Until that is
-  resolved (see looper/schematic/workers/cutover-questions.md Q1), an extra
-  name is served with the fqdn's certificate and fails TLS name checks. Do
-  not set `extra_hostnames` on pilot yet.
+  resolved (Q1 decided (c): not resolved; see Status above), an extra name
+  is served with the fqdn's certificate and fails TLS name checks. Do not
+  set `extra_hostnames`.
 - letsencrypt keys its stratum record by a digest of the sorted hostname list
   (`certSetID`), so adding a name makes the next start miss the stored record
   and open a new ACME account and order.

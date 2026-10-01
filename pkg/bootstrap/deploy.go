@@ -298,7 +298,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	}
 	// Every public name, fqdn first. letsencrypt defaults its ACME email to
 	// admin@<hostnames[0]>; the OIDC issuer is built from fqdn alone (Issuer)
-	// and extra_hostnames never reaches it.
+	// and extra_hostnames never reaches it. Only fqdn gets a usable certificate:
+	// letsencrypt publishes hostnames[0]'s single-name cert and the gateway has
+	// no SNI selection, so extra_hostnames must stay empty (decisions/
+	// extra-hostnames-2026-09-30.md).
 	publicHostnames := append([]string{cfg.Fqdn}, cfg.GetExtraHostnames()...)
 	if cfg.Fqdn != "" {
 		gatewayOpts.Hostnames = publicHostnames
