@@ -23,7 +23,6 @@ import (
 	protoPersonalauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/personalauth"
 	protoProfile "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/profile"
 	protoReveille "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/reveille"
-	protoSamlsvc "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/samlsvc"
 	protoScotty "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scotty"
 	protoScottyagent "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottyagent"
 	protoScottypersonal "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottypersonal"
@@ -54,7 +53,6 @@ var servicesHolderDefaulters = map[string]func(proto.Message){
 	"oauth_config":          func(m proto.Message) { protoOauth.ConfigDefaults(m.(*protoOauth.Config)) },
 	"opa_config":            func(m proto.Message) { protoOpa.ConfigDefaults(m.(*protoOpa.Config)) },
 	"stratum_config":        func(m proto.Message) { protoStratum.ConfigDefaults(m.(*protoStratum.Config)) },
-	"saml_config":           func(m proto.Message) { protoSamlsvc.ConfigDefaults(m.(*protoSamlsvc.Config)) },
 	"operator_config":       func(m proto.Message) { protoOperator.ConfigDefaults(m.(*protoOperator.Config)) },
 	"kmaker_config":         func(m proto.Message) { protoKmaker.ConfigDefaults(m.(*protoKmaker.Config)) },
 	"messaging_config":      func(m proto.Message) { protoMessaging.ConfigDefaults(m.(*protoMessaging.Config)) },
@@ -81,14 +79,12 @@ var servicesHolderDefaulters = map[string]func(proto.Message){
 //
 //   - letsencrypt: hostnames is assert_required; the operator delivers
 //     letsencrypt's config out of band as DeployConfigs.LetsencryptServiceConfig.
-//   - saml: entity_id is assert_required, and nothing generates it.
 //
-// Both therefore still get whatever kernel seeds from an absent holder entry.
-// Closing that needs a real bundle section (or an operator-computed value) for
-// each, not a default — tracked as follow-up, not fixed here.
+// It therefore still gets whatever kernel seeds from an absent holder entry.
+// Closing that needs a real bundle section (or an operator-computed value), not
+// a default — tracked as follow-up, not fixed here.
 var servicesHolderDefaultsSkipped = map[string]bool{
 	"letsencrypt": true,
-	"saml":        true,
 }
 
 // ApplyServicesHolderDefaults populates the holder entry of every deployed

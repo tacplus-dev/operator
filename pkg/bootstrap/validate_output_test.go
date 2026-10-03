@@ -22,7 +22,6 @@ func generatedOutputFixture(t *testing.T) string {
 		Fqdn:         "console.seabeam.cloud",
 		SpiffePrefix: "local.dev",
 		OptionalServices: &protoOperator.OptionalServices{
-			Saml:  true,
 			Oauth: true,
 			Echo:  true,
 		},
@@ -34,7 +33,6 @@ func generatedOutputFixture(t *testing.T) string {
 			OauthNodes:    1,
 			OpaNodes:      1,
 			StratumNodes:  1,
-			SamlNodes:     1,
 			KmakerNodes:   1,
 			EchoNodes:     1,
 			AppServices:   map[string]int32{"tasks": 1},
@@ -86,7 +84,7 @@ func TestGeneratedOutputSatisfiesConsumerProtos(t *testing.T) {
 	// just whichever ones happen to be non-nil.
 	want := []string{
 		"bootstrap0", "bootstrap1", "bootstrap2", "kmaker", "sentinel", "echo",
-		"gateway", "eventbus", "oauth", "opa", "saml", "stratum",
+		"gateway", "eventbus", "oauth", "opa", "stratum",
 		"tasks",
 	}
 	got := map[string]bool{}
@@ -207,7 +205,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"PersonalauthConfig": true,
 		"AppConfigs":         true, "GatewayConfig": true,
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
-		"SamlConfig": true, "StratumConfig": true,
+		"StratumConfig":           true,
 		"LetsencryptConfig":       true,
 		"BlobstoreConfig":         true,
 		"OperatorBootstrapConfig": true,

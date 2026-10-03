@@ -104,7 +104,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},

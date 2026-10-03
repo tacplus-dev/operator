@@ -43,7 +43,6 @@ type DeployConfigs struct {
 	EventbusConfig           []byte
 	OauthConfig              []byte
 	OpaConfig                []byte
-	SamlConfig               []byte
 	StratumConfig            []byte
 	KmakerConfig             []byte
 	LetsencryptConfig        []byte
@@ -456,7 +455,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	if err != nil {
 		return nil, fmt.Errorf("building gateway config: %w", err)
 	}
-	opt := cfg.GetOptionalServices()
 
 	oauthConfigYAML, err := buildSvc("oauth", nil)
 	if err != nil {
@@ -482,14 +480,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 	operatorBootstrapYAML, err := buildSvc("operator", nil)
 	if err != nil {
 		return nil, err
-	}
-
-	var samlConfigYAML []byte
-	if opt.GetSaml() {
-		samlConfigYAML, err = buildSvc("saml", nil)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	stratumConfigYAML, err := buildSvc("stratum", nil)
@@ -592,7 +582,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		EventbusConfig:           eventbusConfigYAML,
 		OauthConfig:              oauthConfigYAML,
 		OpaConfig:                opaConfigYAML,
-		SamlConfig:               samlConfigYAML,
 		StratumConfig:            stratumConfigYAML,
 		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
@@ -754,7 +743,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	// The search members are the same service, so they are filtered by the same
 	// name: a fleet that does not deploy stratum does not deploy half of it.
 	check("stratum", &t.StratumSearchNodes)
-	check("saml", &t.SamlNodes)
 	check("kmaker", &t.KmakerNodes)
 	check("echo", &t.EchoNodes)
 	check("messaging", &t.MessagingNodes)
@@ -786,7 +774,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},

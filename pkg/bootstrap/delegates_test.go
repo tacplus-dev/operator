@@ -306,9 +306,6 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 			OauthNodes:    1,
 			EchoNodes:     1,
 		},
-		OptionalServices: &protoOperator.OptionalServices{
-			Saml: true,
-		},
 		Tls: &protoOperator.TLSConfig{
 			Letsencrypt: true,
 		},
@@ -326,7 +323,7 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 	}
 
 	// Enabled optional services must have delegates.
-	for _, svc := range []string{"saml", "letsencrypt"} {
+	for _, svc := range []string{"letsencrypt"} {
 		if !delegateNames[svc] {
 			t.Fatalf("missing delegate for enabled optional service %q", svc)
 		}
@@ -432,7 +429,7 @@ func TestEnsureServiceDelegatesAppServiceGetsBroker(t *testing.T) {
 }
 
 // TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind verifies that a newly
-// created oauth/saml delegate declares AUTH_BROKER_KIND_IDP. Kernel's
+// created oauth delegate declares AUTH_BROKER_KIND_IDP. Kernel's
 // MintUserToken refuses a delegate whose auth_broker_kinds does not contain the
 // request's kind, so a generated cluster whose broker delegate lacks it cannot
 // log anyone in.
@@ -453,7 +450,7 @@ func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
 
 	for _, d := range loadDelegates(t, kernelPath) {
 		want := []string(nil)
-		if d.Name == "oauth" || d.Name == "saml" {
+		if d.Name == "oauth" {
 			want = []string{"idp"}
 		}
 		if len(d.AuthBrokerKinds) != len(want) {

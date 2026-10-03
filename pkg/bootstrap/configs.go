@@ -69,9 +69,6 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.OauthConfig) > 0 && opt.GetOauth() {
 		serviceFiles["oauth"] = dc.OauthConfig
 	}
-	if len(dc.SamlConfig) > 0 && opt.GetSaml() {
-		serviceFiles["saml"] = dc.SamlConfig
-	}
 	// The application's own services. The in-memory bundle path (BundleFromConfigs)
 	// has always included these; this on-disk path did not, so `build` produced a
 	// portable bundle with NO config for any app service — and `apply --bundle`

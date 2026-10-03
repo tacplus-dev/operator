@@ -23,7 +23,6 @@ func everyPlatformServiceConfig() *protoOperator.Config {
 			Mailbox:      true,
 			Personalauth: true,
 			Blobstore:    true,
-			Saml:         true,
 		},
 		Topology: &protoOperator.Topology{
 			KernelNodes:        1,
@@ -40,7 +39,6 @@ func everyPlatformServiceConfig() *protoOperator.Config {
 			MailboxNodes:       1,
 			PersonalauthNodes:  1,
 			BlobstoreNodes:     1,
-			SamlNodes:          1,
 		},
 	}
 }

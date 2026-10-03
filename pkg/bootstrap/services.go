@@ -12,7 +12,6 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"sentinel":    true,
 	"eventbus":    true,
 	"oauth":       true,
-	"saml":        true,
 	"opa":         true,
 	"letsencrypt": true,
 	"gateway":     true,
@@ -196,9 +195,6 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	opt := cfg.GetOptionalServices()
 	topo := cfg.GetTopology()
 
-	if opt.GetSaml() {
-		out = append(out, "saml")
-	}
 	if cfg.GetTls().GetLetsencrypt() {
 		out = append(out, "letsencrypt")
 	}

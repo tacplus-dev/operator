@@ -360,10 +360,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	if opt.GetOauth() {
 		oauthStatus = "enabled"
 	}
-	samlStatus := "disabled"
-	if opt.GetSaml() {
-		samlStatus = "enabled"
-	}
 
 	fmt.Printf("\nCluster initialized: %s/\n", dir)
 	fmt.Printf("  fqdn:       %s\n", cfg.Fqdn)
@@ -379,7 +375,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	if topo.GetStratumSearchNodes() > 0 {
 		fmt.Printf("  stratum:    %d (search)\n", topo.GetStratumSearchNodes())
 	}
-	fmt.Printf("  saml:       %s\n", samlStatus)
 	fmt.Printf("  services/   editable service configs\n")
 	fmt.Printf("  ca.pem      CA cert for host trust\n")
 	fmt.Printf("\nEdit services/*.yaml, then run:\n")

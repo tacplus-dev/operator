@@ -16,7 +16,6 @@ func AllServices() []ServiceRef {
 		{Proj: "stratum", Svc: "stratum"},
 		{Proj: "kmaker", Svc: "kmaker"},
 		{Proj: "oauth", Svc: "oauth"},
-		{Proj: "saml", Svc: "saml"},
 		{Proj: "letsencrypt", Svc: "letsencrypt"},
 	}
 }

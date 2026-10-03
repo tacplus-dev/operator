@@ -61,15 +61,15 @@ func TestS2SClientGetsTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// saml → kernel.Mint. The vservice host_label leg this test also used to
+	// personalauth → kernel.Mint. The vservice host_label leg this test also used to
 	// cover (argus → stratum.RecordMap, GraphdbQuery, TimedbQuery) lost its
 	// last subject when argus was deleted 2026-09-01; every remaining
 	// (spec.grpc_s2s_client) in the fleet names a concrete service.
-	samlDeps := sd.authorizedServicesFor("saml")
-	has := toSet(samlDeps)
+	personalauthDeps := sd.authorizedServicesFor("personalauth")
+	has := toSet(personalauthDeps)
 	for _, expected := range []string{"kernel"} {
 		if !has[expected] {
-			t.Errorf("saml deps %v missing %q", samlDeps, expected)
+			t.Errorf("personalauth deps %v missing %q", personalauthDeps, expected)
 		}
 	}
 }

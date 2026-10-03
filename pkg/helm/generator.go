@@ -872,7 +872,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		OpaNodes:           t.OpaNodes,
 		StratumNodes:       t.StratumNodes,
 		StratumSearchNodes: t.StratumSearchNodes,
-		SamlNodes:          t.SamlNodes,
 		KmakerNodes:        t.KmakerNodes,
 		EchoNodes:          t.EchoNodes,
 		MessagingNodes:     t.MessagingNodes,
@@ -1171,12 +1170,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			inst.Name = TenantInstanceName(name, tenant)
 			svcs = append(svcs, withKernelServiceAuth(inst))
 		}
-	}
-
-	// SAML bridge — disabled by default.
-	if opt.GetSaml() {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "saml", Replicas: topo.SamlNodes, Image: g.imageRef(cfg, "saml"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
 	}
 
 	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.

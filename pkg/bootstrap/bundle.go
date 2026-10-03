@@ -78,7 +78,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"saml", dc.SamlConfig},
 		{"stratum", dc.StratumConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},

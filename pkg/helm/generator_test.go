@@ -124,10 +124,8 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			EchoNodes:     1,
 			OpaNodes:      1,
 			StratumNodes:  1,
-			SamlNodes:     1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
-			Saml:  true,
 			Oauth: true,
 			Echo:  true,
 		},
@@ -140,7 +138,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		"opa",
 		"stratum",
 		"oauth",
-		"saml",
 		"letsencrypt",
 		"echo",
 	}

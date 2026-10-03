@@ -204,7 +204,6 @@ func WriteServices(cfgDir string) error {
 		"gateway.yaml":  exampleGatewayYAML,
 		"eventbus.yaml": exampleEventbusYAML,
 		"oauth.yaml":    exampleOauthYAML,
-		"saml.yaml":     exampleSamlYAML,
 		"opa.yaml":      exampleOpaYAML,
 	}
 
@@ -540,13 +539,12 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 // fails closed. Only the broker kind is set here — everything else about who may
 // attest a login is still kernel's Delegate record, not this map.
 //
-// oauth and saml broker an IdP-validated login. personalauth brokers a DEVICE
+// oauth brokers an IdP-validated login. personalauth brokers a DEVICE
 // proof: a device-held key registering and logging itself in, for a PERSONAL
 // principal that has no tenant IdP. It is deliberately NOT given "idp" as well
 // — a broker gets exactly the kinds it is built to verify.
 var authBrokerKinds = map[string][]string{
 	"oauth":        {"idp"},
-	"saml":         {"idp"},
 	"personalauth": {"device"},
 }
 
@@ -830,13 +828,6 @@ const exampleMsggatewayYAML = `# Msggateway service configuration.
 const exampleOpaYAML = `# OPA service configuration.
 # OPA entitlements policy is loaded from services/opa/ directory.
 # Run 'schematic-operator init-opa' to generate default policy.
-# Edit these, then run: schematic-operator generate
-{}
-`
-
-const exampleSamlYAML = `# SAML service configuration.
-# Identity provider bridge for enterprise SSO.
-# Enable via optional_services.saml = true in operator.yaml.
 # Edit these, then run: schematic-operator generate
 {}
 `
