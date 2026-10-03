@@ -30,6 +30,11 @@ rules:
     resources:
       - networkpolicies
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The runtime test harness's suspended CronJob templates (D27).
+  - apiGroups: ["batch"]
+    resources:
+      - cronjobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # Namespaced RBAC emitted by the generated service chart
   # (e.g. <service>-pod-reader).
@@ -40,11 +45,13 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # RBAC escalation prevention: the operator can only mint the
-  # <service>-pod-reader Role above if it holds this itself.
+  # <service>-pod-reader Role above if it holds get itself, and the
+  # harness-chaos Role (pods delete by name, D27) if it holds delete. Delete
+  # adds no reach: the operator already deletes the StatefulSets that own them.
   - apiGroups: [""]
     resources:
       - pods
-    verbs: ["get"]
+    verbs: ["get", "delete"]
 
   # Leader election.
   - apiGroups: ["coordination.k8s.io"]

@@ -723,3 +723,43 @@ func TestEnsureServiceDelegatesReorderedListIsNotAChange(t *testing.T) {
 	}
 	t.Fatal("opa delegate not found")
 }
+
+// TestEnsureServiceDelegatesGivesHarnessNoDelegate guards the D27 rule that the
+// runtime test harness reaches the fleet only through public doors. A kernel
+// delegate is what lets a ServiceAccount mint an s2s token, so neither harness
+// ServiceAccount may appear in one — not as a delegate name and not as a
+// kubernetes_service_accounts matcher on any other delegate.
+func TestEnsureServiceDelegatesGivesHarnessNoDelegate(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+
+	cfg := &protoOperator.Config{
+		Topology: &protoOperator.Topology{
+			KernelNodes:  1,
+			GatewayNodes: 1,
+		},
+		OptionalServices: &protoOperator.OptionalServices{
+			Harness:            true,
+			HarnessDestructive: true,
+		},
+	}
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	delegates := loadDelegates(t, kernelPath)
+	if len(delegates) == 0 {
+		t.Fatal("no delegates written; the assertion below would pass vacuously")
+	}
+	for _, d := range delegates {
+		if d.Name == "harness" || d.Name == "harness-chaos" {
+			t.Errorf("kernel delegate %q created for the harness", d.Name)
+		}
+		for _, sa := range d.KubernetesServiceAccounts {
+			if sa.KubernetesServiceAccount == "harness" || sa.KubernetesServiceAccount == "harness-chaos" {
+				t.Errorf("delegate %q matches harness ServiceAccount %q", d.Name, sa.KubernetesServiceAccount)
+			}
+		}
+	}
+}

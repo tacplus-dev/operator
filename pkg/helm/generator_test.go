@@ -257,7 +257,10 @@ func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
 		"- persistentvolumeclaims",
 		`resources: ["leases"]`,
 		`resources: ["events"]`,
-		`verbs: ["get"]`,
+		// The harness CronJobs (D27), and the pods/delete the operator must hold
+		// to mint the harness-chaos Role that grants it.
+		"- cronjobs",
+		`verbs: ["get", "delete"]`,
 	} {
 		if !strings.Contains(role, want) {
 			t.Fatalf("operator Role missing %q\n--- role ---\n%s", want, role)
