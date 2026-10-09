@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
@@ -467,6 +468,32 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		}
 		if err := sl.load(svcMap); err != nil {
 			return nil, fmt.Errorf("parsing %s config: %w", sl.name, err)
+		}
+	}
+
+	// The application's own services are not known at compile time, so their
+	// files are resolved on the holder by name (<name>_config), the way
+	// deploy.go resolves llm_credential_services. A services/<name>.yaml is
+	// that service's typed Config; it is optional — absent, the holder
+	// defaulters apply.
+	if opCfg != nil {
+		for _, name := range AppServiceNames(opCfg) {
+			svcMap, err := loadServiceConfigFile(filepath.Join(servicesDir, name+".yaml"))
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("reading services/%s.yaml: %w", name, err)
+			}
+			fd := holder.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name + "_config"))
+			if fd == nil || fd.Message() == nil {
+				return nil, fmt.Errorf("services/%s.yaml exists, but kernel's services holder has no %s_config entry", name, name)
+			}
+			target := holder.ProtoReflect().Mutable(fd).Message().Interface()
+			if err := unmarshalMapToProto(svcMap, target); err != nil {
+				return nil, fmt.Errorf("parsing %s config: %w", name, err)
+			}
+			hasHolder = true
 		}
 	}
 
