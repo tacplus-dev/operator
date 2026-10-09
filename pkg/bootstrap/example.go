@@ -485,6 +485,11 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 				}
 				return nil, fmt.Errorf("reading services/%s.yaml: %w", name, err)
 			}
+			if len(svcMap) == 0 {
+				// A file of comments only, or "{}": yaml gives a nil map, which
+				// marshals to JSON null and protojson refuses. Empty is empty.
+				svcMap = make(map[string]any)
+			}
 			fd := holder.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name + "_config"))
 			if fd == nil || fd.Message() == nil {
 				return nil, fmt.Errorf("services/%s.yaml exists, but kernel's services holder has no %s_config entry", name, name)

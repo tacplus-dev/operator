@@ -73,3 +73,34 @@ func TestBuildKernelConfigAppServiceFileIsOptional(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A services/<name>.yaml holding only comments is an empty config, not an
+// error: on 2026-10-09 such a file rendered as JSON null and every reconcile
+// failed until it was replaced with "{}".
+func TestBuildKernelConfigAppServiceFileOfCommentsIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace: "workloads",
+		Topology:  &protoOperator.Topology{AppServices: map[string]int32{"llmproxy": 1}},
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("delegates: []\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "llmproxy.yaml"), []byte("# ids disabled\n# anthropic_workspace_id: x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	kcfg, err := BuildKernelConfigProto(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kcfg.GetConfigs().GetLlmproxyConfig().GetAnthropicWorkspaceId(); got != "" {
+		t.Fatalf("workspace id = %q, want empty", got)
+	}
+}
