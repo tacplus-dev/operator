@@ -70,6 +70,10 @@ type SourceDelegate struct {
 	// rewrite of kernel.yaml below would silently strip a deployment's
 	// hand-added broker capability.
 	AuthBrokerKinds []string `yaml:"auth_broker_kinds,omitempty"`
+	// ExternalAudiences are the off-cluster audiences this delegate may mint its
+	// OWN identity for via Mint.MintExternalServiceToken (exact match; empty
+	// means none). Round-tripped for the same reason as AuthBrokerKinds.
+	ExternalAudiences []string `yaml:"external_audiences,omitempty"`
 }
 
 // SourceKubernetesServiceAccount maps a Kubernetes service account to a
@@ -323,6 +327,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			AuthorizedServices: authSvcs,
 			TenantNamespace:    sd.TenantNamespace,
 			AuthBrokerKinds:    brokerKinds,
+			ExternalAudiences:  sd.ExternalAudiences,
 		}
 		for _, sa := range sd.KubernetesServiceAccounts {
 			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)
