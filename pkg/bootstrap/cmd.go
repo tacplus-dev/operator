@@ -43,6 +43,7 @@ Management:
   schematic-operator unset-web-root         Remove web root (use embedded webapp)
   schematic-operator add-api-key <name>     Create an API key credential pair
   schematic-operator add-profile <id>       Create or update an entitlement profile
+  schematic-operator approve-tenant <name>  Approve tenant-requests/<name>.yaml as a new tenant
   schematic-operator set-deploy-list <file> Set the deploy list filter
   schematic-operator unset-deploy-list      Remove deploy list (deploy all)
   schematic-operator merge <svc> <file>     Deep-merge YAML into a service config
@@ -73,6 +74,7 @@ func init() {
 	rootCmd.AddCommand(unsetWebRootCmd)
 	rootCmd.AddCommand(addApiKeyCmd)
 	rootCmd.AddCommand(addProfileCmd)
+	rootCmd.AddCommand(approveTenantCmd)
 	rootCmd.AddCommand(setDeployListCmd)
 	rootCmd.AddCommand(unsetDeployListCmd)
 	rootCmd.AddCommand(mergeCmd)

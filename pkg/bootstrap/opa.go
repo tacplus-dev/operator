@@ -126,13 +126,19 @@ func LoadTenantIdps(cfgDir string) ([]TenantIdp, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadTenantIdps(cfgDir, cfg.GetTenants())
+}
 
+// loadTenantIdps is LoadTenantIdps for an explicit tenant list, so a tenant
+// being approved can be checked against the others before operator.yaml lists
+// it.
+func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 	// Keyed by (issuer_url, client_id) — the pair the proto says identifies the
 	// tenant. Two tenants claiming the same pair is a misconfiguration that
 	// would render a policy OPA rejects at eval time, so reject it here.
 	seen := map[[2]string]string{}
 	var out []TenantIdp
-	for _, tenant := range cfg.GetTenants() {
+	for _, tenant := range tenants {
 		path := filepath.Join(TenantConfigDir(cfgDir, tenant), "oauth.yaml")
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -187,8 +193,7 @@ func tenantNamespaceRego(idps []TenantIdp) string {
 	b.WriteString(tenantNamespaceRegoHeader)
 
 	for _, idp := range idps {
-		fmt.Fprintf(&b, "\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n\taud_matches(%q)\n}\n",
-			idp.TenantNamespace, idp.IssuerURL, idp.ClientID)
+		b.WriteString(exactNamespaceRule(idp))
 	}
 
 	byIssuer := map[string]map[string]bool{}
@@ -203,12 +208,24 @@ func tenantNamespaceRego(idps []TenantIdp) string {
 			continue
 		}
 		delete(byIssuer, idp.IssuerURL)
-		fmt.Fprintf(&b, "\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n}\n",
-			idp.TenantNamespace, idp.IssuerURL)
+		b.WriteString(issuerNamespaceRule(idp))
 	}
 
 	b.WriteString(tenantNamespaceRegoFooter)
 	return b.String()
+}
+
+// exactNamespaceRule is the namespace rule matching issuer AND audience.
+func exactNamespaceRule(idp TenantIdp) string {
+	return fmt.Sprintf("\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n\taud_matches(%q)\n}\n",
+		idp.TenantNamespace, idp.IssuerURL, idp.ClientID)
+}
+
+// issuerNamespaceRule is the issuer-only namespace rule. It is correct only
+// for an issuer that names exactly one tenant; see tenantNamespaceRego.
+func issuerNamespaceRule(idp TenantIdp) string {
+	return fmt.Sprintf("\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n}\n",
+		idp.TenantNamespace, idp.IssuerURL)
 }
 
 // WriteDefaultOPAPolicy writes the default OPA entitlements policy to disk.

@@ -30,6 +30,12 @@ rules:
     resources:
       - networkpolicies
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Disruption budgets the generated chart renders once the cluster has
+  # node pools (pkg/helm NodePoolLabel).
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # The runtime test harness's suspended CronJob templates (D27).
   - apiGroups: ["batch"]
     resources:

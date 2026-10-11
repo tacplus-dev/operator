@@ -645,7 +645,7 @@ func generateTestChartWithTenantOwned(t *testing.T, cfg *protoOperator.Config, t
 // those tenant-owned services are pinned to a single tenant.
 func generateTestChartWithPin(t *testing.T, cfg *protoOperator.Config, tenantOwned map[string]bool, pinnedTenant map[string]string) *Charts {
 	t.Helper()
-	charts, err := New("test", "1.2", nil, tenantOwned, pinnedTenant).Generate(cfg, 1)
+	charts, err := New("test", "1.2", nil, tenantOwned, pinnedTenant).Generate(cfg, 1, false)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -1355,7 +1355,7 @@ func TestPinnedTenantNotConfiguredFailsGeneration(t *testing.T) {
 			GatewayNodes: 1,
 			AppServices:  map[string]int32{"profile": 1},
 		},
-	}, 1)
+	}, 1, false)
 	if err == nil {
 		t.Fatal("Generate accepted a service pinned to a tenant config.tenants does not list")
 	}

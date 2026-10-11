@@ -1051,7 +1051,7 @@ func generatedTestChart(t *testing.T) *helmchart.Chart {
 	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(&protoOperator.Config{
 		Namespace: "schematic",
 		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 1},
-	}, 1)
+	}, 1, false)
 	if err != nil {
 		t.Fatalf("generating chart: %v", err)
 	}

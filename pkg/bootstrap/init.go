@@ -144,7 +144,7 @@ func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
 		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
 	}
 	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
-	charts, err := g.Generate(cfg, 0)
+	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err
 	}

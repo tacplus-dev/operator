@@ -46,6 +46,27 @@ const (
 	ManagedByValue = "schematic-operator"
 )
 
+// NodePoolLabel is the node label that splits the cluster into a fixed core
+// pool, which runs the platform, and an elastic tenant pool, which runs the
+// tenant-owned dogs and grows by adding nodes. The tenant pool also carries the
+// taint NodePoolLabel=TenantPool:NoSchedule so nothing but a tenant dog lands
+// there and the autoscaler can empty its nodes again.
+//
+// Placement is rendered only when the cluster has a Ready node labelled
+// CorePool (see Generate's nodePools): a cluster without labelled pools — every
+// local cluster, and any cluster before its pools exist — renders exactly what
+// it rendered before pools existed, rather than a fleet that cannot schedule.
+//
+// ServicePodLabel names the workload on every pod when pools are on. The
+// per-replica Deployments' pods share no other label (each is app: <svc><i>),
+// and a PodDisruptionBudget has to select all of a service's replicas.
+const (
+	NodePoolLabel   = "schematic.seabeam.io/pool"
+	CorePool        = "core"
+	TenantPool      = "tenant"
+	ServicePodLabel = "schematic.seabeam.io/service"
+)
+
 // Charts is the in-memory representation of a generated Helm chart.
 // Keys are relative paths within the chart directory (e.g. "templates/kernel/deployment.yaml").
 type Charts struct {
@@ -133,7 +154,10 @@ func (g *Generator) checkPinnedTenants(cfg *protoOperator.Config, topo *protoOpe
 // Generate produces the full schematic Helm chart for the given config.
 // nodeCount is the number of schedulable Kubernetes nodes; it is used to
 // set gateway_nodes when topology.gateway_nodes == 0.
-func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts, error) {
+// nodePools reports that the cluster has a core pool (see NodePoolLabel): when
+// true every workload is placed on its pool and multi-replica workloads get a
+// PodDisruptionBudget; when false neither is rendered.
+func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools bool) (*Charts, error) {
 	topo := effectiveTopology(cfg, nodeCount)
 
 	if err := g.checkPinnedTenants(cfg, topo); err != nil {
@@ -169,6 +193,12 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int) (*Charts,
 		}
 	}
 	for _, svc := range services {
+		if nodePools {
+			svc.NodePool = CorePool
+			if svc.TenantInstance {
+				svc.NodePool = TenantPool
+			}
+		}
 		if err := g.addService(charts, cfg, svc); err != nil {
 			return nil, fmt.Errorf("generating %s templates: %w", svc.Name, err)
 		}
@@ -533,6 +563,12 @@ type serviceSpec struct {
 	// with the same name is a duplicate resource helm refuses, and a service account
 	// of its own would be a principal kernel has never heard of.
 	SharesServiceIdentityWith string
+	// TenantInstance marks one tenant's instance of a tenant-owned service
+	// ("<svc>-<tenant>"), pinned or not. It decides the instance's pool.
+	TenantInstance bool
+	// NodePool, if non-empty, is the pool (CorePool or TenantPool) the workload
+	// is placed on. Generate sets it, and only when the cluster has pools.
+	NodePool string
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
@@ -633,6 +669,60 @@ func archTolerationLines() string {
         value: arm64
         effect: NoSchedule
 `
+}
+
+// nodePoolLines places the pod on its pool (see NodePoolLabel). It must follow
+// archTolerationLines directly: a tenant instance's toleration of the tenant
+// pool's taint is one more item in the tolerations list that function opens.
+func nodePoolLines(svc serviceSpec) string {
+	if svc.NodePool == "" {
+		return ""
+	}
+	var b strings.Builder
+	if svc.NodePool == TenantPool {
+		fmt.Fprintf(&b, `      - key: %s
+        operator: Equal
+        value: %s
+        effect: NoSchedule
+`, NodePoolLabel, TenantPool)
+	}
+	fmt.Fprintf(&b, `      nodeSelector:
+        %s: %s
+`, NodePoolLabel, svc.NodePool)
+	return b.String()
+}
+
+// servicePodLabelLine renders the ServicePodLabel pod-template label that the
+// workload's PodDisruptionBudget selects on.
+func servicePodLabelLine(svc serviceSpec) string {
+	if svc.NodePool == "" {
+		return ""
+	}
+	return fmt.Sprintf("        %s: %s\n", ServicePodLabel, svc.Name)
+}
+
+// podDisruptionBudget lets a voluntary disruption — a node drain for a pool
+// upgrade, or the autoscaler emptying a tenant node — take at most one of the
+// workload's pods at a time. A single-replica workload gets none: a budget of
+// one unavailable out of one is no budget, and anything stricter would make its
+// node undrainable.
+func podDisruptionBudget(svc serviceSpec) []byte {
+	if svc.NodePool == "" || svc.Replicas < 2 {
+		return nil
+	}
+	return []byte(fmt.Sprintf(`apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      %s: %s
+`, svc.Name, ServicePodLabel, svc.Name))
 }
 
 // pvcFsGroupLines renders the pod securityContext for a service with a PVC.
@@ -1173,12 +1263,14 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		if tenant, pinned := g.pinnedTenant[name]; pinned {
 			inst := base
 			inst.Name = TenantInstanceName(name, tenant)
+			inst.TenantInstance = true
 			svcs = append(svcs, withKernelServiceAuth(inst))
 			continue
 		}
 		for _, tenant := range cfg.GetTenants() {
 			inst := base
 			inst.Name = TenantInstanceName(name, tenant)
+			inst.TenantInstance = true
 			svcs = append(svcs, withKernelServiceAuth(inst))
 		}
 	}
@@ -2111,6 +2203,9 @@ spec:
 		charts.Files[fmt.Sprintf("templates/%s/networkpolicy.yaml", svc.Name)] =
 			hazelcastNetworkPolicy(svc)
 	}
+	if pdb := podDisruptionBudget(svc); pdb != nil {
+		charts.Files[fmt.Sprintf("templates/%s/pdb.yaml", svc.Name)] = pdb
+	}
 
 	listenPort := svc.ListenPort
 	if listenPort == 0 {
@@ -2173,8 +2268,8 @@ spec:
     metadata:
       labels:
         app: %s
-        {{- include "schematic.labels" . | nindent 8 }}
-`, svc.Name, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name))
+%s        {{- include "schematic.labels" . | nindent 8 }}
+`, svc.Name, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name, servicePodLabelLine(svc)))
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {
@@ -2209,6 +2304,7 @@ spec:
           value: /bootstrap/bootstrap.yaml
 `
 		ssBuf.WriteString(archTolerationLines())
+		ssBuf.WriteString(nodePoolLines(svc))
 		ssBuf.WriteString(spreadAcrossNodesLines(svc))
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
@@ -2330,10 +2426,10 @@ spec:
     metadata:
       labels:
         app: %s
-        {{- include "schematic.labels" . | nindent 8 }}
+%s        {{- include "schematic.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ %s | sha256sum | quote }}
-`, name, strategy, name, name, valuesRef(svc.Name, "config")))
+`, name, strategy, name, name, servicePodLabelLine(svc), valuesRef(svc.Name, "config")))
 			if svc.HasServiceConfig {
 				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ %s | sha256sum | quote }}
 `, valuesRef(svc.Name, "serviceConfig")))
@@ -2357,7 +2453,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-`, podServiceAccountLines(svc), name, archTolerationLines()+spreadAcrossNodesLines(svc), pvcFsGroupLines(svc), name, valuesRef(svc.Name, "image")))
+`, podServiceAccountLines(svc), name, archTolerationLines()+nodePoolLines(svc)+spreadAcrossNodesLines(svc), pvcFsGroupLines(svc), name, valuesRef(svc.Name, "image")))
 			if jo := javaOptsEnv(svc); jo != "" {
 				deployBuf.WriteString(jo)
 			}

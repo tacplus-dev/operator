@@ -255,13 +255,13 @@ func (r *Reconciler) selfUpgrade(ctx context.Context) (bool, error) {
 }
 
 func (r *Reconciler) reconcile(ctx context.Context) error {
-	nodeCount, err := r.schedulableNodeCount(ctx)
+	nodeCount, nodePools, err := r.schedulableNodeCount(ctx)
 	if err != nil {
 		return fmt.Errorf("counting nodes: %w", err)
 	}
-	r.log.Info("reconciling", zap.Int("schedulable_nodes", nodeCount))
+	r.log.Info("reconciling", zap.Int("schedulable_nodes", nodeCount), zap.Bool("node_pools", nodePools))
 
-	charts, err := r.generator.Generate(r.cfg, nodeCount)
+	charts, err := r.generator.Generate(r.cfg, nodeCount, nodePools)
 	if err != nil {
 		return fmt.Errorf("generating charts: %w", err)
 	}
@@ -291,28 +291,43 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	return nil
 }
 
-// schedulableNodeCount returns the number of Ready, non-tainted worker nodes.
-func (r *Reconciler) schedulableNodeCount(ctx context.Context) (int, error) {
+// schedulableNodeCount returns the number of Ready, non-tainted worker nodes,
+// and whether the cluster has a core pool (helm.NodePoolLabel).
+func (r *Reconciler) schedulableNodeCount(ctx context.Context) (int, bool, error) {
 	var nodeList corev1.NodeList
 	if err := r.client.List(ctx, &nodeList, &client.ListOptions{
 		LabelSelector: labels.Everything(),
 	}); err != nil {
-		return 0, err
+		return 0, false, err
 	}
+	count, nodePools := countSchedulableNodes(nodeList.Items)
+	return count, nodePools, nil
+}
 
-	count := 0
-	for _, node := range nodeList.Items {
+// countSchedulableNodes counts the Ready, schedulable nodes. Once any of them is
+// labelled as the core pool, only core nodes count: the count sizes the
+// one-per-node gateways, and gateways run on the core pool, so a tenant node
+// added for tenant load must not add a gateway that cannot schedule.
+func countSchedulableNodes(nodes []corev1.Node) (int, bool) {
+	all, core := 0, 0
+	for _, node := range nodes {
 		if node.Spec.Unschedulable {
 			continue
 		}
 		for _, cond := range node.Status.Conditions {
 			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-				count++
+				all++
+				if node.Labels[helm.NodePoolLabel] == helm.CorePool {
+					core++
+				}
 				break
 			}
 		}
 	}
-	return count, nil
+	if core > 0 {
+		return core, true
+	}
+	return all, false
 }
 
 // apply installs or upgrades the "schematic" Helm release using the in-memory

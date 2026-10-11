@@ -66,7 +66,7 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 
 	// The chart itself is generated once and never regenerated: the only thing
 	// that changes between the two revisions below is the seed.
-	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(cfg, 1)
+	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(cfg, 1, false)
 	if err != nil {
 		t.Fatalf("generating chart: %v", err)
 	}
