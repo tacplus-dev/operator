@@ -1056,7 +1056,14 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
 	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef(cfg, "oauth"), HasGRPC: true, ListenPort: 8443,
-		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}))
+		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m",
+		// Sign in with Apple's .p8 key: oauth.Secrets.apple_signin_key_p8, which
+		// tacplus's generated SecretsFromEnvVar reads from this variable.
+		SecretEnvVars: []secretEnvVar{{
+			EnvName:     "PROTO_SERVICES_OAUTH_SECRETS_APPLE_SIGNIN_KEY_P8",
+			Key:         "apple_signin_key_p8",
+			ValuesField: "appleSigninKeyP8",
+		}}}))
 
 	// Echo sample service — disabled by default. Stateless, no S2S deps, so it
 	// needs nothing beyond the standard kernel service auth every service gets.
