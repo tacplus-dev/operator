@@ -5,18 +5,38 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 )
 
 // BuildConfigOutput writes all generated service configs as individual YAML files
 // to <cfgDir>/configs/. These files are consumed by Helm chart generation or
 // directly mounted into containers.
 func BuildConfigOutput(cfgDir string) error {
-	dc, err := BuildDeployConfigs(cfgDir)
+	configsDir := filepath.Join(cfgDir, "configs")
+
+	// kmaker's serving cert is not part of crypto.yaml, so the only persisted
+	// copy is the kmaker.yaml written here last time. Reuse it, or every
+	// generate mints a new key and clobbers the one already deployed.
+	var kmakerTLS *protoX509.X509CertChain
+	if data, err := os.ReadFile(filepath.Join(configsDir, "kmaker.yaml")); err == nil {
+		existing, err := protoKmaker.ConfigFromBytes(data)
+		if err != nil {
+			return fmt.Errorf("parsing existing configs/kmaker.yaml: %w", err)
+		}
+		if existing.GetTls() != nil && len(existing.GetTls().GetChain()) > 0 && existing.GetTls().GetKey() != nil {
+			kmakerTLS = existing.GetTls()
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading existing configs/kmaker.yaml: %w", err)
+	}
+
+	dc, err := buildDeployConfigs(cfgDir, nil, kmakerTLS)
 	if err != nil {
 		return err
 	}
 
-	configsDir := filepath.Join(cfgDir, "configs")
 	if err := os.MkdirAll(configsDir, 0755); err != nil {
 		return fmt.Errorf("creating configs directory: %w", err)
 	}
