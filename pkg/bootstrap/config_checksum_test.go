@@ -83,8 +83,8 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 
 	// Revision one: one delegate.
 	writeSeed(`delegates:
-  - name: sentinel
-    authorized_services: [sentinel, kernel]
+  - name: opa
+    authorized_services: [opa, kernel]
 `)
 	first, err := provider()
 	if err != nil {
@@ -97,8 +97,8 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 
 	// Revision two: the seed gains a delegate and NOTHING else changes.
 	writeSeed(`delegates:
-  - name: sentinel
-    authorized_services: [sentinel, kernel]
+  - name: opa
+    authorized_services: [opa, kernel]
   - name: blobstore
     authorized_services: [blobstore, kernel, stratum]
 `)

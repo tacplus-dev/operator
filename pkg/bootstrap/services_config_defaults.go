@@ -26,7 +26,6 @@ import (
 	protoScotty "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scotty"
 	protoScottyagent "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottyagent"
 	protoScottypersonal "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottypersonal"
-	protoSentinel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/sentinel"
 	protoStratum "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/stratum"
 	protoWeather "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/weather"
 	protoWork "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/work"
@@ -46,7 +45,6 @@ import (
 // >= N, got: 0" (mailbox, messaging and weather all did). Gateway only escaped
 // that by being special-cased by hand in deploy.go.
 var servicesHolderDefaulters = map[string]func(proto.Message){
-	"sentinel_config":       func(m proto.Message) { protoSentinel.ConfigDefaults(m.(*protoSentinel.Config)) },
 	"gateway_config":        func(m proto.Message) { protoGateway.ConfigDefaults(m.(*protoGateway.Config)) },
 	"letsencrypt_config":    func(m proto.Message) { protoLetsencrypt.ConfigDefaults(m.(*protoLetsencrypt.Config)) },
 	"eventbus_config":       func(m proto.Message) { protoEventbus.ConfigDefaults(m.(*protoEventbus.Config)) },

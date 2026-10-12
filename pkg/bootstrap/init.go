@@ -366,7 +366,6 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  issuer:     %s\n", Issuer(cfg))
 	fmt.Printf("  port:       %d\n", cfg.Port)
 	fmt.Printf("  kernel:     %d\n", topo.KernelNodes)
-	fmt.Printf("  sentinel:   %d\n", topo.SentinelNodes)
 	fmt.Printf("  gateway:    %d (0 = auto from node count)\n", topo.GatewayNodes)
 	fmt.Printf("  eventbus:   %d\n", topo.EventbusNodes)
 	fmt.Printf("  oauth:  %s\n", oauthStatus)

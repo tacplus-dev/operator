@@ -29,7 +29,6 @@ type DeployConfigs struct {
 	CACertPEM          []byte
 	BootstrapNames     []string
 	BootstrapYAMLs     [][]byte
-	SentinelConfig     []byte
 	EchoConfig         []byte
 	MessagingConfig    []byte
 	MailboxConfig      []byte
@@ -221,11 +220,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 			extra(fields)
 		}
 		return yaml.Marshal(fields)
-	}
-
-	sentinelConfigYAML, err := buildSvc("sentinel", nil)
-	if err != nil {
-		return nil, err
 	}
 
 	// echo takes the plain bootstrap shape -- no state, no S2S deps, no extras.
@@ -572,7 +566,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		CACertPEM:                caCertPEM,
 		BootstrapNames:           bootstrapNames,
 		BootstrapYAMLs:           bootstrapYAMLs,
-		SentinelConfig:           sentinelConfigYAML,
 		EchoConfig:               echoConfigYAML,
 		MessagingConfig:          messagingConfigYAML,
 		MailboxConfig:            mailboxConfigYAML,
@@ -734,7 +727,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 		}
 	}
 	check("kernel", &t.KernelNodes)
-	check("sentinel", &t.SentinelNodes)
 	check("eventbus", &t.EventbusNodes)
 	check("gateway", &t.GatewayNodes)
 	check("oauth", &t.OauthNodes)
@@ -765,7 +757,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		name string
 		data []byte
 	}{
-		{"sentinel", dc.SentinelConfig},
 		{"echo", dc.EchoConfig},
 		{"messaging", dc.MessagingConfig},
 		{"mailbox", dc.MailboxConfig},

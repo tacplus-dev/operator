@@ -56,7 +56,6 @@ func tenantTestConfig() *protoOperator.Config {
 		Tenants:   []string{"acme", "beta"},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,

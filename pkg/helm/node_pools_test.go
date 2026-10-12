@@ -14,17 +14,17 @@ import (
 )
 
 // nodePoolsTestConfig is a fleet with a multi-replica StatefulSet (kernel), a
-// multi-replica per-replica-Deployment service (sentinel) and one tenant-owned
+// multi-replica per-replica-Deployment service (opa) and one tenant-owned
 // dog in one tenant.
 func nodePoolsTestConfig() *protoOperator.Config {
 	return &protoOperator.Config{
 		Namespace: "schematic",
 		Tenants:   []string{"acme"},
 		Topology: &protoOperator.Topology{
-			KernelNodes:   3,
-			SentinelNodes: 2,
-			GatewayNodes:  1,
-			AppServices:   map[string]int32{"dog": 1},
+			KernelNodes:  3,
+			OpaNodes:     2,
+			GatewayNodes: 1,
+			AppServices:  map[string]int32{"dog": 1},
 		},
 	}
 }
@@ -61,8 +61,8 @@ func TestNodePoolsPlacePlatformOnCoreAndTenantDogsOnTenant(t *testing.T) {
 
 	var kernel appsv1.StatefulSet
 	decodeManifest(t, manifests, "StatefulSet/kernel", &kernel)
-	var sentinel appsv1.Deployment
-	decodeManifest(t, manifests, "Deployment/sentinel1", &sentinel)
+	var opa appsv1.Deployment
+	decodeManifest(t, manifests, "Deployment/opa1", &opa)
 	var dog appsv1.Deployment
 	decodeManifest(t, manifests, "Deployment/dog-acme0", &dog)
 
@@ -71,7 +71,7 @@ func TestNodePoolsPlacePlatformOnCoreAndTenantDogsOnTenant(t *testing.T) {
 		pod                 corev1.PodTemplateSpec
 	}{
 		{"kernel", CorePool, "kernel", kernel.Spec.Template},
-		{"sentinel1", CorePool, "sentinel", sentinel.Spec.Template},
+		{"opa1", CorePool, "opa", opa.Spec.Template},
 		{"dog-acme0", TenantPool, "dog-acme", dog.Spec.Template},
 	} {
 		if got := tc.pod.Spec.NodeSelector[NodePoolLabel]; got != tc.pool {
@@ -100,10 +100,10 @@ func TestNodePoolsBudgetMultiReplicaWorkloads(t *testing.T) {
 	var kernel appsv1.StatefulSet
 	decodeManifest(t, manifests, "StatefulSet/kernel", &kernel)
 	pods["kernel"] = append(pods["kernel"], kernel.Spec.Template)
-	for _, name := range []string{"sentinel0", "sentinel1"} {
+	for _, name := range []string{"opa0", "opa1"} {
 		var d appsv1.Deployment
 		decodeManifest(t, manifests, "Deployment/"+name, &d)
-		pods["sentinel"] = append(pods["sentinel"], d.Spec.Template)
+		pods["opa"] = append(pods["opa"], d.Spec.Template)
 	}
 
 	for svc, templates := range pods {

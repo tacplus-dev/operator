@@ -120,7 +120,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		Namespace: "schematic",
 		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OauthNodes:    1,
@@ -135,7 +134,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	})
 
 	services := []string{
-		"sentinel",
 		"eventbus",
 		"gateway",
 		"opa",
@@ -890,7 +888,7 @@ func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
 			StratumNodes:  3,
-			SentinelNodes: 1,
+			OpaNodes:      1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 			AppServices:   map[string]int32{"echo": 1},
@@ -927,9 +925,9 @@ func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:   3,
-			StratumNodes:  3,
-			SentinelNodes: 1,
+			KernelNodes:  3,
+			StratumNodes: 3,
+			OpaNodes:     1,
 		},
 	})
 
@@ -953,7 +951,7 @@ func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 	}
 
 	// A single-replica service gains nothing from the rule and should not carry it.
-	single := chartFile(t, charts, "templates/sentinel/deployment.yaml")
+	single := chartFile(t, charts, "templates/opa/deployment.yaml")
 	if strings.Contains(single, "podAntiAffinity") {
 		t.Errorf("a 1-replica service should not carry anti-affinity\n%s", single)
 	}
@@ -973,9 +971,9 @@ func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:   3,
-			StratumNodes:  3,
-			SentinelNodes: 1,
+			KernelNodes:  3,
+			StratumNodes: 3,
+			OpaNodes:     1,
 		},
 	})
 
@@ -1019,10 +1017,10 @@ func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:   3,
-			KmakerNodes:   1,
-			GatewayNodes:  1,
-			SentinelNodes: 1,
+			KernelNodes:  3,
+			KmakerNodes:  1,
+			GatewayNodes: 1,
+			OpaNodes:     1,
 		},
 	})
 
@@ -1080,9 +1078,9 @@ func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
 	}
 
 	// A service with no key material in its config stays a ConfigMap.
-	sentinel := chartFile(t, charts, "templates/sentinel/configmap-0.yaml")
-	if !strings.Contains(sentinel, "kind: ConfigMap") {
-		t.Errorf("sentinel config should still be a ConfigMap\n--- configmap ---\n%s", sentinel)
+	opa := chartFile(t, charts, "templates/opa/configmap-0.yaml")
+	if !strings.Contains(opa, "kind: ConfigMap") {
+		t.Errorf("opa config should still be a ConfigMap\n--- configmap ---\n%s", opa)
 	}
 }
 
@@ -1842,8 +1840,8 @@ func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:   1,
-			SentinelNodes: 1,
+			KernelNodes: 1,
+			OpaNodes:    1,
 		},
 		ImageDigests: map[string]string{"kernel": digest},
 	})
@@ -1851,7 +1849,7 @@ func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
 	values := chartFile(t, charts, "values.yaml")
 	for _, want := range []string{
 		"kernel:\n  image: localhost:5001/schematic/kernel@" + digest + "\n",
-		"sentinel:\n  image: localhost:5001/schematic/sentinel:local\n",
+		"opa:\n  image: localhost:5001/schematic/opa:local\n",
 	} {
 		if !strings.Contains(values, want) {
 			t.Errorf("values.yaml missing %q\n--- values.yaml ---\n%s", want, values)

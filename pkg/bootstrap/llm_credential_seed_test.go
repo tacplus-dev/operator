@@ -21,7 +21,6 @@ func llmCredentialDeployDir(t *testing.T, services []string) string {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 			AppServices:   map[string]int32{"llmproxy": 1},

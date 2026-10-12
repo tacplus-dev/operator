@@ -69,7 +69,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		name string
 		data []byte
 	}{
-		{"sentinel", dc.SentinelConfig},
 		{"echo", dc.EchoConfig},
 		{"messaging", dc.MessagingConfig},
 		{"mailbox", dc.MailboxConfig},

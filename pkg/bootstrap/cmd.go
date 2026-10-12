@@ -260,7 +260,7 @@ Idempotent: re-running with the same ID replaces existing grants.
 
 Examples:
   schematic-operator add-profile admin --all
-  schematic-operator add-profile reader --grant sentinel=SENTINEL_SERVICE_RPCS_GET_DASHBOARD
+  schematic-operator add-profile reader --grant kernel=KERNEL_READ_ANY
   schematic-operator add-profile custom --all --grant echo=ECHO_ANY`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAddProfile,

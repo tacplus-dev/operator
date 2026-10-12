@@ -57,7 +57,6 @@ func TestEnsureServiceDelegatesCreatesPerService(t *testing.T) {
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -140,7 +139,6 @@ func TestEnsureServiceDelegatesIdempotent(t *testing.T) {
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -187,7 +185,6 @@ func TestEnsureServiceDelegatesResyncsStaleNamespace(t *testing.T) {
 	unnamespaced := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -234,7 +231,7 @@ func TestEnsureServiceDelegatesPreservesUserDelegates(t *testing.T) {
 	dir := t.TempDir()
 	userDelegate := SourceDelegate{
 		Name:               "my-api-key",
-		AuthorizedServices: []string{"oauth", "sentinel"},
+		AuthorizedServices: []string{"oauth", "gateway"},
 		CustomClaims:       map[string]string{"email": "user@example.com"},
 	}
 	setupKernelYAML(t, dir, []SourceDelegate{userDelegate})
@@ -242,7 +239,6 @@ func TestEnsureServiceDelegatesPreservesUserDelegates(t *testing.T) {
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -298,7 +294,6 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -342,13 +337,13 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 // that an existing delegate missing its own authorized_service gets it added —
 // and, since authorized_services is reconciled to the registry rather than
 // appended to, that an entry the registry does not justify is dropped in the
-// same pass. 'oauth' below is that entry: nothing in sentinel's dependency
+// same pass. 'oauth' below is that entry: nothing in stratum's dependency
 // graph names it.
 func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.T) {
 	dir := t.TempDir()
-	// Pre-existing sentinel delegate authorizing oauth but not itself.
+	// Pre-existing stratum delegate authorizing oauth but not itself.
 	existing := SourceDelegate{
-		Name:               "sentinel",
+		Name:               "stratum",
 		AuthorizedServices: []string{"oauth"},
 	}
 	setupKernelYAML(t, dir, []SourceDelegate{existing})
@@ -356,7 +351,6 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -372,22 +366,22 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 	kernelPath := filepath.Join(dir, "services", "kernel.yaml")
 	delegates := loadDelegates(t, kernelPath)
 	for _, d := range delegates {
-		if d.Name == "sentinel" {
-			// Must have both oauth (pre-existing) and sentinel (auto-added).
+		if d.Name == "stratum" {
+			// Must have both oauth (pre-existing) and stratum (auto-added).
 			has := map[string]bool{}
 			for _, s := range d.AuthorizedServices {
 				has[s] = true
 			}
 			if has["oauth"] {
-				t.Fatalf("sentinel delegate kept unjustified authorized_service 'oauth': %v", d.AuthorizedServices)
+				t.Fatalf("stratum delegate kept unjustified authorized_service 'oauth': %v", d.AuthorizedServices)
 			}
-			if !has["sentinel"] {
-				t.Fatal("sentinel delegate missing auto-added authorized_service 'sentinel'")
+			if !has["stratum"] {
+				t.Fatal("stratum delegate missing auto-added authorized_service 'stratum'")
 			}
 			return
 		}
 	}
-	t.Fatal("sentinel delegate not found")
+	t.Fatal("stratum delegate not found")
 }
 
 // TestEnsureServiceDelegatesAppServiceGetsBroker verifies that a service
@@ -600,7 +594,6 @@ func TestEnsureServiceDelegatesRemovesUnjustifiedAuthorizedService(t *testing.T)
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
@@ -677,7 +670,6 @@ func TestEnsureServiceDelegatesReorderedListIsNotAChange(t *testing.T) {
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,

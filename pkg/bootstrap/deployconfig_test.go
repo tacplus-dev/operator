@@ -90,8 +90,8 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 		t.Fatal(err)
 	}
 	kernelYAML := []byte(`delegates:
-- name: sentinel
-  authorized_services: [sentinel]
+- name: opa
+  authorized_services: [opa]
 - name: external-client
   authorized_services: [gateway]
 `)
@@ -104,15 +104,15 @@ func TestBuildKernelConfigAddsKubernetesServiceAccountMatchers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sentinel := findDelegate(t, cfg.Delegates, "sentinel")
-	if len(sentinel.KubernetesServiceAccounts) != 1 {
-		t.Fatalf("sentinel KubernetesServiceAccounts = %d, want 1", len(sentinel.KubernetesServiceAccounts))
+	opa := findDelegate(t, cfg.Delegates, "opa")
+	if len(opa.KubernetesServiceAccounts) != 1 {
+		t.Fatalf("opa KubernetesServiceAccounts = %d, want 1", len(opa.KubernetesServiceAccounts))
 	}
-	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesNamespace(); got != "workloads" {
-		t.Fatalf("sentinel Kubernetes namespace = %q, want workloads", got)
+	if got := opa.KubernetesServiceAccounts[0].GetKubernetesNamespace(); got != "workloads" {
+		t.Fatalf("opa Kubernetes namespace = %q, want workloads", got)
 	}
-	if got := sentinel.KubernetesServiceAccounts[0].GetKubernetesServiceAccount(); got != "sentinel" {
-		t.Fatalf("sentinel Kubernetes service account = %q, want sentinel", got)
+	if got := opa.KubernetesServiceAccounts[0].GetKubernetesServiceAccount(); got != "opa" {
+		t.Fatalf("opa Kubernetes service account = %q, want opa", got)
 	}
 	external := findDelegate(t, cfg.Delegates, "external-client")
 	if len(external.KubernetesServiceAccounts) != 0 {
@@ -456,7 +456,6 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   2,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 			OauthNodes:    1,
@@ -519,7 +518,7 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 	}
 
 	// Per-service configs must be present and non-empty.
-	for _, svc := range []string{"sentinel", "gateway", "eventbus", "oauth", "opa", "kmaker"} {
+	for _, svc := range []string{"gateway", "eventbus", "oauth", "opa", "kmaker"} {
 		entry, ok := vals[svc].(map[string]interface{})
 		if !ok {
 			t.Fatalf("BundleServiceValues missing %s: keys = %v", svc, valKeys(vals))
@@ -657,7 +656,6 @@ func TestGatewayExternalTLSProvisionedAfterGenerate(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 		},
@@ -826,7 +824,6 @@ func TestGatewayLetsencryptModeAlsoGeneratesEdgeCert(t *testing.T) {
 		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 		},
@@ -929,7 +926,6 @@ func TestLetsencryptModeWiresGatewayPort80(t *testing.T) {
 		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 		},
@@ -995,7 +991,6 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 		Tls:            &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 		},
@@ -1051,7 +1046,6 @@ func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 		},
@@ -1149,7 +1143,6 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			SentinelNodes: 1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 			AppServices:   map[string]int32{"echo": 1},
@@ -1207,7 +1200,7 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 		t.Errorf("a non-YAML file was removed: %v", err)
 	}
 	// Guard: pruning must not eat the live topology's own configs.
-	for _, want := range []string{"ca.pem", "bootstrap0.yaml", "sentinel.yaml", "gateway.yaml", "eventbus.yaml"} {
+	for _, want := range []string{"ca.pem", "bootstrap0.yaml", "gateway.yaml", "eventbus.yaml"} {
 		if _, err := os.Stat(filepath.Join(configsDir, want)); err != nil {
 			t.Errorf("pruning removed a live config %s: %v", want, err)
 		}

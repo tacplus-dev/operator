@@ -6,7 +6,9 @@ package upgrade
 func AllServices() []ServiceRef {
 	return []ServiceRef{
 		{Proj: "kernel", Svc: "kernel"},
-		{Proj: "sentinel", Svc: "sentinel"},
+		// sentinel went to the boneyard 2026-10-12 (sonar mvp-plan "Amendment
+		// 2026-10-12"; it returns later as part of the Admiral): out of the fleet,
+		// proto deleted, no image published.
 		{Proj: "echo", Svc: "echo"},
 		{Proj: "eventbus", Svc: "eventbus"},
 		{Proj: "gateway", Svc: "gateway"},

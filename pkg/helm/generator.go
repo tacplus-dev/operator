@@ -12,7 +12,6 @@
 //	    namespace.yaml
 //	    _helpers.tpl
 //	    kernel/
-//	    sentinel/
 //	    gateway/       (one Deployment per gateway_nodes)
 //	    eventbus/
 //	    oauth/
@@ -965,7 +964,6 @@ func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.
 func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	return &protoOperator.Topology{
 		KernelNodes:        t.KernelNodes,
-		SentinelNodes:      t.SentinelNodes,
 		EventbusNodes:      t.EventbusNodes,
 		GatewayNodes:       t.GatewayNodes,
 		OauthNodes:         t.OauthNodes,
@@ -1092,8 +1090,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			TokenReviewRBAC: true, PodReadRBAC: true,
 			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
 			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
-		withKernelServiceAuth(serviceSpec{Name: "sentinel", Replicas: topo.SentinelNodes, Image: g.imageRef(cfg, "sentinel"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
 		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef(cfg, "eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
 			// Measured 2026-09-19 on the live fleet: ~30m steady. 250m reserved
 			// 8x what it used and, with three fleets' worth of 250m Java pods,
@@ -1532,15 +1528,6 @@ Init container that waits for kernel0:5000.
 - name: wait-for-kernel
   image: busybox:latest
   command: ["sh", "-c", "until nc -z kernel0 5000; do sleep 2; done"]
-{{- end }}
-
-{{/*
-Init container that waits for sentinel0:8443.
-*/}}
-{{- define "schematic.waitForSentinel" -}}
-- name: wait-for-sentinel
-  image: busybox:latest
-  command: ["sh", "-c", "until nc -z sentinel0 8443; do sleep 2; done"]
 {{- end }}
 
 {{/*

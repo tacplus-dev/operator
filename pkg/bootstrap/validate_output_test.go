@@ -27,7 +27,6 @@ func generatedOutputFixture(t *testing.T) string {
 		},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   3,
-			SentinelNodes: 1,
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OauthNodes:    1,
@@ -83,7 +82,7 @@ func TestGeneratedOutputSatisfiesConsumerProtos(t *testing.T) {
 	// The gate must cover every kernel replica and every enabled service, not
 	// just whichever ones happen to be non-nil.
 	want := []string{
-		"bootstrap0", "bootstrap1", "bootstrap2", "kmaker", "sentinel", "echo",
+		"bootstrap0", "bootstrap1", "bootstrap2", "kmaker", "echo",
 		"gateway", "eventbus", "oauth", "opa", "stratum",
 		"tasks",
 	}
@@ -200,7 +199,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 	}
 
 	validated := map[string]bool{
-		"BootstrapYAMLs": true, "KmakerConfig": true, "SentinelConfig": true,
+		"BootstrapYAMLs": true, "KmakerConfig": true,
 		"EchoConfig": true, "MessagingConfig": true, "MailboxConfig": true,
 		"PersonalauthConfig": true,
 		"AppConfigs":         true, "GatewayConfig": true,

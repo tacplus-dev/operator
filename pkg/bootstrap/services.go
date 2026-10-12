@@ -9,7 +9,6 @@ import (
 )
 
 var kernelAuthenticatedServiceNames = map[string]bool{
-	"sentinel":    true,
 	"eventbus":    true,
 	"oauth":       true,
 	"opa":         true,
@@ -78,7 +77,6 @@ var alwaysOnKernelAuthServices = []string{
 	"oauth",
 	"opa",
 	"operator",
-	"sentinel",
 	"stratum",
 }
 

@@ -95,7 +95,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		name string
 		data []byte
 	}{
-		{"sentinel", dc.SentinelConfig},
 		{"echo", dc.EchoConfig},
 		{"messaging", dc.MessagingConfig},
 		{"mailbox", dc.MailboxConfig},

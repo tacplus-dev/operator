@@ -56,7 +56,6 @@ func BuildConfigOutput(cfgDir string) error {
 
 	t := dc.Cfg.Topology
 	serviceFiles := map[string][]byte{
-		"sentinel": dc.SentinelConfig,
 		"gateway":  dc.GatewayConfig,
 		"eventbus": dc.EventbusConfig,
 	}

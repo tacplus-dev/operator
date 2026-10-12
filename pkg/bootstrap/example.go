@@ -24,14 +24,13 @@ import (
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoSentinel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/sentinel"
 	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
 	protoLogger "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/logger"
 	protoTokenRequest "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/tokenrequest"
 )
 
 // KernelSourceConfig is the human-editable kernel.yaml source format.
-// Per-service configs (sentinel, oauth, gateway) live in separate files.
+// Per-service configs (oauth, gateway) live in separate files.
 type KernelSourceConfig struct {
 	// Token exchanger settings.
 	KeyRotationIntervalSeconds int64 `yaml:"key_rotation_interval_seconds,omitempty"`
@@ -205,7 +204,6 @@ func WriteServices(cfgDir string) error {
 
 	files := map[string]string{
 		"kernel.yaml":   kernelContent,
-		"sentinel.yaml": exampleSentinelYAML,
 		"gateway.yaml":  exampleGatewayYAML,
 		"eventbus.yaml": exampleEventbusYAML,
 		"oauth.yaml":    exampleOauthYAML,
@@ -368,15 +366,6 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		load func(map[string]any) error
 	}
 	loaders := []serviceLoader{
-		{"sentinel", func(m map[string]any) error {
-			cfg := &protoSentinel.Config{}
-			if err := unmarshalMapToProto(m, cfg); err != nil {
-				return err
-			}
-			holder.SentinelConfig = cfg
-			hasHolder = true
-			return nil
-		}},
 		{"gateway", func(m map[string]any) error {
 			cfg := &protoGateway.Config{}
 			if err := unmarshalMapToProto(m, cfg); err != nil {
@@ -666,7 +655,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			// Backfill the Kubernetes service-account matcher if absent, and
 			// resync its namespace if present but stale (idempotent either way).
 			//
-			// A platform delegate (sentinel, gateway, eventbus, ...) is typically
+			// A platform delegate (gateway, eventbus, ...) is typically
 			// created by the FIRST call to EnsureServiceDelegates, at 'init
 			// cluster' time, before operator.yaml's namespace has necessarily been
 			// set to its final value. An app_services delegate is often created
@@ -795,7 +784,7 @@ func splitPath(s string) []string {
 
 // exampleKernelYAMLTemplate is a format string with %s for cert and key base64.
 const exampleKernelYAMLTemplate = `# Kernel configuration — security, TLS, and delegates.
-# Per-service configs live in separate files (sentinel.yaml, oauth.yaml, gateway.yaml).
+# Per-service configs live in separate files (oauth.yaml, gateway.yaml).
 # Edit these, then run: schematic-operator generate
 
 # Token exchanger settings
@@ -809,19 +798,14 @@ tls:
 
 # Delegates (added by 'schematic-operator init cluster')
 # delegates:
-#   - name: sentinel
-#     authorized_services: [sentinel]
+#   - name: gateway
+#     authorized_services: [gateway]
 
 # Entitlement profiles (added by 'schematic-operator add-profile')
 # Maps OPA policy output to typed per-service RPC entitlements.
 # entitlement_profiles:
 #   - id: admin
-#     sentinel: [SENTINEL_SERVICE_RPCS_ANY]
-`
-
-const exampleSentinelYAML = `# Sentinel service configuration.
-# Edit these, then run: schematic-operator generate
-{}
+#     kernel: [KERNEL_ANY]
 `
 
 const exampleGatewayYAML = `# Gateway service configuration.

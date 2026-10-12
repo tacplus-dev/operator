@@ -42,7 +42,6 @@ func TestKernelBootstrapDefaultsHolderEntriesAbsentFromBundle(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:    1,
-			SentinelNodes:  1,
 			GatewayNodes:   1,
 			EventbusNodes:  1,
 			MailboxNodes:   1,

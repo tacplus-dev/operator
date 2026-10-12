@@ -13,12 +13,10 @@ import (
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoSentinel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/sentinel"
 )
 
 var (
 	kernelGRPCPort = int32(protoKernel.DefaultListenerPort)
-	sentinelPort   = int32(protoSentinel.DefaultPort)
 	gatewayPort    = int32(protoGateway.DefaultTcpListenerPort)
 )
 

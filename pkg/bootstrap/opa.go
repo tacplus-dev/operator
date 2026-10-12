@@ -294,7 +294,6 @@ default eval := {"token_entitlements": {}}
 # admin — full access, including kernel's administrative surface.
 eval := {"namespace": tenants.namespace, "token_entitlements": {
 	"grants": [
-		"SENTINEL_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
 		"QUERY_ANY",
@@ -321,7 +320,6 @@ eval := {"namespace": tenants.namespace, "token_entitlements": {
 # the generated catalog at all, and the test below is what would have caught it.
 eval := {"namespace": tenants.namespace, "token_entitlements": {
 	"grants": [
-		"SENTINEL_ANY",
 		"ECHO_ANY",
 		"TASKS_ANY",
 		"QUERY_ANY",
