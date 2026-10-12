@@ -179,3 +179,93 @@ func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
+
+// TestOauthProviderChangeRollsKernelPods is the same link for a service's own
+// bootstrap config rather than kernel's. Kernel seeds every service's config
+// holder from services/<name>.yaml, so a provider added to oauth.yaml must
+// move kernel's checksum, or kernel keeps re-seeding oauth's old holder (the
+// Microsoft provider on 2026-10-11).
+func TestOauthProviderChangeRollsKernelPods(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "schematic",
+		Fqdn:         "console.seabeam.cloud",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			OauthNodes:  1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("delegates: []\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	const google = `  - name: google
+    enable: true
+    issuer: https://accounts.google.com
+    client_id: google-client
+    allowed_redirect_uri_prefixes: [https://console.seabeam.cloud/]
+`
+	const microsoft = `  - name: microsoft
+    enable: true
+    issuer: https://login.microsoftonline.com/common/v2.0
+    client_id: microsoft-client
+    allowed_redirect_uri_prefixes: [https://console.seabeam.cloud/]
+`
+	writeOauth := func(providers string) {
+		if err := os.WriteFile(filepath.Join(servicesDir, "oauth.yaml"), []byte("providers:\n"+providers), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(cfg, 1, false)
+	if err != nil {
+		t.Fatalf("generating chart: %v", err)
+	}
+	buffered := make([]*helmloader.BufferedFile, 0, len(charts.Files))
+	for name, data := range charts.Files {
+		buffered = append(buffered, &helmloader.BufferedFile{Name: name, Data: data})
+	}
+	ch, err := helmloader.LoadFiles(buffered)
+	if err != nil {
+		t.Fatalf("loading chart: %v", err)
+	}
+	provider := NewServiceConfigProvider(dir)
+
+	writeOauth(google)
+	first, err := provider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, firstChecksum := kernelSecretAndChecksum(t, ch, first.Values)
+
+	writeOauth(google + microsoft)
+	second, err := provider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSecret, secondChecksum := kernelSecretAndChecksum(t, ch, second.Values)
+
+	if !strings.Contains(secondSecret, "microsoft-client") {
+		t.Fatalf("guard: the new provider is not in kernel's rendered config:\n%s", secondSecret)
+	}
+	if want := sha256Hex(secondSecret); secondChecksum != want {
+		t.Fatalf("checksum/config-0 %q does not match the new Secret content (sha256 %q)", secondChecksum, want)
+	}
+	if secondChecksum == firstChecksum {
+		t.Fatalf("oauth.yaml gained a provider but kernel's checksum/config-0 stayed %q: kernel keeps seeding oauth's old config holder", firstChecksum)
+	}
+}

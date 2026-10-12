@@ -7,6 +7,9 @@ metadata:
     {{- include "schematic-operator.labels" . | nindent 4 }}
 data:
   operator.yaml: {{ .Values.config.settings | quote }}
+  {{- if .Values.config.images }}
+  images.yaml: {{ .Values.config.images | quote }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Secret

@@ -75,6 +75,7 @@ func init() {
 	rootCmd.AddCommand(addApiKeyCmd)
 	rootCmd.AddCommand(addProfileCmd)
 	rootCmd.AddCommand(approveTenantCmd)
+	rootCmd.AddCommand(recoverReleaseCmd)
 	rootCmd.AddCommand(setDeployListCmd)
 	rootCmd.AddCommand(unsetDeployListCmd)
 	rootCmd.AddCommand(mergeCmd)

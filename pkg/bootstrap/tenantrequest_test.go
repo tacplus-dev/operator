@@ -32,11 +32,34 @@ func approveTestDir(t *testing.T, withOPA bool) string {
 		"namespace: schematic\n"+operatorComment+"tenants:\n  - acme\ntopology:\n  kernel_nodes: 1\n  app_services:\n    dog: 1\n")
 	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
 		"providers:\n  - enable: true\n    issuer_url: https://idp.acme.example\n    client_id: acme-web\n    client_secret: s\n")
+	setupKernelYAML(t, dir, approveTestDelegates())
 	if withOPA {
 		writeTestFile(t, filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego"),
 			tenantNamespaceRegoHeader+handRule+tenantNamespaceRegoFooter)
 	}
 	return dir
+}
+
+// approveTestDelegates is approveTestDir's kernel.yaml: acme's dog delegate,
+// deliberately stale (generate would reconcile its authorized_services), and a
+// hand-added delegate no service deploys. Approval must leave both alone.
+func approveTestDelegates() []SourceDelegate {
+	return []SourceDelegate{
+		{
+			Name:               "dog",
+			TenantNamespace:    "/tenants/acme",
+			AuthorizedServices: []string{"dog", "stale"},
+			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
+				KubernetesNamespace:      "schematic",
+				KubernetesServiceAccount: "dog-acme",
+			}},
+		},
+		{
+			Name:               "apikey-ci",
+			AuthorizedServices: []string{"dog"},
+			CustomClaims:       map[string]string{"role": "ci"},
+		},
+	}
 }
 
 func fileText(t *testing.T, path string) string {
@@ -170,5 +193,51 @@ func TestApproveTenantRefusesAndChangesNothing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestApproveTenantWritesExactlyTheNewTenantsDelegates: approval adds one
+// kernel delegate per tenant-owned service for the new tenant — the same
+// delegate generate would write for it — and changes nothing else in
+// kernel.yaml: acme's stale delegate and the hand-added one stay as they were.
+func TestApproveTenantWritesExactlyTheNewTenantsDelegates(t *testing.T) {
+	dir := approveTestDir(t, false)
+	writeTestFile(t, TenantRequestPath(dir, "beta"), "providers: []\n")
+	kernelPath := filepath.Join(dir, "services", "kernel.yaml")
+
+	if err := ApproveTenant(dir, "beta"); err != nil {
+		t.Fatalf("ApproveTenant: %v", err)
+	}
+
+	got := loadDelegates(t, kernelPath)
+	before := approveTestDelegates()
+	if len(got) != len(before)+1 {
+		t.Fatalf("kernel.yaml delegates after approval = %+v, want the %d existing plus one for dog-beta", got, len(before))
+	}
+	if !reflect.DeepEqual(got[:len(before)], before) {
+		t.Errorf("approval changed existing delegates:\n got %+v\nwant %+v", got[:len(before)], before)
+	}
+
+	// The oracle is generate's own writer, run over the approved config.
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracleDir := t.TempDir()
+	oraclePath := setupKernelYAML(t, oracleDir, nil)
+	if err := EnsureServiceDelegates(oracleDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var want *SourceDelegate
+	for _, d := range loadDelegates(t, oraclePath) {
+		if d.Name == "dog" && d.TenantNamespace == "/tenants/beta" {
+			want = &d
+		}
+	}
+	if want == nil {
+		t.Fatal("guard: generate writes no dog delegate for /tenants/beta")
+	}
+	if added := got[len(before)]; !reflect.DeepEqual(added, *want) {
+		t.Errorf("approval added %+v, want generate's delegate %+v", added, *want)
 	}
 }

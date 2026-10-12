@@ -41,9 +41,10 @@ var approveTenantCmd = &cobra.Command{
   tenants/<name>/oauth.yaml              the request, moved into place
   services/opa/tenants/namespace.rego    the tenant's IdP → /tenants/<name> rules
                                          appended (only when services/opa exists)
+  services/kernel.yaml                   one delegate per tenant-owned service for
+                                         <name>; every other delegate untouched
 
-The next generate/build/apply writes the tenant's kernel delegates and renders
-its tenant-owned services.
+The next deploy renders the tenant's tenant-owned services.
 
 Example:
   schematic-operator approve-tenant acme`,
@@ -68,6 +69,13 @@ func ApproveTenant(cfgDir, tenant string) error {
 		return err
 	}
 	if err := validateNewTenant(cfg, tenant); err != nil {
+		return err
+	}
+	withTenant := proto.Clone(cfg).(*protoOperator.Config)
+	withTenant.Tenants = append(withTenant.Tenants, tenant)
+	kernelPath := filepath.Join(cfgDir, "services", "kernel.yaml")
+	kernelYAML, err := withTenantDelegates(kernelPath, withTenant, tenant)
+	if err != nil {
 		return err
 	}
 
@@ -101,7 +109,46 @@ func ApproveTenant(cfgDir, tenant string) error {
 		return err
 	}
 
-	return appendTenantToSettings(cfgDir, tenant)
+	if err := appendTenantToSettings(cfgDir, tenant); err != nil {
+		return err
+	}
+	return os.WriteFile(kernelPath, kernelYAML, 0644)
+}
+
+// withTenantDelegates returns kernel.yaml with a delegate added for each of
+// tenant's tenant-owned service instances in cfg — the delegate generate's
+// EnsureServiceDelegates writes for it — and nothing else changed. generate
+// also reconciles every other delegate to the registry, which is not approval's
+// business. A delegate kernel.yaml already holds for the tenant is kept as is.
+func withTenantDelegates(kernelPath string, cfg *protoOperator.Config, tenant string) ([]byte, error) {
+	kernelCfg, err := LoadKernelSourceConfig(kernelPath)
+	if err != nil {
+		return nil, err
+	}
+	RegisterAppServices(AppServiceNames(cfg))
+	sd, err := loadServiceDeps()
+	if err != nil {
+		return nil, fmt.Errorf("loading service dependencies: %w", err)
+	}
+	instances, err := DeployedServiceInstances(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("resolving deployed service instances: %w", err)
+	}
+	existing := make(map[delegateKey]bool, len(kernelCfg.Delegates))
+	for _, d := range kernelCfg.Delegates {
+		existing[delegateKey{d.Name, d.TenantNamespace}] = true
+	}
+	for _, inst := range instances {
+		if inst.Tenant != tenant || existing[delegateKey{inst.Service, inst.TenantNamespace()}] {
+			continue
+		}
+		kernelCfg.Delegates = append(kernelCfg.Delegates, newServiceDelegate(cfg, inst, sd.authorizedServicesFor(inst.Service)))
+	}
+	data, err := yaml.Marshal(kernelCfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling kernel config: %w", err)
+	}
+	return data, nil
 }
 
 // appendTenantToSettings adds tenant to operator.yaml's tenants list by

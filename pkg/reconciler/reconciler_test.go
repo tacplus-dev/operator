@@ -419,8 +419,7 @@ func TestRecoverStalePendingReleaseWithoutDeployedRevision(t *testing.T) {
 		t.Fatalf("reading latest revision: %v", err)
 	}
 
-	r := &Reconciler{log: zap.NewNop()}
-	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	recovered, err := recoverStalePendingRelease(cfg, latest, zap.NewNop())
 	if err != nil {
 		t.Fatalf("recovering stale pending release: %v", err)
 	}
@@ -451,8 +450,7 @@ func TestRecoverStalePendingReleaseWithoutAnyPriorRevision(t *testing.T) {
 		t.Fatalf("reading latest revision: %v", err)
 	}
 
-	r := &Reconciler{log: zap.NewNop()}
-	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	recovered, err := recoverStalePendingRelease(cfg, latest, zap.NewNop())
 	if err != nil {
 		t.Fatalf("recovering stale pending release with no history: %v", err)
 	}
@@ -488,8 +486,7 @@ func TestRecoverStalePendingReleaseWithFailedPredecessor(t *testing.T) {
 		t.Fatalf("expected failed revision 1 to be the rollback target, got %d", target.Version)
 	}
 
-	r := &Reconciler{log: zap.NewNop()}
-	recovered, err := r.recoverStalePendingRelease(cfg, latest)
+	recovered, err := recoverStalePendingRelease(cfg, latest, zap.NewNop())
 	if err != nil {
 		t.Fatalf("recovering stale pending release: %v", err)
 	}
@@ -1064,4 +1061,45 @@ func generatedTestChart(t *testing.T) *helmchart.Chart {
 		t.Fatalf("loading generated chart: %v", err)
 	}
 	return ch
+}
+
+// The operator's own release is upgraded by deploy-operator.sh's helm CLI,
+// not by the reconciler. A helm process that dies without a catchable signal
+// (SIGKILL, SIGHUP, a lost API connection) leaves that release pending-upgrade
+// and every later upgrade refuses with "another operation is in progress".
+// Recovery must work for it by name, exactly as for the fleet release.
+func TestRecoverStalePendingReleaseOfAnotherRelease(t *testing.T) {
+	const name = "schematic-operator"
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	revisions := []*helmrelease.Release{
+		releaseRevision(1, helmrelease.StatusSuperseded, stale),
+		releaseRevision(2, helmrelease.StatusPendingUpgrade, stale),
+	}
+	for _, rel := range revisions {
+		rel.Name = name
+	}
+	cfg := stalePendingReleaseStorage(t, revisions...)
+
+	recovered, err := RecoverStalePendingRelease(cfg, name, zap.NewNop())
+	if err != nil {
+		t.Fatalf("recovering stale pending %s: %v", name, err)
+	}
+	if !recovered {
+		t.Fatal("expected the stale pending release to be recovered")
+	}
+	deployed, err := cfg.Releases.Deployed(name)
+	if err != nil {
+		t.Fatalf("reading deployed revision after recovery: %v", err)
+	}
+	if deployed.Version != 3 {
+		t.Fatalf("expected rollback to create revision 3, got %d", deployed.Version)
+	}
+
+	// Nothing pending (or no release at all) is not an error and changes nothing.
+	if recovered, err := RecoverStalePendingRelease(cfg, name, zap.NewNop()); err != nil || recovered {
+		t.Fatalf("second recovery = (%v, %v), want (false, nil)", recovered, err)
+	}
+	if recovered, err := RecoverStalePendingRelease(cfg, "absent", zap.NewNop()); err != nil || recovered {
+		t.Fatalf("recovery of an absent release = (%v, %v), want (false, nil)", recovered, err)
+	}
 }

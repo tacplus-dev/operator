@@ -704,16 +704,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		// New delegate — authorized_services derived from the registry
 		// dependency graph. Fail-closed: only declared deps, never
 		// SERVICE_NAME_ANY.
-		kernelCfg.Delegates = append(kernelCfg.Delegates, SourceDelegate{
-			Name:               svc,
-			TenantNamespace:    inst.TenantNamespace(),
-			AuthorizedServices: required,
-			KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
-				KubernetesNamespace:      operatorKubernetesNamespace(cfg),
-				KubernetesServiceAccount: delegateServiceAccountName(inst),
-			}},
-			AuthBrokerKinds: authBrokerKindsFor(svc),
-		})
+		kernelCfg.Delegates = append(kernelCfg.Delegates, newServiceDelegate(cfg, inst, required))
 		existing[delegateKey{svc, inst.TenantNamespace()}] = len(kernelCfg.Delegates) - 1
 		changed = true
 	}
@@ -727,6 +718,21 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 		return fmt.Errorf("marshaling kernel config: %w", err)
 	}
 	return os.WriteFile(kernelPath, data, 0644)
+}
+
+// newServiceDelegate is the delegate a service instance gets when kernel.yaml
+// has none for it, with authorized_services already derived from the registry.
+func newServiceDelegate(cfg *protoOperator.Config, inst ServiceInstance, required []string) SourceDelegate {
+	return SourceDelegate{
+		Name:               inst.Service,
+		TenantNamespace:    inst.TenantNamespace(),
+		AuthorizedServices: required,
+		KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
+			KubernetesNamespace:      operatorKubernetesNamespace(cfg),
+			KubernetesServiceAccount: delegateServiceAccountName(inst),
+		}},
+		AuthBrokerKinds: authBrokerKindsFor(inst.Service),
+	}
 }
 
 // sameServiceSet reports whether two authorized_services lists carry the same

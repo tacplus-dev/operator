@@ -50,6 +50,13 @@ config:
   # Populate via: just pack  (outputs build/config-bundle.tar.gz.b64)
   # Then: helm install ... --set-string config.bundle=$(cat build/config-bundle.tar.gz.b64)
   bundle: ""
+  # images.yaml content: an operator Config carrying only image_digests
+  # (scripts/resolve-digests.sh or scripts/promote.sh writes it). Every image it
+  # names deploys as <repository>@<digest>, so a new build under the same tag
+  # changes the fleet's pod templates and rolls them. Leave empty only on a
+  # local cluster that shares the docker daemon (tag-only).
+  # Populate via: helm upgrade ... --set-file config.images=./images.yaml
+  images: ""
 
 # registryToken, when set, creates a "gitlab-registry" docker-registry Secret in the
 # schematic-operator namespace so the operator pod (and auto-upgrade) can pull from

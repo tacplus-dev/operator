@@ -375,7 +375,7 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 	case histErr != nil:
 		return fmt.Errorf("querying helm release history: %w", histErr)
 	default:
-		if recovered, err := r.recoverStalePendingRelease(actionCfg, latest); err != nil {
+		if recovered, err := recoverStalePendingRelease(actionCfg, latest, r.log); err != nil {
 			return err
 		} else if recovered {
 			return nil
@@ -390,7 +390,26 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 	}
 }
 
-func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, latest *helmrelease.Release) (bool, error) {
+// RecoverStalePendingRelease recovers the named release when its latest
+// revision is stale and pending, the same way the reconciler recovers its own
+// fleet release. It exists for the release the reconciler does not upgrade:
+// the operator's own, which deploy-operator.sh upgrades with the helm CLI. A
+// helm process that dies without a catchable signal (SIGKILL, SIGHUP, a lost
+// API connection) leaves that release pending-upgrade, and every later upgrade
+// refuses with "another operation is in progress". A release that does not
+// exist or is not pending is left alone and reports false.
+func RecoverStalePendingRelease(cfg *action.Configuration, name string, log *zap.Logger) (bool, error) {
+	latest, err := cfg.Releases.Last(name)
+	if errors.Is(err, helmdriver.ErrReleaseNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("querying helm release history: %w", err)
+	}
+	return recoverStalePendingRelease(cfg, latest, log)
+}
+
+func recoverStalePendingRelease(cfg *action.Configuration, latest *helmrelease.Release, log *zap.Logger) (bool, error) {
 	if latest == nil || latest.Info == nil || !latest.Info.Status.IsPending() {
 		return false, nil
 	}
@@ -407,7 +426,7 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 
 	deployed, err := rollbackTargetRevision(cfg, latest)
 	if errors.Is(err, errNoRollbackTarget) {
-		return r.uninstallStalePendingRelease(latest, cfg, age)
+		return uninstallStalePendingRelease(latest, cfg, age, log)
 	}
 	if err != nil {
 		return false, fmt.Errorf("helm release %s revision %d is stale %s but no rollback revision is available: %w",
@@ -418,7 +437,7 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 		)
 	}
 
-	r.log.Warn("recovering stale pending Helm release",
+	log.Warn("recovering stale pending Helm release",
 		zap.String("release", latest.Name),
 		zap.Int("pending_revision", latest.Version),
 		zap.String("pending_status", latest.Info.Status.String()),
@@ -431,11 +450,11 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 	rollback.MaxHistory = 10
 	rollback.Timeout = 5 * time.Minute
 	rollback.CleanupOnFail = true
-	if err := rollback.Run(releaseName); err != nil {
+	if err := rollback.Run(latest.Name); err != nil {
 		return false, fmt.Errorf("recovering stale pending Helm release by rolling back to revision %d: %w", deployed.Version, err)
 	}
 
-	r.log.Info("stale pending Helm release recovered; desired chart will apply on next reconcile",
+	log.Info("stale pending Helm release recovered; desired chart will apply on next reconcile",
 		zap.String("release", latest.Name),
 		zap.Int("recovered_revision", latest.Version),
 		zap.Int("rollback_revision", deployed.Version),
@@ -446,8 +465,8 @@ func (r *Reconciler) recoverStalePendingRelease(cfg *action.Configuration, lates
 // uninstallStalePendingRelease recovers a stale pending release that has no prior
 // revision to roll back to — an interrupted first install. There is no earlier state to
 // return to, so the stuck release is removed and the next reconcile installs cleanly.
-func (r *Reconciler) uninstallStalePendingRelease(latest *helmrelease.Release, cfg *action.Configuration, age time.Duration) (bool, error) {
-	r.log.Warn("uninstalling stale pending Helm release with no prior revision",
+func uninstallStalePendingRelease(latest *helmrelease.Release, cfg *action.Configuration, age time.Duration, log *zap.Logger) (bool, error) {
+	log.Warn("uninstalling stale pending Helm release with no prior revision",
 		zap.String("release", latest.Name),
 		zap.Int("pending_revision", latest.Version),
 		zap.String("pending_status", latest.Info.Status.String()),
@@ -456,11 +475,11 @@ func (r *Reconciler) uninstallStalePendingRelease(latest *helmrelease.Release, c
 
 	uninstall := action.NewUninstall(cfg)
 	uninstall.Timeout = 5 * time.Minute
-	if _, err := uninstall.Run(releaseName); err != nil {
+	if _, err := uninstall.Run(latest.Name); err != nil {
 		return false, fmt.Errorf("recovering stale pending Helm release by uninstalling revision %d: %w", latest.Version, err)
 	}
 
-	r.log.Info("stale pending Helm release uninstalled; a clean install will run on next reconcile",
+	log.Info("stale pending Helm release uninstalled; a clean install will run on next reconcile",
 		zap.String("release", latest.Name),
 		zap.Int("uninstalled_revision", latest.Version),
 	)
@@ -481,12 +500,12 @@ var errNoRollbackTarget = errors.New("release has no prior revision to roll back
 // attempted revision, and Helm's rollback accepts any prior revision regardless of its
 // terminal status. With no prior revision at all it returns errNoRollbackTarget.
 func rollbackTargetRevision(cfg *action.Configuration, latest *helmrelease.Release) (*helmrelease.Release, error) {
-	deployed, err := cfg.Releases.Deployed(releaseName)
+	deployed, err := cfg.Releases.Deployed(latest.Name)
 	if err == nil {
 		return deployed, nil
 	}
 
-	history, historyErr := cfg.Releases.History(releaseName)
+	history, historyErr := cfg.Releases.History(latest.Name)
 	if historyErr != nil {
 		return nil, fmt.Errorf("no deployed revision (%v); querying release history: %w", err, historyErr)
 	}

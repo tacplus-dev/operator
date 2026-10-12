@@ -16,6 +16,7 @@ spec:
         checksum/config-settings: {{ .Values.config.settings | sha256sum | quote }}
         checksum/config-crypto: {{ .Values.config.crypto | sha256sum | quote }}
         checksum/config-bundle: {{ .Values.config.bundle | sha256sum | quote }}
+        checksum/config-images: {{ .Values.config.images | sha256sum | quote }}
       labels:
         app: schematic-operator
         {{- include "schematic-operator.labels" . | nindent 8 }}
@@ -109,6 +110,12 @@ spec:
         - name: crypto
           mountPath: /config/crypto.yaml
           subPath: crypto.yaml
+        {{- end }}
+        {{- if .Values.config.images }}
+        - name: config
+          mountPath: /config/images.yaml
+          subPath: images.yaml
+          readOnly: true
         {{- end }}
       volumes:
       - name: kubernetes-api-token

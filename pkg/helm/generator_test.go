@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	k8syaml "sigs.k8s.io/yaml"
+
 	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -1853,5 +1856,41 @@ func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
 		if !strings.Contains(values, want) {
 			t.Errorf("values.yaml missing %q\n--- values.yaml ---\n%s", want, values)
 		}
+	}
+}
+
+// Two builds pushed under the same :local tag differ only in digest. With the
+// digests pinned, the second build must change the pod template so the
+// rollout happens on its own instead of by `rollout restart`.
+func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
+	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "us-central1-docker.pkg.dev/proj/seabeam")
+	kernelTemplate := func(digest string) string {
+		cfg := &protoOperator.Config{
+			Namespace:    "schematic",
+			Topology:     &protoOperator.Topology{KernelNodes: 1},
+			ImageDigests: map[string]string{"kernel": digest},
+		}
+		var st appsv1.StatefulSet
+		decodeManifest(t, renderedManifests(t, generateTestChart(t, cfg)), "StatefulSet/kernel", &st)
+		var image string
+		for _, c := range st.Spec.Template.Spec.Containers {
+			if c.Name == "kernel" {
+				image = c.Image
+			}
+		}
+		if want := "us-central1-docker.pkg.dev/proj/seabeam/schematic/kernel@" + digest; image != want {
+			t.Fatalf("kernel image = %q, want %q", image, want)
+		}
+		out, err := k8syaml.Marshal(st.Spec.Template)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+
+	first := kernelTemplate("sha256:" + strings.Repeat("11", 32))
+	second := kernelTemplate("sha256:" + strings.Repeat("22", 32))
+	if first == second {
+		t.Fatal("a new build's digest left kernel's pod template unchanged: the StatefulSet would not roll")
 	}
 }
