@@ -206,6 +206,11 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	if err := g.addHarness(charts, cfg); err != nil {
 		return nil, fmt.Errorf("generating harness templates: %w", err)
 	}
+	manifest, err := pipelineSecretsConfigMap(services)
+	if err != nil {
+		return nil, fmt.Errorf("generating the pipeline secrets manifest: %w", err)
+	}
+	charts.Files["templates/pipeline-secrets.yaml"] = manifest
 
 	return charts, nil
 }
@@ -402,16 +407,16 @@ type secretEnvVar struct {
 	// generated <Msg>FromEnvVar looks for — PROTO_<PROTO PATH>_<MESSAGE>_<FIELD>
 	// upper-snaked — so it must be taken from the generated helper, not spelled
 	// by hand here.
-	EnvName string
+	EnvName string `json:"env"`
 	// Key is the entry inside the Secret. One Secret per service holds every one
 	// of its secret fields.
-	Key string
-	// ValuesField is the field under the service's own values.yaml key holding
-	// the value. The secret travels the same route the fleet's other generated
-	// key material already takes — operator crypto -> DeployConfigs -> helm
-	// values -> a rendered Secret — rather than being baked into the chart
-	// templates, so a chart written to disk carries no secret at all.
-	ValuesField string
+	Key string `json:"key"`
+	// GitLabVariable is the GitLab CI/CD variable the deployment pipeline writes
+	// into Key (D25: GitLab variable -> pipeline -> k8s Secret). The operator
+	// never holds the value: it is not in crypto.yaml, helm values or the chart,
+	// and the chart only references the Secret. The pipeline learns this mapping
+	// from the manifest pipelineSecretsConfigMap publishes.
+	GitLabVariable string `json:"gitlabVariable"`
 }
 
 type serviceSpec struct {
@@ -534,9 +539,10 @@ type serviceSpec struct {
 	// decides whether the pod's own bootstrap config is packaged as a Secret
 	// rather than a ConfigMap. The seed copy exists either way.
 	//
-	// A field declared here lives on its own message (blobstore.Secrets, not
-	// blobstore.Config), so the seed has nowhere to put it, and the value moves
-	// operator crypto.yaml -> k8s Secret -> pod env and nowhere else. EnvName is
+	// A field declared here lives on its own message (oauth.Secrets, not
+	// oauth.Config), so the seed has nowhere to put it, and the value moves
+	// GitLab CI/CD variable -> pipeline-written k8s Secret -> pod env and nowhere
+	// else (D25). The chart references the Secret and never renders it. EnvName is
 	// the name tacplus's generated <Msg>FromEnvVar reads, so it is derived from
 	// the proto package and message, never invented here.
 	SecretEnvVars []secretEnvVar
@@ -1150,9 +1156,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// Sign in with Apple's .p8 key: oauth.Secrets.apple_signin_key_p8, which
 		// tacplus's generated SecretsFromEnvVar reads from this variable.
 		SecretEnvVars: []secretEnvVar{{
-			EnvName:     "PROTO_SERVICES_OAUTH_SECRETS_APPLE_SIGNIN_KEY_P8",
-			Key:         "apple_signin_key_p8",
-			ValuesField: "appleSigninKeyP8",
+			EnvName:        "PROTO_SERVICES_OAUTH_SECRETS_APPLE_SIGNIN_KEY_P8",
+			Key:            "apple_signin_key_p8",
+			GitLabVariable: "APPLE_SIGNIN_KEY_P8",
 		}}}))
 
 	// Echo sample service — disabled by default. Stateless, no S2S deps, so it
@@ -1175,7 +1181,15 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// same shape as messaging.
 	if opt.GetMailbox() && topo.GetMailboxNodes() > 0 {
 		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "mailbox", Replicas: topo.MailboxNodes, Image: g.imageRef(cfg, "mailbox"), HasGRPC: true, ListenPort: 8443,
-			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}))
+			MemRequest: "64Mi", MemLimit: "256Mi", CpuRequest: "25m",
+			// The crew-mail service account's JSON key:
+			// mailbox.Secrets.gmail_service_account_json, which tacplus's generated
+			// SecretsFromEnvVar reads from this variable.
+			SecretEnvVars: []secretEnvVar{{
+				EnvName:        "PROTO_SERVICES_MAILBOX_SECRETS_GMAIL_SERVICE_ACCOUNT_JSON",
+				Key:            "gmail_service_account_json",
+				GitLabVariable: "CREW_MAIL_SA_KEY_JSON",
+			}}}))
 	}
 
 	// personalauth — the login broker for PERSONAL principals. Disabled by
@@ -1410,9 +1424,6 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 {{- end }}
 {{- if .WebAppHostPath }}
   webappHostPath: {{ .WebAppHostPath }}
-{{- end }}
-{{- range .SecretEnvVars }}
-  {{ .ValuesField }}: ""
 {{- end }}
 {{- end }}
 {{- range .PerReplicaConfigs }}
@@ -1762,32 +1773,10 @@ spec:
 `))
 
 // secretEnvSecretName is the Secret holding every secret-env field of one
-// service. Named for the service, not the pod: see addService.
+// service. Named for the service, not the pod: a set of pods delivered a field
+// this way has to agree on it, and a per-ordinal Secret could differ.
 func secretEnvSecretName(svc serviceSpec) string {
-	return svc.Name + "-secrets"
-}
-
-// secretEnvSecret renders that Secret, or nil when the service declares no
-// secret-env fields.
-func secretEnvSecret(svc serviceSpec) []byte {
-	if len(svc.SecretEnvVars) == 0 {
-		return nil
-	}
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-type: Opaque
-stringData:
-`, secretEnvSecretName(svc)))
-	for _, e := range svc.SecretEnvVars {
-		buf.WriteString(fmt.Sprintf("  %s: {{ %s | quote }}\n", e.Key, valuesRef(svc.Name, e.ValuesField)))
-	}
-	return buf.Bytes()
+	return svc.Name + "-pipeline-secrets"
 }
 
 // secretEnvLines renders the container env entries that read that Secret.
@@ -1802,6 +1791,58 @@ func secretEnvLines(svc serviceSpec) string {
 `, e.EnvName, secretEnvSecretName(svc), e.Key))
 	}
 	return buf.String()
+}
+
+// pipelineSecretsConfigMapName is the ConfigMap the deployment pipeline reads to
+// learn which Secrets to write.
+const pipelineSecretsConfigMapName = "schematic-pipeline-secrets"
+
+// pipelineSecret is one entry of that manifest: a Secret the pipeline writes,
+// the GitLab variable behind each of its keys, and the workloads to restart
+// when its content changes (env from a secretKeyRef is read once, at container
+// start).
+type pipelineSecret struct {
+	Name      string         `json:"name"`
+	Workloads []string       `json:"workloads"`
+	Entries   []secretEnvVar `json:"entries"`
+}
+
+// pipelineSecretsConfigMap renders the manifest of every SecretEnvVars Secret
+// the chart references, so the pipeline iterates over it instead of hardcoding
+// a list per secret. It is always rendered, empty when no enabled service
+// declares one, so a missing ConfigMap means an older operator, not "nothing
+// to write".
+func pipelineSecretsConfigMap(svcs []serviceSpec) ([]byte, error) {
+	secrets := []pipelineSecret{}
+	for _, svc := range svcs {
+		if len(svc.SecretEnvVars) == 0 {
+			continue
+		}
+		workloads := []string{}
+		if svc.IsStatefulSet {
+			workloads = []string{"statefulset/" + svc.Name}
+		} else {
+			for i := range int(svc.Replicas) {
+				workloads = append(workloads, fmt.Sprintf("deployment/%s%d", svc.Name, i))
+			}
+		}
+		secrets = append(secrets, pipelineSecret{Name: secretEnvSecretName(svc), Workloads: workloads, Entries: svc.SecretEnvVars})
+	}
+	manifest, err := json.MarshalIndent(secrets, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return []byte(fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+data:
+  secrets.json: |
+%s
+`, pipelineSecretsConfigMapName, indentLines(string(manifest), "    "))), nil
 }
 
 // configVolumeSource renders the volume source for a service's config volume:
@@ -1996,15 +2037,6 @@ subjects:
   name: %s
   namespace: {{ .Values.global.namespace }}
 `, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
-	}
-
-	// The service's secret-env Secret: one object per SERVICE, not per replica.
-	// blobstore's two pods must sign with the same key — an upload arriving at
-	// one is mirrored to the other, which verifies the same signature — so a
-	// per-ordinal Secret would be two different keys and every mirror hop would
-	// fail its own verification.
-	if secret := secretEnvSecret(svc); secret != nil {
-		charts.Files[fmt.Sprintf("templates/%s/secret-env.yaml", svc.Name)] = secret
 	}
 
 	// ConfigMap — or a Secret, for configs that embed private key material.
