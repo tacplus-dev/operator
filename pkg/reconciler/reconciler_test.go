@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	kubefake "helm.sh/helm/v3/pkg/kube/fake"
 	helmrelease "helm.sh/helm/v3/pkg/release"
 	helmstorage "helm.sh/helm/v3/pkg/storage"
@@ -26,12 +28,14 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
 )
 
 func TestRemoveKernelHotfixDrift(t *testing.T) {
@@ -1101,5 +1105,104 @@ func TestRecoverStalePendingReleaseOfAnotherRelease(t *testing.T) {
 	}
 	if recovered, err := RecoverStalePendingRelease(cfg, "absent", zap.NewNop()); err != nil || recovered {
 		t.Fatalf("recovery of an absent release = (%v, %v), want (false, nil)", recovered, err)
+	}
+}
+
+// The operator reconciles every ReconcileInterval, and Helm writes a new
+// revision on every upgrade whether or not anything changed — on dev the
+// release climbed past revision 100000 with no input change. A reconcile whose
+// rendered manifest matches the deployed revision must not upgrade; one whose
+// manifest changed still must.
+func TestApplyReleaseSkipsUpgradeWhenTheRenderIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	cfg := stalePendingReleaseStorage(t)
+	cfg.Capabilities = chartutil.DefaultCapabilities
+	r := &Reconciler{
+		client: fake.NewClientBuilder().WithScheme(immutableTestScheme(t)).Build(),
+		log:    zap.NewNop(),
+	}
+	ch := generatedTestChart(t)
+	vals := map[string]interface{}{"kernel0": map[string]interface{}{"config": "seed: one\n"}}
+
+	for i := 0; i < 2; i++ {
+		if err := r.applyRelease(ctx, cfg, ch, "schematic", vals); err != nil {
+			t.Fatalf("reconcile %d: %v", i+1, err)
+		}
+	}
+	history, err := cfg.Releases.History(releaseName)
+	if err != nil {
+		t.Fatalf("reading release history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("two reconciles with identical inputs wrote %d helm revisions, want 1", len(history))
+	}
+
+	changed := map[string]interface{}{"kernel0": map[string]interface{}{"config": "seed: two\n"}}
+	if err := r.applyRelease(ctx, cfg, ch, "schematic", changed); err != nil {
+		t.Fatalf("reconcile with changed values: %v", err)
+	}
+	deployed, err := cfg.Releases.Deployed(releaseName)
+	if err != nil {
+		t.Fatalf("reading deployed revision: %v", err)
+	}
+	if deployed.Version != 2 {
+		t.Fatalf("a changed render deployed revision %d, want 2", deployed.Version)
+	}
+
+	// The manifest an upgrade stores compares equal too, not only an install's.
+	if err := r.applyRelease(ctx, cfg, ch, "schematic", changed); err != nil {
+		t.Fatalf("reconcile after the upgrade: %v", err)
+	}
+	if history, err = cfg.Releases.History(releaseName); err != nil || len(history) != 2 {
+		t.Fatalf("a no-op reconcile after an upgrade left %d revisions (err %v), want 2", len(history), err)
+	}
+}
+
+// A fleet deployed by digest (image_digests, from images.yaml) never reads a
+// resolved tag: every pinned image renders as <repository>@<digest>, and the
+// pipeline, not the poller, decides when those change. Polling GitLab tags for
+// it only 404s every tick, and a "new" operator tag would self-upgrade the
+// operator off its pinned image. Run must not start the poller for it.
+func TestRunDoesNotPollTheRegistryForADigestPinnedFleet(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		digests  map[string]string
+		wantPoll bool
+	}{
+		{"digest-pinned", map[string]string{"kernel": "sha256:" + strings.Repeat("11", 32)}, false},
+		{"tag-based", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			polled := false
+			cl := fake.NewClientBuilder().WithScheme(immutableTestScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*corev1.Secret); ok && key.Name == "gitlab-registry" {
+						polled = true
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+			cfg := &protoOperator.Config{Namespace: "schematic", ImageDigests: tc.digests}
+			checker := upgrade.New("1.2", "1-2", 0, "main", 0, "v1.2.1-main.1", upgrade.AllServices(), cl, "schematic-operator", zap.NewNop(), time.Hour)
+			r := &Reconciler{
+				cfg:       cfg,
+				checker:   checker,
+				generator: helm.New("1-2", "1.2", checker, nil, nil),
+				client:    cl,
+				log:       zap.NewNop(),
+				// Nothing listens here: the initial reconcile fails and is
+				// logged, which is all Run does with it.
+				restCfg: &rest.Config{Host: "http://127.0.0.1:1"},
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := r.Run(ctx); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if polled != tc.wantPoll {
+				t.Fatalf("registry polled = %v, want %v", polled, tc.wantPoll)
+			}
+		})
 	}
 }

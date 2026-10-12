@@ -144,16 +144,27 @@ func (r *Reconciler) Start(ctx context.Context) error {
 func (r *Reconciler) Run(ctx context.Context) error {
 	r.log.Info("reconciler started", zap.String("namespace", r.cfg.GetNamespace()))
 
-	// Resolve initial image tags before the first reconcile.
-	if _, err := r.checker.Resolve(ctx); err != nil {
-		r.log.Warn("failed to resolve initial image tags, will use latest",
-			zap.Error(err),
+	// A fleet deployed by digest (image_digests) is versioned by the pipeline
+	// that writes images.yaml, not by registry tags: its images render as
+	// <repository>@<digest>, so there is nothing for the poller to resolve,
+	// and a resolved operator tag would self-upgrade off the pinned image.
+	if len(r.cfg.GetImageDigests()) > 0 {
+		r.log.Info("image digests pinned, auto-upgrade disabled",
+			zap.Int("digests", len(r.cfg.GetImageDigests())),
 		)
 	} else {
-		r.log.Info("resolved initial image tags")
-	}
+		// Resolve initial image tags before the first reconcile.
+		if _, err := r.checker.Resolve(ctx); err != nil {
+			r.log.Warn("failed to resolve initial image tags, will use latest",
+				zap.Error(err),
+			)
+		} else {
+			r.log.Info("resolved initial image tags")
+		}
 
-	go r.checker.Run(ctx)
+		go r.checker.Run(ctx)
+	}
+	// Without a running checker this never fires.
 	upgradeCh := r.checker.Notify()
 
 	ticker := time.NewTicker(ReconcileInterval)
@@ -363,11 +374,16 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 		return fmt.Errorf("loading helm chart from memory: %w", err)
 	}
 
-	latest, histErr := actionCfg.Releases.Last(releaseName)
-
 	if svcValues == nil {
 		svcValues = map[string]interface{}{}
 	}
+	return r.applyRelease(ctx, actionCfg, ch, ns, svcValues)
+}
+
+// applyRelease installs the release when there is none, otherwise brings the
+// existing one to ch rendered with svcValues.
+func (r *Reconciler) applyRelease(ctx context.Context, actionCfg *action.Configuration, ch *helmchart.Chart, ns string, svcValues map[string]interface{}) error {
+	latest, histErr := actionCfg.Releases.Last(releaseName)
 
 	switch {
 	case histErr == helmdriver.ErrReleaseNotFound:
@@ -382,6 +398,20 @@ func (r *Reconciler) apply(ctx context.Context, charts *helm.Charts, svcValues m
 		}
 		if err := r.removeKernelHotfixDrift(ctx, ns); err != nil {
 			return fmt.Errorf("removing kernel hotfix drift: %w", err)
+		}
+		// Helm writes a new revision on every upgrade, changed or not, and
+		// this runs every ReconcileInterval: upgrading only when the render
+		// differs from the deployed revision keeps history from churning.
+		desired, err := renderManifest(ch, ns, svcValues)
+		if err != nil {
+			return fmt.Errorf("rendering chart: %w", err)
+		}
+		if latest.Info.Status == helmrelease.StatusDeployed && latest.Manifest == desired {
+			r.log.Debug("helm release unchanged, skipping upgrade",
+				zap.String("release", latest.Name),
+				zap.Int("version", latest.Version),
+			)
+			return nil
 		}
 		if err := r.reconcileImmutableStatefulSetFields(ctx, ns, ch, svcValues); err != nil {
 			return fmt.Errorf("reconciling immutable statefulset fields: %w", err)
@@ -690,9 +720,11 @@ func (r *Reconciler) reconcileImmutableStatefulSetFields(ctx context.Context, ns
 	return nil
 }
 
-// renderStatefulSets renders the chart client-side, exactly as the coming
-// upgrade will render it, and returns the StatefulSets it declares by name.
-func renderStatefulSets(ch *helmchart.Chart, ns string, vals map[string]interface{}) (map[string]*appsv1.StatefulSet, error) {
+// renderManifest renders the chart client-side, exactly as the coming upgrade
+// will render it, and returns the manifest Helm would store for the revision.
+// The generated templates read neither .Capabilities nor live cluster state,
+// so a client-only render matches the server-side one.
+func renderManifest(ch *helmchart.Chart, ns string, vals map[string]interface{}) (string, error) {
 	install := action.NewInstall(new(action.Configuration))
 	install.ReleaseName = releaseName
 	install.Namespace = ns
@@ -701,11 +733,21 @@ func renderStatefulSets(ch *helmchart.Chart, ns string, vals map[string]interfac
 
 	rel, err := install.Run(ch, vals)
 	if err != nil {
-		return nil, fmt.Errorf("helm dry-run render: %w", err)
+		return "", fmt.Errorf("helm dry-run render: %w", err)
+	}
+	return rel.Manifest, nil
+}
+
+// renderStatefulSets renders the chart as renderManifest does and returns the
+// StatefulSets it declares by name.
+func renderStatefulSets(ch *helmchart.Chart, ns string, vals map[string]interface{}) (map[string]*appsv1.StatefulSet, error) {
+	manifest, err := renderManifest(ch, ns, vals)
+	if err != nil {
+		return nil, err
 	}
 
 	out := map[string]*appsv1.StatefulSet{}
-	for _, doc := range releaseutil.SplitManifests(rel.Manifest) {
+	for _, doc := range releaseutil.SplitManifests(manifest) {
 		var head struct {
 			Kind string `json:"kind"`
 		}
