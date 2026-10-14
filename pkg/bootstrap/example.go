@@ -21,6 +21,7 @@ import (
 	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoMailbox "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/mailbox"
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
@@ -393,6 +394,16 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			}
 			protoOauth.ConfigDefaults(cfg)
 			holder.OauthConfig = cfg
+			hasHolder = true
+			return nil
+		}},
+		{"mailbox", func(m map[string]any) error {
+			cfg := &protoMailbox.Config{}
+			if err := unmarshalMapToProto(m, cfg); err != nil {
+				return err
+			}
+			protoMailbox.ConfigDefaults(cfg)
+			holder.MailboxConfig = cfg
 			hasHolder = true
 			return nil
 		}},
