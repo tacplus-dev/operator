@@ -472,7 +472,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			svcMap = make(map[string]any)
 		}
 		if err := sl.load(svcMap); err != nil {
-			return nil, fmt.Errorf("parsing %s config: %w", sl.name, err)
+			return nil, fmt.Errorf("parsing services/%s.yaml: %w", sl.name, err)
 		}
 	}
 
@@ -501,7 +501,7 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 			}
 			target := holder.ProtoReflect().Mutable(fd).Message().Interface()
 			if err := unmarshalMapToProto(svcMap, target); err != nil {
-				return nil, fmt.Errorf("parsing %s config: %w", name, err)
+				return nil, fmt.Errorf("parsing services/%s.yaml: %w", name, err)
 			}
 			hasHolder = true
 		}
@@ -775,7 +775,7 @@ func unmarshalMapToProto(m map[string]any, target proto.Message) error {
 	if err != nil {
 		return fmt.Errorf("converting to JSON: %w", err)
 	}
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(jsonBytes, target); err != nil {
+	if err := protojson.Unmarshal(jsonBytes, target); err != nil {
 		return fmt.Errorf("unmarshaling proto: %w", err)
 	}
 	return nil
