@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 
+	protoTenantConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/tenant_config"
+	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -113,6 +117,73 @@ func ApproveTenant(cfgDir, tenant string) error {
 		return err
 	}
 	return os.WriteFile(kernelPath, kernelYAML, 0644)
+}
+
+// ApproveTenantRecords approves every tenant kernel's ConfigState records as
+// approved that cfgDir does not list yet, and returns their names. A tenant is
+// approved when it is ACTIVE and its config entry exists: kernel's
+// TenantAdmin wrote both, as the entitled person who thumbed the request. Its
+// oauth slice is filed as tenant-requests/<name>.yaml — the request a person
+// would file — and ApproveTenant does the rest, so a record and the CLI make
+// the same tenant. A tenant already listed is skipped, so replaying the same
+// state changes nothing. A refused tenant leaves the config dir as it was and
+// does not stop the others; the refusals are returned together.
+func ApproveTenantRecords(cfgDir string, state *protoKernel.ConfigState) ([]string, error) {
+	cfg, err := LoadConfig(cfgDir)
+	if err != nil {
+		return nil, err
+	}
+	listed := make(map[string]bool, len(cfg.GetTenants()))
+	for _, t := range cfg.GetTenants() {
+		listed[t] = true
+	}
+	configs := make(map[string]*protoTenantConfig.TenantConfig, len(state.GetTenantConfigs()))
+	for _, e := range state.GetTenantConfigs() {
+		configs[e.GetTenantName()] = e.GetConfig()
+	}
+
+	var approved []string
+	var errs []error
+	for _, t := range state.GetTenants() {
+		tenant := t.GetName()
+		tc, ok := configs[tenant]
+		if t.GetStatus() != protoKernel.TenantStatus_TENANT_STATUS_ACTIVE || !ok || listed[tenant] {
+			continue
+		}
+		reqPath := TenantRequestPath(cfgDir, tenant)
+		if _, err := os.Stat(reqPath); err == nil {
+			errs = append(errs, fmt.Errorf("tenant %q: %s is already pending; a person decides which request wins", tenant, reqPath))
+			continue
+		}
+		oauth := tc.GetOauth()
+		if oauth == nil {
+			oauth = &protoOauth.OAuthTenantConfig{}
+		}
+		request, err := protoOauth.OAuthTenantConfigToYAML(oauth)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tenant %q: marshaling request: %w", tenant, err))
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(reqPath), 0755); err != nil {
+			errs = append(errs, fmt.Errorf("tenant %q: creating %s: %w", tenant, TenantRequestsDir, err))
+			continue
+		}
+		if err := os.WriteFile(reqPath, request, 0644); err != nil {
+			errs = append(errs, fmt.Errorf("tenant %q: filing request: %w", tenant, err))
+			continue
+		}
+		if err := ApproveTenant(cfgDir, tenant); err != nil {
+			// ApproveTenant puts a refused request back where it was filed;
+			// take it away again so the next pass starts clean.
+			if rmErr := os.Remove(reqPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				err = fmt.Errorf("%w (and removing the request failed: %v)", err, rmErr)
+			}
+			errs = append(errs, fmt.Errorf("tenant %q: %w", tenant, err))
+			continue
+		}
+		approved = append(approved, tenant)
+	}
+	return approved, errors.Join(errs...)
 }
 
 // withTenantDelegates returns kernel.yaml with a delegate added for each of
