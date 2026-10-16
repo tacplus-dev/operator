@@ -1008,6 +1008,42 @@ func TestKernelStatefulSetStartsPodsOneAtATime(t *testing.T) {
 	}
 }
 
+// TestKernelMountsTheConfigOverrideWithoutOwningIt: the kill switches write
+// ConfigMap kernel-config-override at runtime and kernel polls it, so every
+// kernel pod mounts it — optional, so a fleet that never flipped a switch still
+// starts — while the chart renders no such ConfigMap (a helm upgrade would
+// otherwise reset a switch someone flipped) and no checksum covers it (a flip
+// would otherwise roll kernel, which is what the runtime path exists to avoid).
+func TestKernelMountsTheConfigOverrideWithoutOwningIt(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 3, StratumNodes: 3},
+	})
+
+	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
+	for _, want := range []string{
+		"        - name: config-override\n          mountPath: /config-override\n          readOnly: true\n",
+		"      - name: config-override\n        configMap:\n          name: kernel-config-override\n          optional: true\n",
+	} {
+		if !strings.Contains(ss, want) {
+			t.Errorf("kernel StatefulSet is missing\n%s\nin:\n%s", want, ss)
+		}
+	}
+	for _, line := range strings.Split(ss, "\n") {
+		if strings.Contains(line, "checksum/") && strings.Contains(line, "override") {
+			t.Errorf("a checksum covers the override, so a flip would roll kernel: %s", line)
+		}
+	}
+	for name, body := range charts.Files {
+		if strings.Contains(string(body), "kind: ConfigMap") && strings.Contains(string(body), "name: kernel-config-override") {
+			t.Errorf("%s renders ConfigMap kernel-config-override; the chart must only reference it", name)
+		}
+	}
+	if strings.Contains(chartFile(t, charts, "templates/stratum/statefulset.yaml"), "config-override") {
+		t.Error("only kernel reads the override; stratum must not mount it")
+	}
+}
+
 // TestKeyMaterialConfigsArePackagedAsSecrets: kernel's per-node config carries
 // the node TLS key and its signing CA key, kmaker's carries the cluster CA
 // signing key, and gateway's carries the external TLS key. All three were

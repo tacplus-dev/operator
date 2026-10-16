@@ -557,6 +557,16 @@ type serviceSpec struct {
 	// populates, so all three pods started with an empty config and died with
 	// "data is null or empty".
 	PerReplicaConfig bool
+	// ConfigOverrideMount, if true, mounts the optional ConfigMap
+	// kernelConfigOverrideConfigMap at kernelConfigOverrideDir: the runtime write
+	// path for a service's Config (kernel.proto ConfigOverride; kernel's
+	// Config.config_override_path defaults to a file in that directory). Kernel
+	// only. The chart references the ConfigMap and never renders it — the data
+	// gate's kill switches (platform/ops/datagate/killswitch.sh) write it, so helm
+	// must not own it — and it is in no checksum annotation, so a flip never rolls
+	// kernel. A whole-directory mount, not subPath, so the kubelet updates the
+	// file in place.
+	ConfigOverrideMount bool
 	// SharesServiceIdentityWith names the service this workload is a SECOND WORKLOAD
 	// OF, rather than a service of its own. Set on stratum-search, and on nothing
 	// else.
@@ -1050,6 +1060,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//     count + replication settings.
 	svcs := []serviceSpec{
 		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef(cfg, "kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
+			ConfigOverrideMount:          true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
@@ -1834,6 +1845,14 @@ data:
 
 // configVolumeSource renders the volume source for a service's config volume:
 // a secret for key-bearing configs, a configMap otherwise.
+// The runtime ConfigOverride's ConfigMap and its mount directory (see
+// serviceSpec.ConfigOverrideMount). The directory is the one kernel's
+// Config.config_override_path defaults into: /config-override/override.json.
+const (
+	kernelConfigOverrideConfigMap = "kernel-config-override"
+	kernelConfigOverrideDir       = "/config-override"
+)
+
 func configVolumeSource(svc serviceSpec, name string) string {
 	if svc.ConfigHasKeyMaterial {
 		return fmt.Sprintf("        secret:\n          secretName: %s-config\n", name)
@@ -2378,6 +2397,12 @@ spec:
           mountPath: /app/data
 `)
 		}
+		if svc.ConfigOverrideMount {
+			ssBuf.WriteString(fmt.Sprintf(`        - name: config-override
+          mountPath: %s
+          readOnly: true
+`, kernelConfigOverrideDir))
+		}
 		if !svc.SkipProbes {
 			ssBuf.WriteString(fmt.Sprintf(`        startupProbe:
           {{- include "%s" . | nindent 10 }}
@@ -2394,6 +2419,13 @@ spec:
       - name: bootstrap
         emptyDir: {}
 `)
+		if svc.ConfigOverrideMount {
+			ssBuf.WriteString(fmt.Sprintf(`      - name: config-override
+        configMap:
+          name: %s
+          optional: true
+`, kernelConfigOverrideConfigMap))
+		}
 		ssBuf.WriteString(projectedServiceAccountTokenVolume(svc))
 		for i := range int(svc.Replicas) {
 			name := fmt.Sprintf("%s-%d", svc.Name, i)
