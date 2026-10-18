@@ -687,7 +687,8 @@ func TestPVCDeploymentsUseRecreateStrategy(t *testing.T) {
 //
 // (1) tcpSocket probes stay true while a service's guts are dead — a wedged eventbus
 // sat 1/1 Ready through drill 7 because port 8443 still accepted connections. Only a
-// grpc.health.v1 query reflects handler health.
+// grpc.health.v1 query reflects handler health. schematic.livenessProbe is the one
+// deliberate tcpSocket helper (see TestLivenessDoesNotDependOnDependencies).
 //
 // (2) The probe must target the PLAINTEXT health port 8444, never the TLS service
 // ports. The kubelet's gRPC probe cannot speak TLS, so probing 5000/8443 times out on
@@ -711,12 +712,17 @@ func TestProbesQueryGRPCHealthOnPlaintextPort(t *testing.T) {
 			t.Errorf("probe helper %q is missing", probe)
 		}
 	}
-	// No probe helper may fall back to a TCP check.
+	// No readiness or startup probe helper may fall back to a TCP check.
 	probeRegion := body
 	if i := strings.Index(probeRegion, `"schematic.grpcProbe5000"`); i >= 0 {
 		if j := strings.Index(probeRegion[i:], `"schematic.imagePullSecrets"`); j > 0 {
 			probeRegion = probeRegion[i : i+j]
 		}
+	}
+	// schematic.livenessProbe (doc comment and body) is the deliberate exception.
+	if i := strings.Index(probeRegion, "{{/*\nLiveness probe for every workload"); i >= 0 {
+		liveness := probeHelperBody(t, probeRegion, "schematic.livenessProbe")
+		probeRegion = probeRegion[:i] + probeRegion[strings.Index(probeRegion, liveness)+len(liveness):]
 	}
 	if strings.Contains(probeRegion, "tcpSocket") {
 		t.Error("probe helpers must not use tcpSocket — a TCP accept stays true while the service is dead")
@@ -1629,6 +1635,92 @@ func probeFieldSeconds(t *testing.T, helper, field string) int {
 	}
 	t.Fatalf("probe helper does not set %s:\n%s", field, helper)
 	return 0
+}
+
+// TestLivenessDoesNotDependOnDependencies guards defect #13. tacplus gates the
+// grpc.health.v1 "" status on the service's required s2s channels, so a liveness
+// probe on it fails whenever a dependency is down: on the 10-17 kernel roll every
+// service went NOT_SERVING and the kubelet restarted all 17 healthy app pods.
+// Liveness must be the process-alive tcpSocket helper; readiness keeps the
+// dependency-gated gRPC check. eventbus alone keeps its 300s gRPC backstop.
+func TestLivenessDoesNotDependOnDependencies(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			KmakerNodes:   1,
+			EventbusNodes: 1,
+			StratumNodes:  1,
+			AppServices:   map[string]int32{"widgeter": 1},
+		},
+	})
+	helpers := chartFile(t, charts, "templates/_helpers.tpl")
+
+	liveness := probeHelperBody(t, helpers, "schematic.livenessProbe")
+	if !strings.Contains(liveness, "tcpSocket:\n  port: 8444") {
+		t.Errorf("schematic.livenessProbe must be tcpSocket on the plaintext health port 8444:\n%s", liveness)
+	}
+	if strings.Contains(liveness, "grpc:") {
+		t.Errorf("schematic.livenessProbe must not query the dependency-gated gRPC health status:\n%s", liveness)
+	}
+	for field, want := range map[string]int{"initialDelaySeconds": 10, "periodSeconds": 10, "timeoutSeconds": 5, "failureThreshold": 3} {
+		if got := probeFieldSeconds(t, liveness, field); got != want {
+			t.Errorf("schematic.livenessProbe %s = %d, want %d", field, got, want)
+		}
+	}
+
+	for _, tc := range []struct{ path, liveness string }{
+		{"templates/widgeter/deployment.yaml", "schematic.livenessProbe"},
+		{"templates/stratum/statefulset.yaml", "schematic.livenessProbe"},
+		{"templates/kernel/statefulset.yaml", "schematic.livenessProbe"},
+		{"templates/eventbus/deployment.yaml", "schematic.grpcProbeEventbus"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			workload := chartFile(t, charts, tc.path)
+			live := probeInclude(t, workload, "livenessProbe")
+			ready := probeInclude(t, workload, "readinessProbe")
+			if live != tc.liveness {
+				t.Errorf("livenessProbe includes %q, want %q", live, tc.liveness)
+			}
+			if !strings.Contains(probeHelperBody(t, helpers, ready), "grpc:\n  port: 8444") {
+				t.Errorf("readinessProbe helper %q must stay a gRPC check on port 8444", ready)
+			}
+			if tc.liveness == "schematic.livenessProbe" && live == ready {
+				t.Errorf("livenessProbe and readinessProbe both include %q", live)
+			}
+		})
+	}
+}
+
+// probeInclude returns the helper a workload's probe block includes.
+func probeInclude(t *testing.T, workload, probe string) string {
+	t.Helper()
+	i := strings.Index(workload, "        "+probe+":\n")
+	if i < 0 {
+		t.Fatalf("workload has no %s:\n%s", probe, workload)
+	}
+	rest := workload[i:]
+	j := strings.Index(rest, `include "`)
+	if j < 0 {
+		t.Fatalf("%s includes no helper:\n%s", probe, rest)
+	}
+	rest = rest[j+len(`include "`):]
+	return rest[:strings.Index(rest, `"`)]
+}
+
+// probeHelperBody returns the body of a named helper in _helpers.tpl.
+func probeHelperBody(t *testing.T, helpers, name string) string {
+	t.Helper()
+	def := `{{- define "` + name + `" -}}`
+	i := strings.Index(helpers, def)
+	if i < 0 {
+		t.Fatalf("_helpers.tpl does not define %s", name)
+	}
+	j := strings.Index(helpers[i:], "{{- end }}")
+	if j < 0 {
+		t.Fatalf("%s is not terminated", name)
+	}
+	return helpers[i : i+j]
 }
 
 // TestGatewayLoadBalancerCarriesBothPorts guards the shape of the edge: ONE

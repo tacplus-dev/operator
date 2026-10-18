@@ -1542,7 +1542,8 @@ Init container that waits for kernel0:5000.
 {{- end }}
 
 {{/*
-Readiness/liveness probe querying grpc.health.v1 on the plaintext health port.
+Readiness probe querying grpc.health.v1 on the plaintext health port. Liveness
+uses schematic.livenessProbe instead (eventbus excepted).
 
 These MUST target 8444, not the service port. The kubelet's gRPC probe speaks
 PLAINTEXT only — it cannot do TLS — so probing 5000/8443 times out on every
@@ -1577,6 +1578,27 @@ failureThreshold: 60
 
 {{- define "schematic.grpcProbe8443" -}}
 grpc:
+  port: 8444
+initialDelaySeconds: 10
+periodSeconds: 10
+timeoutSeconds: 5
+failureThreshold: 3
+{{- end }}
+
+{{/*
+Liveness probe for every workload except eventbus. Liveness answers "is the
+process alive", never "are its dependencies up". The grpc.health.v1 "" status
+is dependency-gated (tacplus holds it NOT_SERVING until the required s2s
+channels are up), which is readiness; using it for liveness restarted every
+app pod on a kernel roll (defect #13, 10-17 19:43Z).
+
+tcpSocket on the plaintext health listener is the process-alive signal until
+tacplus serves an ungated health name (tacplus issue draft: looper
+workers/tacplus-issue-liveness.md); then switch to a grpc probe with that
+service name.
+*/}}
+{{- define "schematic.livenessProbe" -}}
+tcpSocket:
   port: 8444
 initialDelaySeconds: 10
 periodSeconds: 10
@@ -1757,7 +1779,7 @@ spec:
         readinessProbe:
           {{ "{{- include \"schematic.grpcProbe5000\" . | nindent 10 }}" }}
         livenessProbe:
-          {{ "{{- include \"schematic.grpcProbe5000\" . | nindent 10 }}" }}
+          {{ "{{- include \"schematic.livenessProbe\" . | nindent 10 }}" }}
       volumes:
       - name: config
         configMap:
@@ -2251,6 +2273,7 @@ spec:
 	}
 	probeHelper := "schematic.grpcProbe5000"
 	startupProbeHelper := "schematic.startupProbe5000"
+	livenessProbeHelper := "schematic.livenessProbe"
 	if listenPort == 8443 {
 		probeHelper = "schematic.grpcProbe8443"
 		startupProbeHelper = "schematic.startupProbe8443"
@@ -2271,8 +2294,12 @@ spec:
 	// eventbus needs a far longer liveness budget than the shared 30s: its
 	// embedded broker makes every restart a rebalance storm it must be allowed
 	// to finish. See schematic.grpcProbeEventbus.
+	// It also keeps that gRPC helper for liveness rather than
+	// schematic.livenessProbe: the 300s budget is a deliberate wedge backstop
+	// and already outlasts a kernel roll.
 	if svc.Name == "eventbus" {
 		probeHelper = "schematic.grpcProbeEventbus"
+		livenessProbeHelper = probeHelper
 	}
 
 	if svc.IsStatefulSet {
@@ -2410,7 +2437,7 @@ spec:
           {{- include "%s" . | nindent 10 }}
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
-`, startupProbeHelper, probeHelper, probeHelper))
+`, startupProbeHelper, probeHelper, livenessProbeHelper))
 		}
 		if rb := resourcesBlock(svc); rb != "" {
 			ssBuf.WriteString(rb)
@@ -2579,7 +2606,7 @@ spec:
           {{- include "%s" . | nindent 10 }}
         livenessProbe:
           {{- include "%s" . | nindent 10 }}
-`, startupProbeHelper, probeHelper, probeHelper))
+`, startupProbeHelper, probeHelper, livenessProbeHelper))
 			}
 			if rb := resourcesBlock(svc); rb != "" {
 				deployBuf.WriteString(rb)
