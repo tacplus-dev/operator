@@ -390,8 +390,23 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 // the compile-time platform list, so the registry walk skips them unless
 // EnsureServiceDelegates registers them first — and a tasks delegate without
 // eventbus makes every event publish PermissionDenied.
+//
+// It uses a fixed registry rather than the embedded one: the embedded registry
+// is whatever fleet the operator was generated against, and not every fleet has
+// a tasks service.
 func TestEnsureServiceDelegatesAppServiceGetsBroker(t *testing.T) {
 	t.Cleanup(func() { RegisterAppServices(nil) })
+	withRegistry(t, []byte(`{
+  "name": "root",
+  "children": [
+    {
+      "name": "tasks",
+      "full_path": "services/tasks",
+      "services": [{"name": "Tasks", "package": "tasks", "grpc_service": "tasks.Tasks"}],
+      "event_publishes": [{"broker_label": "eventbus"}]
+    }
+  ]
+}`))
 
 	dir := t.TempDir()
 	kernelPath := setupKernelYAML(t, dir, nil)
