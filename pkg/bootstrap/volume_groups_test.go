@@ -172,12 +172,26 @@ func TestVolumeGroupsSameServiceTwiceIsNotADuplicate(t *testing.T) {
 // TestVolumeGroupsEmptyRegistryStaysEmpty is the no-regression case: a fleet
 // whose services declare no groups gets an empty list, which is blobstore's
 // correct fail-closed state, not an error.
+//
+// It uses a fixed registry rather than the embedded one: the embedded registry
+// is whatever fleet the operator was generated against, and docmanager (in the
+// sonar fleet) declares a "documents" group.
 func TestVolumeGroupsEmptyRegistryStaysEmpty(t *testing.T) {
+	const noGroups = `{
+  "name": "root",
+  "children": [
+    {
+      "name": "gateway",
+      "full_path": "services/gateway",
+      "services": [{"name": "Gateway", "package": "gateway"}]
+    }
+  ]
+}`
 	cfg := &protoBlobstore.Config{}
-	if err := setBlobstoreVolumeGroups(cfg, registryJSON); err != nil {
+	if err := setBlobstoreVolumeGroups(cfg, []byte(noGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if len(cfg.GetVolumeGroups()) != 0 {
-		t.Fatalf("embedded registry declares %d group(s); if a platform service now declares one, update this test", len(cfg.GetVolumeGroups()))
+		t.Fatalf("rendered %d group(s), want 0", len(cfg.GetVolumeGroups()))
 	}
 }

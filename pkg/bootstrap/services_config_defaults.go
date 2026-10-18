@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
+	protoBeagle "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/beagle"
 	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
 	protoDocmanager "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/docmanager"
 	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
@@ -20,6 +21,7 @@ import (
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/opa"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOtto "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/otto"
 	protoPersonalauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/personalauth"
 	protoProfile "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/profile"
 	protoReveille "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/reveille"
@@ -27,6 +29,7 @@ import (
 	protoScottyagent "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottyagent"
 	protoScottypersonal "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/scottypersonal"
 	protoStratum "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/stratum"
+	protoTally "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/tally"
 	protoWeather "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/weather"
 	protoWork "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/work"
 )
@@ -67,6 +70,9 @@ var servicesHolderDefaulters = map[string]func(proto.Message){
 	"blobstore_config":      func(m proto.Message) { protoBlobstore.ConfigDefaults(m.(*protoBlobstore.Config)) },
 	"docmanager_config":     func(m proto.Message) { protoDocmanager.ConfigDefaults(m.(*protoDocmanager.Config)) },
 	"reveille_config":       func(m proto.Message) { protoReveille.ConfigDefaults(m.(*protoReveille.Config)) },
+	"beagle_config":         func(m proto.Message) { protoBeagle.ConfigDefaults(m.(*protoBeagle.Config)) },
+	"otto_config":           func(m proto.Message) { protoOtto.ConfigDefaults(m.(*protoOtto.Config)) },
+	"tally_config":          func(m proto.Message) { protoTally.ConfigDefaults(m.(*protoTally.Config)) },
 }
 
 // servicesHolderDefaultsSkipped are holder entries the operator deliberately
