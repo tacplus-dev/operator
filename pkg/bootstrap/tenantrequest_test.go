@@ -141,7 +141,7 @@ func TestApproveTenantRendersClaimMatcherRule(t *testing.T) {
 	if !strings.Contains(rego, handRule) {
 		t.Errorf("approval dropped the hand-written rule:\n%s", rego)
 	}
-	want := "namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"beta.example\"\n}"
+	want := "namespace := \"/tenants/beta\" if {\n\tinput.claims.provider_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"beta.example\"\n}"
 	if !strings.Contains(rego, want) {
 		t.Errorf("namespace.rego missing claim rule:\n%s\n\ngot:\n%s", want, rego)
 	}

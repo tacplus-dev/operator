@@ -280,7 +280,7 @@ func TestTenantNamespaceRuleForClaimMatcher(t *testing.T) {
 
 	rego := bundleFile(t, DefaultOPABundle(nil, idps), "tenants", "namespace.rego")
 	for _, want := range []string{
-		"namespace := \"/tenants/acme\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"acme.com\"\n}",
+		"namespace := \"/tenants/acme\" if {\n\tinput.claims.provider_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"acme.com\"\n}",
 		"namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\taud_matches(\"beta-web\")\n}",
 	} {
 		if !strings.Contains(rego, want) {
