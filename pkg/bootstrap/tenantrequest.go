@@ -314,6 +314,10 @@ func validateNewTenant(cfg *protoOperator.Config, tenant string) error {
 // naming a different namespace makes the policy fail at eval for every caller
 // of that issuer — that edit needs a person.
 //
+// A claim matcher's issuer is a shared cluster IDP the file is expected to
+// mention already, so its claim rule is refused only when the file holds an
+// issuer-only rule for that issuer: both would match the tenant's callers.
+//
 // A config dir without services/opa has nothing to append to: its policy is
 // generated at deploy time from LoadTenantIdps, which already includes tenant.
 func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
@@ -331,6 +335,13 @@ func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 	issuers := map[string]bool{}
 	for _, idp := range idps {
 		if idp.TenantNamespace != ns {
+			continue
+		}
+		if idp.ClaimKey != "" {
+			if strings.Contains(string(existing), fmt.Sprintf("\tinput.claims.origin_iss == %q\n}", idp.IssuerURL)) {
+				return fmt.Errorf("issuer %s has an issuer-only rule in %s; bind %s by hand", idp.IssuerURL, path, ns)
+			}
+			rules.WriteString(claimNamespaceRule(idp))
 			continue
 		}
 		if strings.Contains(string(existing), fmt.Sprintf("%q", idp.IssuerURL)) {

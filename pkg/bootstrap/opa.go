@@ -101,12 +101,16 @@ func DefaultOPABundle(idpIssuers []string, tenantIdps []TenantIdp) *protoFilesys
 	}
 }
 
-// TenantIdp binds one tenant-owned IDP provider to the tenant's authorization
-// namespace. Per oauth.OAuthProvider, the (issuer_url, client_id) pair
-// uniquely identifies the tenant — no claim matching is involved.
+// TenantIdp binds one tenant-owned IDP provider, or one claim matcher on a
+// shared cluster IDP, to the tenant's authorization namespace. Per
+// oauth.OAuthProvider, the (issuer_url, client_id) pair uniquely identifies the
+// tenant. Per oauth.ClaimMatcher, (issuer_url, claim_key, claim_value) does;
+// ClaimKey is set only for a claim matcher, and ClientID only for a provider.
 type TenantIdp struct {
 	IssuerURL       string
 	ClientID        string
+	ClaimKey        string
+	ClaimValue      string
 	TenantNamespace string
 }
 
@@ -118,9 +122,9 @@ func TenantConfigDir(cfgDir, tenant string) string {
 
 // LoadTenantIdps reads tenants/<name>/oauth.yaml — an oauth.OAuthTenantConfig —
 // for every tenant named in operator.yaml, and returns the bindings its enabled
-// providers declare. A tenant with no file contributes nothing: its users then
-// resolve to no namespace, and kernel refuses to mint for them. That is the
-// intended fail-closed behaviour, not a gap to paper over.
+// providers and its claim matchers declare. A tenant with no file contributes
+// nothing: its users then resolve to no namespace, and kernel refuses to mint
+// for them. That is the intended fail-closed behaviour, not a gap to paper over.
 func LoadTenantIdps(cfgDir string) ([]TenantIdp, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
@@ -137,6 +141,7 @@ func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 	// tenant. Two tenants claiming the same pair is a misconfiguration that
 	// would render a policy OPA rejects at eval time, so reject it here.
 	seen := map[[2]string]string{}
+	seenMatchers := map[[3]string]string{}
 	var out []TenantIdp
 	for _, tenant := range tenants {
 		path := filepath.Join(TenantConfigDir(cfgDir, tenant), "oauth.yaml")
@@ -167,19 +172,44 @@ func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 			seen[key] = ns
 			out = append(out, TenantIdp{IssuerURL: key[0], ClientID: key[1], TenantNamespace: ns})
 		}
+		for _, m := range tc.GetClaimMatchers() {
+			if m.GetProviderIssuerUrl() == "" || m.GetClaimKey() == "" || m.GetClaimValue() == "" {
+				continue
+			}
+			key := [3]string{m.GetProviderIssuerUrl(), m.GetClaimKey(), m.GetClaimValue()}
+			if prev, ok := seenMatchers[key]; ok {
+				if prev != ns {
+					return nil, fmt.Errorf("claim matcher (%s, %s=%s) is claimed by both %s and %s",
+						key[0], key[1], key[2], prev, ns)
+				}
+				continue
+			}
+			seenMatchers[key] = ns
+			out = append(out, TenantIdp{IssuerURL: key[0], ClaimKey: key[1], ClaimValue: key[2], TenantNamespace: ns})
+		}
 	}
 
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].IssuerURL != out[j].IssuerURL {
 			return out[i].IssuerURL < out[j].IssuerURL
 		}
-		return out[i].ClientID < out[j].ClientID
+		if out[i].ClientID != out[j].ClientID {
+			return out[i].ClientID < out[j].ClientID
+		}
+		if out[i].ClaimKey != out[j].ClaimKey {
+			return out[i].ClaimKey < out[j].ClaimKey
+		}
+		return out[i].ClaimValue < out[j].ClaimValue
 	})
 	return out, nil
 }
 
 // tenantNamespaceRego renders the entitlements.tenants policy: the
-// (issuer, client_id) → namespace table the eval rule reads.
+// (issuer, client_id) and (issuer, claim) → namespace table the eval rule reads.
+//
+// A claim matcher gets the claim rule alone: its issuer is a shared cluster
+// IDP, so it never gets an issuer-only rule, and it counts as a tenant of that
+// issuer so a provider on the same issuer loses its issuer-only rule too.
 //
 // Two rule shapes are emitted per binding. The exact one matches issuer AND
 // audience. The issuer-only one is emitted only when that issuer names exactly
@@ -193,6 +223,10 @@ func tenantNamespaceRego(idps []TenantIdp) string {
 	b.WriteString(tenantNamespaceRegoHeader)
 
 	for _, idp := range idps {
+		if idp.ClaimKey != "" {
+			b.WriteString(claimNamespaceRule(idp))
+			continue
+		}
 		b.WriteString(exactNamespaceRule(idp))
 	}
 
@@ -204,7 +238,7 @@ func tenantNamespaceRego(idps []TenantIdp) string {
 		byIssuer[idp.IssuerURL][idp.TenantNamespace] = true
 	}
 	for _, idp := range idps {
-		if len(byIssuer[idp.IssuerURL]) != 1 {
+		if idp.ClaimKey != "" || len(byIssuer[idp.IssuerURL]) != 1 {
 			continue
 		}
 		delete(byIssuer, idp.IssuerURL)
@@ -219,6 +253,14 @@ func tenantNamespaceRego(idps []TenantIdp) string {
 func exactNamespaceRule(idp TenantIdp) string {
 	return fmt.Sprintf("\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n\taud_matches(%q)\n}\n",
 		idp.TenantNamespace, idp.IssuerURL, idp.ClientID)
+}
+
+// claimNamespaceRule is the namespace rule matching issuer AND one claim value.
+// The oauth broker forwards a claim that is not a well-known JWT claim under
+// its own name, so input.claims[key] is the IDP's claim (e.g. hd, tid).
+func claimNamespaceRule(idp TenantIdp) string {
+	return fmt.Sprintf("\nnamespace := %q if {\n\tinput.claims.origin_iss == %q\n\tinput.claims[%q] == %q\n}\n",
+		idp.TenantNamespace, idp.IssuerURL, idp.ClaimKey, idp.ClaimValue)
 }
 
 // issuerNamespaceRule is the issuer-only namespace rule. It is correct only
@@ -367,12 +409,13 @@ package entitlements.grants
 default roles := set()
 `
 
-// tenantNamespaceRegoHeader/Footer bracket the generated (issuer, client_id) →
-// namespace rules.
-const tenantNamespaceRegoHeader = `# IDP (issuer, client_id) → tenant authorization namespace.
-# Generated from tenants/<name>/oauth.yaml (oauth.OAuthTenantConfig.providers);
-# the (issuer_url, client_id) pair uniquely identifies the tenant, so no claim
-# matching is involved.
+// tenantNamespaceRegoHeader/Footer bracket the generated (issuer, client_id)
+// and (issuer, claim) → namespace rules.
+const tenantNamespaceRegoHeader = `# IDP (issuer, client_id) or (issuer, claim) → tenant authorization namespace.
+# Generated from tenants/<name>/oauth.yaml: each oauth.OAuthTenantConfig
+# provider's (issuer_url, client_id) pair, and each claim matcher's
+# (provider_issuer_url, claim_key, claim_value) on a shared cluster IDP,
+# uniquely identifies the tenant.
 #
 # ` + "`default namespace := \"\"`" + ` is the answer for an issuer that is not
 # listed. Kernel refuses to mint a user token whose namespace the policy could

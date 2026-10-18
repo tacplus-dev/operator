@@ -246,6 +246,66 @@ func TestDuplicateIdpKeyAcrossTenantsIsRejected(t *testing.T) {
 	}
 }
 
+// generate renders namespace.rego from tenants/*/oauth.yaml when services/opa
+// does not exist; a claim-matchers-only tenant must get its (issuer, claim)
+// rule there too, and its shared issuer costs a provider tenant on the same
+// issuer its issuer-only rule.
+func TestTenantNamespaceRuleForClaimMatcher(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+		"providers: []\n"+
+			"claim_matchers:\n"+
+			"  - provider_issuer_url: https://accounts.google.com\n"+
+			"    claim_key: hd\n"+
+			"    claim_value: acme.com\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
+		"providers:\n"+
+			"  - enable: true\n"+
+			"    issuer_url: https://accounts.google.com\n"+
+			"    client_id: beta-web\n"+
+			"    client_secret: s\n")
+
+	idps, err := LoadTenantIdps(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantIdps: %v", err)
+	}
+	want := []TenantIdp{
+		{IssuerURL: "https://accounts.google.com", ClaimKey: "hd", ClaimValue: "acme.com", TenantNamespace: "/tenants/acme"},
+		{IssuerURL: "https://accounts.google.com", ClientID: "beta-web", TenantNamespace: "/tenants/beta"},
+	}
+	if !reflect.DeepEqual(idps, want) {
+		t.Fatalf("LoadTenantIdps = %+v, want %+v", idps, want)
+	}
+
+	rego := bundleFile(t, DefaultOPABundle(nil, idps), "tenants", "namespace.rego")
+	for _, want := range []string{
+		"namespace := \"/tenants/acme\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"acme.com\"\n}",
+		"namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\taud_matches(\"beta-web\")\n}",
+	} {
+		if !strings.Contains(rego, want) {
+			t.Errorf("tenants/namespace.rego is missing rule:\n%s\n\ngot:\n%s", want, rego)
+		}
+	}
+	if strings.Contains(rego, "\tinput.claims.origin_iss == \"https://accounts.google.com\"\n}") {
+		t.Errorf("an issuer shared with a claim matcher got an issuer-only rule:\n%s", rego)
+	}
+}
+
+// Two tenants claiming the same (issuer, claim, value) would render a policy
+// OPA rejects at eval time, as two tenants claiming one provider would.
+func TestDuplicateClaimMatcherAcrossTenantsIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	body := "claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: acme.com\n"
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"), body)
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"), body)
+
+	if _, err := LoadTenantIdps(dir); err == nil {
+		t.Fatal("two tenants claiming one claim matcher was accepted")
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

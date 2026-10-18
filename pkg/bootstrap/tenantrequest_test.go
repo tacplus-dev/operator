@@ -124,6 +124,53 @@ func TestApproveTenantCreatesTheShip(t *testing.T) {
 	}
 }
 
+// TestApproveTenantRendersClaimMatcherRule: a Captain-filed request has no
+// providers and one claim matcher on a shared cluster IdP. Approval appends
+// the (issuer, claim) rule even though the hand rule already names that
+// issuer, and adds no issuer-only rule for the shared issuer.
+func TestApproveTenantRendersClaimMatcherRule(t *testing.T) {
+	dir := approveTestDir(t, true)
+	writeTestFile(t, TenantRequestPath(dir, "beta"),
+		"providers: []\nclaim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: beta.example\n")
+
+	if err := ApproveTenant(dir, "beta"); err != nil {
+		t.Fatalf("ApproveTenant: %v", err)
+	}
+
+	rego := fileText(t, filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego"))
+	if !strings.Contains(rego, handRule) {
+		t.Errorf("approval dropped the hand-written rule:\n%s", rego)
+	}
+	want := "namespace := \"/tenants/beta\" if {\n\tinput.claims.origin_iss == \"https://accounts.google.com\"\n\tinput.claims[\"hd\"] == \"beta.example\"\n}"
+	if !strings.Contains(rego, want) {
+		t.Errorf("namespace.rego missing claim rule:\n%s\n\ngot:\n%s", want, rego)
+	}
+	if strings.Contains(rego, "\tinput.claims.origin_iss == \"https://accounts.google.com\"\n}") {
+		t.Errorf("a shared cluster issuer got an issuer-only rule:\n%s", rego)
+	}
+}
+
+// TestApproveTenantRefusesClaimMatcherOnIssuerOnlyIssuer: an issuer-only rule
+// would match the claim-matched tenant's callers too, and two complete rules
+// with different values fail at eval, so approval refuses and writes nothing.
+func TestApproveTenantRefusesClaimMatcherOnIssuerOnlyIssuer(t *testing.T) {
+	dir := approveTestDir(t, true)
+	regoPath := filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego")
+	writeTestFile(t, regoPath, tenantNamespaceRegoHeader+issuerNamespaceRule(TenantIdp{
+		IssuerURL: "https://accounts.google.com", TenantNamespace: "/tenants/acme",
+	})+tenantNamespaceRegoFooter)
+	regoBefore := fileText(t, regoPath)
+	writeTestFile(t, TenantRequestPath(dir, "beta"),
+		"claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: beta.example\n")
+
+	if err := ApproveTenant(dir, "beta"); err == nil || !strings.Contains(err.Error(), "issuer-only") {
+		t.Fatalf("ApproveTenant error = %v, want one containing %q", err, "issuer-only")
+	}
+	if got := fileText(t, regoPath); got != regoBefore {
+		t.Errorf("namespace.rego changed:\n%s", got)
+	}
+}
+
 // TestApproveTenantWithoutOPADirOrIdp: a request with no providers is a
 // tenant with no IdP yet, and a config dir with no services/opa gets its policy
 // generated at deploy time, so approval creates no policy directory.
