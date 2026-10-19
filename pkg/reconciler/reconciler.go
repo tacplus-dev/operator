@@ -298,6 +298,10 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		r.log.Warn("failed to prune stale deployments", zap.Error(err))
 	}
 
+	if err := r.replaceStuckOldRevisionPods(ctx, r.namespace()); err != nil {
+		r.log.Warn("failed to replace pods stuck on an old statefulset revision", zap.Error(err))
+	}
+
 	r.log.Info("reconcile complete", zap.Int("files", len(charts.Files)))
 	return nil
 }
@@ -1026,6 +1030,90 @@ func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) e
 		}
 	}
 	return nil
+}
+
+// stuckWaitingReasons are the container Waiting reasons that mean a pod will
+// never become Ready on its own, as opposed to one that is merely starting.
+var stuckWaitingReasons = map[string]bool{
+	"CrashLoopBackOff":           true,
+	"ImagePullBackOff":           true,
+	"ErrImagePull":               true,
+	"CreateContainerConfigError": true,
+}
+
+// replaceStuckOldRevisionPods deletes a pod stuck on an old StatefulSet
+// revision so the StatefulSet controller recreates it from the current one.
+//
+// This is Kubernetes' "forced rollback" gap (defect #15): under OrderedReady
+// pod management and the RollingUpdate strategy, a StatefulSet never replaces
+// a pod that is crash-looping on an old revision, so a fixed template is never
+// rolled out past it. Only an unready pod off the update revision with a
+// container stuck in one of stuckWaitingReasons is deleted, at most one per
+// StatefulSet per reconcile; OrderedReady keeps protecting the rest.
+func (r *Reconciler) replaceStuckOldRevisionPods(ctx context.Context, ns string) error {
+	var stList appsv1.StatefulSetList
+	if err := r.client.List(ctx, &stList, &client.ListOptions{Namespace: ns}); err != nil {
+		return fmt.Errorf("listing statefulsets: %w", err)
+	}
+
+	for i := range stList.Items {
+		st := &stList.Items[i]
+		if st.Annotations[helmReleaseNameAnnotation] != releaseName || st.Annotations[helmReleaseNamespaceAnnotation] != ns {
+			continue
+		}
+		updateRevision := st.Status.UpdateRevision
+		if updateRevision == "" {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(st.Spec.Selector)
+		if err != nil {
+			return fmt.Errorf("statefulset %s selector: %w", st.Name, err)
+		}
+
+		var pods corev1.PodList
+		if err := r.client.List(ctx, &pods, &client.ListOptions{Namespace: ns, LabelSelector: selector}); err != nil {
+			return fmt.Errorf("listing pods of statefulset %s: %w", st.Name, err)
+		}
+		for j := range pods.Items {
+			pod := &pods.Items[j]
+			revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
+			if revision == updateRevision || pod.DeletionTimestamp != nil || podReady(pod) || !podStuck(pod) {
+				continue
+			}
+			r.log.Info("deleting pod stuck on an old StatefulSet revision so it is recreated from the update revision",
+				zap.String("namespace", ns),
+				zap.String("statefulset", st.Name),
+				zap.String("pod", pod.Name),
+				zap.String("old_revision", revision),
+				zap.String("new_revision", updateRevision),
+			)
+			if err := r.client.Delete(ctx, pod); err != nil {
+				return fmt.Errorf("deleting pod %s: %w", pod.Name, err)
+			}
+			break
+		}
+	}
+	return nil
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func podStuck(pod *corev1.Pod) bool {
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, cs := range statuses {
+			if cs.State.Waiting != nil && stuckWaitingReasons[cs.State.Waiting.Reason] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // inClusterGetter implements action.RESTClientGetter using the in-cluster

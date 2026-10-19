@@ -54,10 +54,12 @@ rules:
   # <service>-pod-reader Role above if it holds get itself, and the
   # harness-chaos Role (pods delete by name, D27) if it holds delete. Delete
   # adds no reach: the operator already deletes the StatefulSets that own them.
+  # The reconciler also lists pods (through its cache, hence watch) to delete
+  # one stuck crash-looping on an old StatefulSet revision (defect #15).
   - apiGroups: [""]
     resources:
       - pods
-    verbs: ["get", "delete"]
+    verbs: ["get", "list", "watch", "delete"]
 
   # Leader election.
   - apiGroups: ["coordination.k8s.io"]

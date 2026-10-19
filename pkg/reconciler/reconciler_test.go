@@ -1206,3 +1206,101 @@ func TestRunDoesNotPollTheRegistryForADigestPinnedFleet(t *testing.T) {
 		})
 	}
 }
+
+// stuckRevisionTestStatefulSet is immutableTestStatefulSet mid-rollout: the
+// controller has recorded revision B as the one pods should run.
+func stuckRevisionTestStatefulSet() *appsv1.StatefulSet {
+	st := immutableTestStatefulSet()
+	st.Status.CurrentRevision = "kernel-a"
+	st.Status.UpdateRevision = "kernel-b"
+	return st
+}
+
+// stuckRevisionTestPod is a kernel pod on revision, ready or not, whose one
+// container waits with reason ("" for a running container).
+func stuckRevisionTestPod(name, revision string, ready bool, reason string) *corev1.Pod {
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+	cs := corev1.ContainerStatus{Name: "kernel", Ready: ready}
+	if reason != "" {
+		cs.State.Waiting = &corev1.ContainerStateWaiting{Reason: reason}
+	} else {
+		cs.State.Running = &corev1.ContainerStateRunning{}
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "schematic",
+			Labels: map[string]string{
+				"app":                                 "kernel",
+				appsv1.ControllerRevisionHashLabelKey: revision,
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions:        []corev1.PodCondition{{Type: corev1.PodReady, Status: readyStatus}},
+			ContainerStatuses: []corev1.ContainerStatus{cs},
+		},
+	}
+}
+
+func remainingPodNames(t *testing.T, cl client.Client) []string {
+	t.Helper()
+	var pods corev1.PodList
+	if err := cl.List(context.Background(), &pods, &client.ListOptions{Namespace: "schematic"}); err != nil {
+		t.Fatalf("listing pods: %v", err)
+	}
+	names := make([]string, 0, len(pods.Items))
+	for _, p := range pods.Items {
+		names = append(names, p.Name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// Defect #15: under OrderedReady + RollingUpdate a StatefulSet never replaces
+// a pod crash-looping on an old revision, so the fixed template sits unapplied
+// until someone deletes the pod. Only a stuck, unready, old-revision pod goes.
+func TestReplaceStuckOldRevisionPods(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  *corev1.Pod
+		want []string
+	}{
+		{"old revision crash-looping", stuckRevisionTestPod("kernel-2", "kernel-a", false, "CrashLoopBackOff"), []string{}},
+		{"old revision but ready", stuckRevisionTestPod("kernel-2", "kernel-a", true, ""), []string{"kernel-2"}},
+		{"old revision still starting", stuckRevisionTestPod("kernel-2", "kernel-a", false, "ContainerCreating"), []string{"kernel-2"}},
+		{"update revision crash-looping", stuckRevisionTestPod("kernel-2", "kernel-b", false, "CrashLoopBackOff"), []string{"kernel-2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cl := fake.NewClientBuilder().WithScheme(immutableTestScheme(t)).WithObjects(stuckRevisionTestStatefulSet(), tc.pod).Build()
+			r := &Reconciler{client: cl, log: zap.NewNop()}
+
+			if err := r.replaceStuckOldRevisionPods(context.Background(), "schematic"); err != nil {
+				t.Fatalf("replacing stuck pods: %v", err)
+			}
+			if got := remainingPodNames(t, cl); !slices.Equal(got, tc.want) {
+				t.Fatalf("remaining pods = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// One pod per StatefulSet per reconcile: the StatefulSet controller recreates
+// it on the update revision, and OrderedReady gates the rest behind it.
+func TestReplaceStuckOldRevisionPodsDeletesOnePodPerCall(t *testing.T) {
+	cl := fake.NewClientBuilder().WithScheme(immutableTestScheme(t)).WithObjects(
+		stuckRevisionTestStatefulSet(),
+		stuckRevisionTestPod("kernel-1", "kernel-a", false, "CrashLoopBackOff"),
+		stuckRevisionTestPod("kernel-2", "kernel-a", false, "ImagePullBackOff"),
+	).Build()
+	r := &Reconciler{client: cl, log: zap.NewNop()}
+
+	if err := r.replaceStuckOldRevisionPods(context.Background(), "schematic"); err != nil {
+		t.Fatalf("replacing stuck pods: %v", err)
+	}
+	if got := remainingPodNames(t, cl); len(got) != 1 {
+		t.Fatalf("remaining pods = %v, want exactly one of the two stuck pods deleted", got)
+	}
+}
