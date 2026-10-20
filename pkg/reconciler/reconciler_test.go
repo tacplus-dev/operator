@@ -388,6 +388,13 @@ func stalePendingReleaseStorage(t *testing.T, revisions ...*helmrelease.Release)
 	}
 }
 
+// completedRevision is a revision an upgrade completed and a later one superseded.
+func completedRevision(version int, lastDeployed time.Time) *helmrelease.Release {
+	rel := releaseRevision(version, helmrelease.StatusSuperseded, lastDeployed)
+	rel.Info.Description = "Upgrade complete"
+	return rel
+}
+
 func releaseRevision(version int, status helmrelease.Status, lastDeployed time.Time) *helmrelease.Release {
 	return &helmrelease.Release{
 		Name:      releaseName,
@@ -414,7 +421,7 @@ func TestRecoverStalePendingReleaseWithoutDeployedRevision(t *testing.T) {
 	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
 	cfg := stalePendingReleaseStorage(t,
 		releaseRevision(1, helmrelease.StatusSuperseded, stale),
-		releaseRevision(2, helmrelease.StatusSuperseded, stale),
+		completedRevision(2, stale),
 		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
 	)
 
@@ -468,13 +475,14 @@ func TestRecoverStalePendingReleaseWithoutAnyPriorRevision(t *testing.T) {
 	}
 }
 
-// The only predecessor being failed rather than superseded (an install that failed, then
-// an upgrade attempt that also died) must still be a valid rollback target.
-func TestRecoverStalePendingReleaseWithFailedPredecessor(t *testing.T) {
+// A failed predecessor never completed, so it is not a state to return to. Recovery
+// refuses and leaves the release pending rather than reaching further back.
+func TestRecoverStalePendingReleaseRefusesFailedPredecessor(t *testing.T) {
 	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
 	cfg := stalePendingReleaseStorage(t,
-		releaseRevision(1, helmrelease.StatusFailed, stale),
-		releaseRevision(2, helmrelease.StatusPendingUpgrade, stale),
+		completedRevision(1, stale),
+		releaseRevision(2, helmrelease.StatusFailed, stale),
+		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
 	)
 
 	latest, err := cfg.Releases.Last(releaseName)
@@ -482,38 +490,25 @@ func TestRecoverStalePendingReleaseWithFailedPredecessor(t *testing.T) {
 		t.Fatalf("reading latest revision: %v", err)
 	}
 
-	target, err := rollbackTargetRevision(cfg, latest)
-	if err != nil {
-		t.Fatalf("picking rollback target with a failed predecessor: %v", err)
-	}
-	if target.Version != 1 {
-		t.Fatalf("expected failed revision 1 to be the rollback target, got %d", target.Version)
-	}
-
 	recovered, err := recoverStalePendingRelease(cfg, latest, zap.NewNop())
-	if err != nil {
-		t.Fatalf("recovering stale pending release: %v", err)
+	if err == nil || recovered {
+		t.Fatalf("recoverStalePendingRelease = (%v, %v), want a refusal", recovered, err)
 	}
-	if !recovered {
-		t.Fatal("expected stale pending release to be recovered")
-	}
-
-	deployed, err := cfg.Releases.Deployed(releaseName)
-	if err != nil {
-		t.Fatalf("reading deployed revision after recovery: %v", err)
-	}
-	if deployed.Version != 3 {
-		t.Fatalf("expected rollback to create revision 3, got %d", deployed.Version)
+	if after, err := cfg.Releases.Last(releaseName); err != nil || after.Version != 3 {
+		t.Fatalf("expected the release left at pending revision 3, got %v (%v)", after, err)
 	}
 }
 
-// Newest-first candidate selection still holds once failed revisions are eligible.
-func TestRollbackTargetRevisionPrefersNewestCandidate(t *testing.T) {
+// Dev, 2026-10-20: revision 48 still read deployed a week after later upgrades had
+// completed, and recovery of pending 56 rolled back to it instead of to 55. The target
+// is the completed revision immediately before the pending one, whatever older
+// revisions claim.
+func TestRollbackTargetRevisionIgnoresStaleDeployedRevision(t *testing.T) {
 	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
 	cfg := stalePendingReleaseStorage(t,
-		releaseRevision(1, helmrelease.StatusSuperseded, stale),
-		releaseRevision(2, helmrelease.StatusFailed, stale),
-		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
+		releaseRevision(48, helmrelease.StatusDeployed, stale),
+		completedRevision(55, stale),
+		releaseRevision(56, helmrelease.StatusPendingUpgrade, stale),
 	)
 
 	latest, err := cfg.Releases.Last(releaseName)
@@ -525,8 +520,30 @@ func TestRollbackTargetRevisionPrefersNewestCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("picking rollback target: %v", err)
 	}
-	if target.Version != 2 {
-		t.Fatalf("expected revision 2 to be the rollback target, got %d", target.Version)
+	if target.Version != 55 {
+		t.Fatalf("expected revision 55 to be the rollback target, got %d", target.Version)
+	}
+}
+
+// Helm can leave a failed upgrade's revision superseded (dev revision 58: superseded,
+// "Upgrade ... failed: ..."). Its status alone does not make it a completed revision.
+func TestRollbackTargetRevisionRefusesSupersededFailure(t *testing.T) {
+	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
+	failed := releaseRevision(2, helmrelease.StatusSuperseded, stale)
+	failed.Info.Description = `Upgrade "schematic" failed: timed out`
+	cfg := stalePendingReleaseStorage(t,
+		releaseRevision(1, helmrelease.StatusDeployed, stale),
+		failed,
+		releaseRevision(3, helmrelease.StatusPendingUpgrade, stale),
+	)
+
+	latest, err := cfg.Releases.Last(releaseName)
+	if err != nil {
+		t.Fatalf("reading latest revision: %v", err)
+	}
+
+	if target, err := rollbackTargetRevision(cfg, latest); err == nil {
+		t.Fatalf("expected a refusal, got rollback target %d", target.Version)
 	}
 }
 
@@ -1076,7 +1093,7 @@ func TestRecoverStalePendingReleaseOfAnotherRelease(t *testing.T) {
 	const name = "schematic-operator"
 	stale := time.Now().Add(-StalePendingReleaseAge - time.Minute)
 	revisions := []*helmrelease.Release{
-		releaseRevision(1, helmrelease.StatusSuperseded, stale),
+		completedRevision(1, stale),
 		releaseRevision(2, helmrelease.StatusPendingUpgrade, stale),
 	}
 	for _, rel := range revisions {

@@ -526,40 +526,56 @@ func uninstallStalePendingRelease(latest *helmrelease.Release, cfg *action.Confi
 var errNoRollbackTarget = errors.New("release has no prior revision to roll back to")
 
 // rollbackTargetRevision picks the revision a stale pending release should be rolled
-// back to. Normally that is the current deployed revision, but Helm marks the previous
-// revision superseded as soon as an upgrade starts, so an upgrade that dies before the
-// new revision reaches deployed leaves the release with no deployed revision at all. In
-// that case fall back to the most recent superseded or failed revision older than the
-// stuck one — a failed predecessor's chart and values are still a real previously
-// attempted revision, and Helm's rollback accepts any prior revision regardless of its
-// terminal status. With no prior revision at all it returns errNoRollbackTarget.
+// back to: the revision immediately before the stuck one, and only if that revision
+// completed. It must not be found by status alone. Helm marks the previous revision
+// superseded as soon as an upgrade starts, a failed upgrade can leave its own revision
+// superseded, and an upgrade only supersedes the one revision it replaced, so an older
+// revision can keep status deployed indefinitely — on dev that made recovery roll the
+// operator back a week, to revision 48, instead of to 55. Rather than reach past the
+// immediate predecessor, recovery refuses and leaves the release for a human. With no
+// prior revision at all it returns errNoRollbackTarget.
 func rollbackTargetRevision(cfg *action.Configuration, latest *helmrelease.Release) (*helmrelease.Release, error) {
-	deployed, err := cfg.Releases.Deployed(latest.Name)
-	if err == nil {
-		return deployed, nil
+	history, err := cfg.Releases.History(latest.Name)
+	if err != nil {
+		return nil, fmt.Errorf("querying release history: %w", err)
 	}
 
-	history, historyErr := cfg.Releases.History(latest.Name)
-	if historyErr != nil {
-		return nil, fmt.Errorf("no deployed revision (%v); querying release history: %w", err, historyErr)
-	}
-
-	var target *helmrelease.Release
+	var previous *helmrelease.Release
 	for _, rel := range history {
 		if rel.Info == nil || rel.Version >= latest.Version {
 			continue
 		}
-		if rel.Info.Status != helmrelease.StatusSuperseded && rel.Info.Status != helmrelease.StatusFailed {
-			continue
-		}
-		if target == nil || rel.Version > target.Version {
-			target = rel
+		if previous == nil || rel.Version > previous.Version {
+			previous = rel
 		}
 	}
-	if target == nil {
+	if previous == nil {
 		return nil, errNoRollbackTarget
 	}
-	return target, nil
+	if previous.Version != latest.Version-1 {
+		return nil, fmt.Errorf("revision %d, immediately before the pending one, is missing from history (newest older revision is %d)",
+			latest.Version-1, previous.Version)
+	}
+	if !revisionCompleted(previous) {
+		return nil, fmt.Errorf("revision %d, immediately before the pending one, did not complete (%s: %q); refusing to roll back further",
+			previous.Version, previous.Info.Status, previous.Info.Description)
+	}
+	return previous, nil
+}
+
+// revisionCompleted reports whether a revision was ever applied successfully: it is the
+// deployed one, or it was superseded after Helm recorded it complete. A superseded
+// revision whose description records a failure never completed.
+func revisionCompleted(rel *helmrelease.Release) bool {
+	switch rel.Info.Status {
+	case helmrelease.StatusDeployed:
+		return true
+	case helmrelease.StatusSuperseded:
+		d := rel.Info.Description
+		return d == "Install complete" || d == "Upgrade complete" || strings.HasPrefix(d, "Rollback to ")
+	default:
+		return false
+	}
 }
 
 func isStalePendingRelease(rel *helmrelease.Release, now time.Time) (bool, time.Duration) {
