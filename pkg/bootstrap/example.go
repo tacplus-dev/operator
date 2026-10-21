@@ -576,24 +576,18 @@ func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, names
 // fails closed. Only the broker kind is set here — everything else about who may
 // attest a login is still kernel's Delegate record, not this map.
 //
-// oauth brokers an IdP-validated login and a mail-link proof that kernel
-// itself issued and spends. personalauth brokers a DEVICE
+// oauth brokers an IdP-validated login. personalauth brokers a DEVICE
 // proof: a device-held key registering and logging itself in, for a PERSONAL
 // principal that has no tenant IdP. It is deliberately NOT given "idp" as well
 // — a broker gets exactly the kinds it is built to verify.
-//
-// The map is authoritative for the services it names: an existing delegate for
-// one of them is reconciled to exactly these kinds on every run, so a kind added
-// here reaches deployments created before it, and a kind removed here is taken
-// away. Delegates of services not named here keep whatever kinds they carry.
 var authBrokerKinds = map[string][]string{
-	"oauth":        {"idp", "email_link"},
+	"oauth":        {"idp"},
 	"personalauth": {"device"},
 }
 
-// authBrokerKindsFor returns the auth_broker_kinds a delegate for svc carries.
-// Nil for every service that is not an auth broker, which is the fail-closed
-// default.
+// authBrokerKindsFor returns the auth_broker_kinds a newly created delegate for
+// svc starts with. Nil for every service that is not an auth broker, which is
+// the fail-closed default.
 // The slice is copied: the returned value is stored on a delegate that later
 // code may append to, and the map's own slice must not be the backing array.
 func authBrokerKindsFor(svc string) []string {
@@ -669,14 +663,6 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 				kernelCfg.Delegates[idx].AuthorizedServices = required
 				changed = true
 			}
-			// An auth broker's kinds are reconciled the same way: a kind the
-			// broker gained after its delegate was written must reach it, or
-			// kernel refuses that kind of login with PermissionDenied.
-			if kinds, broker := authBrokerKinds[svc]; broker &&
-				!sameServiceSet(kernelCfg.Delegates[idx].AuthBrokerKinds, kinds) {
-				kernelCfg.Delegates[idx].AuthBrokerKinds = authBrokerKindsFor(svc)
-				changed = true
-			}
 			// Backfill the Kubernetes service-account matcher if absent, and
 			// resync its namespace if present but stale (idempotent either way).
 			//
@@ -749,10 +735,9 @@ func newServiceDelegate(cfg *protoOperator.Config, inst ServiceInstance, require
 	}
 }
 
-// sameServiceSet reports whether two authorized_services (or auth_broker_kinds)
-// lists carry the same set of names, ignoring order. Used so reconciling a
-// delegate that is already correct — but written in a different order by an
-// older generate — is not
+// sameServiceSet reports whether two authorized_services lists carry the same
+// set of names, ignoring order. Used so reconciling a delegate that is already
+// correct — but written in a different order by an older generate — is not
 // reported as a change. A differing length counts as different, which is what
 // cleans up a list carrying a duplicate entry.
 func sameServiceSet(a, b []string) bool {

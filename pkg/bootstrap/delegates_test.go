@@ -438,10 +438,10 @@ func TestEnsureServiceDelegatesAppServiceGetsBroker(t *testing.T) {
 }
 
 // TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind verifies that a newly
-// created oauth delegate declares AUTH_BROKER_KIND_IDP and
-// AUTH_BROKER_KIND_EMAIL_LINK. Kernel's MintUserToken refuses a delegate whose
-// auth_broker_kinds does not contain the request's kind, so a generated cluster
-// whose broker delegate lacks one cannot log anyone in that way.
+// created oauth delegate declares AUTH_BROKER_KIND_IDP. Kernel's
+// MintUserToken refuses a delegate whose auth_broker_kinds does not contain the
+// request's kind, so a generated cluster whose broker delegate lacks it cannot
+// log anyone in.
 func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
 	dir := t.TempDir()
 	kernelPath := setupKernelYAML(t, dir, nil)
@@ -450,7 +450,6 @@ func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
 			GatewayNodes: 1,
-			OauthNodes:   1,
 		},
 	}
 
@@ -458,12 +457,10 @@ func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	foundOauth := false
 	for _, d := range loadDelegates(t, kernelPath) {
 		want := []string(nil)
 		if d.Name == "oauth" {
-			foundOauth = true
-			want = []string{"idp", "email_link"}
+			want = []string{"idp"}
 		}
 		if len(d.AuthBrokerKinds) != len(want) {
 			t.Errorf("delegate %q auth_broker_kinds = %v, want %v",
@@ -477,126 +474,6 @@ func TestEnsureServiceDelegatesGivesAuthBrokersTheIdpKind(t *testing.T) {
 				break
 			}
 		}
-	}
-	if !foundOauth {
-		t.Fatal("oauth delegate not found; the assertion above would pass vacuously")
-	}
-}
-
-// TestEnsureServiceDelegatesReconcilesExistingBrokerKinds pins the upgrade
-// path: a kernel.yaml written before oauth brokered mail-link sign-in carries
-// oauth auth_broker_kinds [idp]. The broker kinds were only ever applied on
-// delegate creation, so every existing deployment kept [idp] and kernel refused
-// every mail-link MintUserToken with PermissionDenied. An existing broker
-// delegate must be reconciled to exactly its kinds, while personalauth keeps
-// [device] and a non-broker delegate keeps whatever kinds it was given.
-func TestEnsureServiceDelegatesReconcilesExistingBrokerKinds(t *testing.T) {
-	dir := t.TempDir()
-	kernelPath := setupKernelYAML(t, dir, []SourceDelegate{
-		{Name: "oauth", AuthorizedServices: []string{"kernel"}, AuthBrokerKinds: []string{"idp"}},
-		{Name: "personalauth", AuthorizedServices: []string{"kernel"}, AuthBrokerKinds: []string{"device"}},
-		{Name: "gateway", AuthorizedServices: []string{"kernel"}, AuthBrokerKinds: []string{"idp"}},
-	})
-
-	cfg := &protoOperator.Config{
-		Topology: &protoOperator.Topology{
-			KernelNodes:       1,
-			GatewayNodes:      1,
-			OauthNodes:        1,
-			PersonalauthNodes: 1,
-		},
-		OptionalServices: &protoOperator.OptionalServices{
-			Personalauth: true,
-		},
-	}
-
-	before, err := os.ReadFile(kernelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureServiceDelegates(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	after, err := os.ReadFile(kernelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) == string(after) {
-		t.Fatal("kernel.yaml was not rewritten")
-	}
-
-	want := map[string][]string{
-		"oauth":        {"idp", "email_link"},
-		"personalauth": {"device"},
-		"gateway":      {"idp"},
-	}
-	for _, d := range loadDelegates(t, kernelPath) {
-		kinds, ok := want[d.Name]
-		if !ok {
-			continue
-		}
-		delete(want, d.Name)
-		if !sameServiceSet(d.AuthBrokerKinds, kinds) {
-			t.Errorf("delegate %q auth_broker_kinds = %v, want %v", d.Name, d.AuthBrokerKinds, kinds)
-		}
-	}
-	for name := range want {
-		t.Errorf("delegate %q not found", name)
-	}
-}
-
-// TestEnsureServiceDelegatesReorderedBrokerKindsIsNotAChange is the idempotent
-// half: an oauth delegate already carrying exactly its kinds, in a different
-// order than authBrokerKinds lists them, must not be reported as changed —
-// otherwise every generate would rewrite kernel.yaml forever.
-func TestEnsureServiceDelegatesReorderedBrokerKindsIsNotAChange(t *testing.T) {
-	dir := t.TempDir()
-	kernelPath := setupKernelYAML(t, dir, nil)
-
-	cfg := &protoOperator.Config{
-		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			GatewayNodes: 1,
-			OauthNodes:   1,
-		},
-	}
-
-	// The first run writes every delegate in its reconciled shape; only the
-	// order of oauth's kinds is then changed by hand.
-	if err := EnsureServiceDelegates(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	kernelCfg, err := LoadKernelSourceConfig(kernelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundOauth := false
-	for i := range kernelCfg.Delegates {
-		if kernelCfg.Delegates[i].Name == "oauth" {
-			foundOauth = true
-			kernelCfg.Delegates[i].AuthBrokerKinds = []string{"email_link", "idp"}
-		}
-	}
-	if !foundOauth {
-		t.Fatal("oauth delegate not found")
-	}
-	data, err := yaml.Marshal(kernelCfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(kernelPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := EnsureServiceDelegates(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	after, err := os.ReadFile(kernelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(after) {
-		t.Fatalf("already-correct kernel.yaml was rewritten:\n--- before ---\n%s\n--- after ---\n%s", data, after)
 	}
 }
 
