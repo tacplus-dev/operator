@@ -78,6 +78,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
+		{"stratum-search", dc.StratumSearchConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},

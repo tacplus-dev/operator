@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -562,25 +563,32 @@ func TestStratumSearchNodesRenderAVolumeLessWorkload(t *testing.T) {
 		}
 	}
 
-	// It IS stratum: same identity to kernel, same config, so no ServiceAccount and
-	// no config key of its own. A second ServiceAccount object named "stratum" is a
-	// duplicate resource, and one named "stratum-search" is a principal kernel has
-	// never heard of.
+	// It IS stratum to kernel: same identity, so no ServiceAccount of its own. A
+	// second ServiceAccount object named "stratum" is a duplicate resource, and one
+	// named "stratum-search" is a principal kernel has never heard of.
 	if !strings.Contains(ss, "serviceAccountName: stratum\n") {
 		t.Errorf("search pods must run as stratum's service account\n--- statefulset ---\n%s", ss)
 	}
 	if _, ok := charts.Files["templates/stratum-search/serviceaccount.yaml"]; ok {
 		t.Error("the search workload emitted a ServiceAccount of its own")
 	}
+	// But a config of its own: the writers' carries disk_persistence when the
+	// archive is on, and a search member has no volume to persist to.
 	for i := range 3 {
 		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum-search/configmap-%d.yaml", i))
-		if !strings.Contains(cm, `index .Values "stratum" "config"`) {
-			t.Errorf("search configmap-%d must read stratum's config\n--- configmap ---\n%s", i, cm)
+		if !strings.Contains(cm, `index .Values "stratum-search" "config"`) {
+			t.Errorf("search configmap-%d must read stratum-search's config\n--- configmap ---\n%s", i, cm)
+		}
+		if !strings.Contains(ss, fmt.Sprintf(`checksum/config-%d: {{ index .Values "stratum-search" "config" | sha256sum | quote }}`, i)) {
+			t.Errorf("search statefulset checksum/config-%d must hash stratum-search's config\n--- statefulset ---\n%s", i, ss)
 		}
 	}
 	values := chartFile(t, charts, "values.yaml")
 	if !strings.Contains(values, "stratum-search:") {
 		t.Errorf("values.yaml has no stratum-search entry, so its image is unresolvable\n--- values.yaml ---\n%s", values)
+	}
+	if !regexp.MustCompile(`\nstratum-search:\n  image: [^\n]+\n  config: ""\n`).MatchString(values) {
+		t.Errorf("values.yaml has no stratum-search config placeholder\n--- values.yaml ---\n%s", values)
 	}
 	if strings.Contains(values, "stratum-search:\n  image: {{ .Image }}") {
 		t.Errorf("values.yaml did not render the search image\n--- values.yaml ---\n%s", values)

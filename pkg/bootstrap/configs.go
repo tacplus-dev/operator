@@ -77,6 +77,9 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
 		serviceFiles["stratum"] = dc.StratumConfig
 	}
+	if len(dc.StratumSearchConfig) > 0 && t.GetStratumSearchNodes() > 0 {
+		serviceFiles["stratum-search"] = dc.StratumSearchConfig
+	}
 	if len(dc.KmakerConfig) > 0 && t.KmakerNodes > 0 {
 		serviceFiles["kmaker"] = dc.KmakerConfig
 	}

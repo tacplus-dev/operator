@@ -19,6 +19,7 @@ import (
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
 	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
@@ -43,6 +44,7 @@ type DeployConfigs struct {
 	OauthConfig              []byte
 	OpaConfig                []byte
 	StratumConfig            []byte
+	StratumSearchConfig      []byte
 	KmakerConfig             []byte
 	LetsencryptConfig        []byte
 	BlobstoreConfig          []byte
@@ -476,9 +478,33 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		return nil, err
 	}
 
-	stratumConfigYAML, err := buildSvc("stratum", nil)
+	// disk_persistence (and with it the archive) is a bootstrap setting, so the
+	// writers get it here, verbatim from operator.yaml, when it is set.
+	var stratumExtra func(map[string]any)
+	if dp := cfg.GetStratumDiskPersistence(); dp != nil {
+		dpYAML, err := protoDiskstore.DiskPersistenceConfigToYAML(dp)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling stratum disk_persistence: %w", err)
+		}
+		var dpMap map[string]any
+		if err := yaml.Unmarshal(dpYAML, &dpMap); err != nil {
+			return nil, fmt.Errorf("unmarshaling stratum disk_persistence YAML: %w", err)
+		}
+		stratumExtra = func(f map[string]any) { f["disk_persistence"] = dpMap }
+	}
+	stratumConfigYAML, err := buildSvc("stratum", stratumExtra)
 	if err != nil {
 		return nil, err
+	}
+
+	// The search members get the plain stratum bootstrap, never the writers':
+	// they have no volume for disk_persistence.dir to point at.
+	var stratumSearchConfigYAML []byte
+	if cfg.GetTopology().GetStratumSearchNodes() > 0 {
+		stratumSearchConfigYAML, err = buildSvc("stratum", nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
@@ -576,6 +602,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		OauthConfig:              oauthConfigYAML,
 		OpaConfig:                opaConfigYAML,
 		StratumConfig:            stratumConfigYAML,
+		StratumSearchConfig:      stratumSearchConfigYAML,
 		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		BlobstoreConfig:          blobstoreConfigYAML,
@@ -766,6 +793,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
+		{"stratum-search", dc.StratumSearchConfig},
 		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},

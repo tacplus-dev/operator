@@ -104,6 +104,7 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
+		{"stratum-search", dc.StratumSearchConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 		{"operator", dc.OperatorBootstrapConfig},

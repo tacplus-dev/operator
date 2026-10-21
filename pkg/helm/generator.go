@@ -571,12 +571,13 @@ type serviceSpec struct {
 	// OF, rather than a service of its own. Set on stratum-search, and on nothing
 	// else.
 	//
-	// A search member is stratum: same image, same config, same identity to kernel.
-	// So it reuses that service's ServiceAccount (and therefore the identity kernel
-	// resolves by TokenReview) and that service's values.yaml config key, and this
-	// workload emits no ServiceAccount or RBAC objects of its own — a second object
-	// with the same name is a duplicate resource helm refuses, and a service account
-	// of its own would be a principal kernel has never heard of.
+	// A search member is stratum: same image, same identity to kernel. So it reuses
+	// that service's ServiceAccount (and therefore the identity kernel resolves by
+	// TokenReview), and this workload emits no ServiceAccount or RBAC objects of its
+	// own — a second object with the same name is a duplicate resource helm
+	// refuses, and a service account of its own would be a principal kernel has
+	// never heard of. Its config is its own (values key = its name): the writers'
+	// can carry disk_persistence, and a search member has no volume.
 	SharesServiceIdentityWith string
 	// TenantInstance marks one tenant's instance of a tenant-owned service
 	// ("<svc>-<tenant>"), pinned or not. It decides the instance's pool.
@@ -1125,9 +1126,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 	}
 
-	// stratum's SEARCH members: the same image and the same config, joining the same
-	// Hazelcast cluster with the member attribute stratum.role=search, and with NO
-	// volume.
+	// stratum's SEARCH members: the same image and the writers' config without
+	// disk_persistence, joining the same Hazelcast cluster with the member attribute
+	// stratum.role=search, and with NO volume.
 	//
 	// A search member holds partitions and answers the parallel scatter-gather a
 	// predicate query is, and persists nothing: no redo log, no record index, no
@@ -1420,9 +1421,7 @@ var valuesTmpl = template.Must(template.New("values").Parse(`global:
 {{- range .Services }}
 {{ .Name }}:
   image: {{ .Image }}
-{{- if not .SharesServiceIdentityWith }}
   config: ""
-{{- end }}
 {{- if .HasPVC }}
   storage: {{ .Storage }}
 {{- end }}
@@ -1467,12 +1466,6 @@ func valuesRef(key, field string) string {
 func configValueKey(svc serviceSpec, i int) string {
 	if svc.PerReplicaConfig {
 		return fmt.Sprintf("%s%d", svc.Name, i)
-	}
-	// A second workload of another service reads that service's config: the bundle
-	// supplies one entry per SERVICE, and stratum's search members run the same
-	// binary against the same config as its writers.
-	if svc.SharesServiceIdentityWith != "" {
-		return svc.SharesServiceIdentityWith
 	}
 	return svc.Name
 }
