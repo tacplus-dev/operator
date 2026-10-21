@@ -181,8 +181,9 @@ func AddDelegate(kernelPath, service, targetService string, claims map[string]st
 }
 
 // WriteServices creates the services/ directory with skeleton config files.
-// Existing files are not overwritten.
-func WriteServices(cfgDir string) error {
+// Existing files are not overwritten. redirectPrefix seeds the example oauth
+// provider's allowed_redirect_uri_prefixes.
+func WriteServices(cfgDir, redirectPrefix string) error {
 	servicesDir := filepath.Join(cfgDir, "services")
 	if err := os.MkdirAll(servicesDir, 0755); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
@@ -202,12 +203,13 @@ func WriteServices(cfgDir string) error {
 	keyB64 := base64.StdEncoding.EncodeToString(keyBytes)
 
 	kernelContent := fmt.Sprintf(exampleKernelYAMLTemplate, certB64, keyB64)
+	oauthContent := fmt.Sprintf(exampleOauthYAMLTemplate, redirectPrefix)
 
 	files := map[string]string{
 		"kernel.yaml":   kernelContent,
 		"gateway.yaml":  exampleGatewayYAML,
 		"eventbus.yaml": exampleEventbusYAML,
-		"oauth.yaml":    exampleOauthYAML,
+		"oauth.yaml":    oauthContent,
 		"opa.yaml":      exampleOpaYAML,
 	}
 
@@ -834,7 +836,9 @@ controller_count: 1
 broker_count: 1
 `
 
-const exampleOauthYAML = `# OAuth service configuration.
+// exampleOauthYAMLTemplate is a format string with %s for the provider's
+// allowed redirect URI prefix.
+const exampleOauthYAMLTemplate = `# OAuth service configuration.
 # Unified auth broker: browser OAuth (OIDC) + CLI/device token delivery.
 # Edit these, then run: schematic-operator generate
 enable: true
@@ -851,6 +855,8 @@ providers:
     issuer: https://accounts.google.com
     client_id: YOUR_GOOGLE_CLIENT_ID
     client_secret: YOUR_GOOGLE_CLIENT_SECRET
+    allowed_redirect_uri_prefixes:
+      - %s
     scopes:
       - openid
       - profile

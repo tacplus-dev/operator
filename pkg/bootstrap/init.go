@@ -327,9 +327,10 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("generating gateway external TLS: %w", err)
 	}
 
-	// Write services/ — idempotent per file (skips existing files).
+	// Write services/ — idempotent per file (skips existing files). The
+	// console sends its origin + "/" as the OAuth callback_url.
 	fmt.Println("Writing services/...")
-	if err := WriteServices(dir); err != nil {
+	if err := WriteServices(dir, Issuer(cfg)+"/"); err != nil {
 		return err
 	}
 
