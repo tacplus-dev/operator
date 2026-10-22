@@ -291,3 +291,94 @@ func TestApproveTenantWritesExactlyTheNewTenantsDelegates(t *testing.T) {
 		t.Errorf("approval added %+v, want generate's delegate %+v", added, *want)
 	}
 }
+
+// syncTestDir is approveTestDir with acme's provider rules already in
+// namespace.rego and a second tenant, beta, approved with an email_domain
+// matcher on Google — the state an existing cluster is in before one of its
+// tenants gains a claim matcher.
+func syncTestDir(t *testing.T) string {
+	t.Helper()
+	dir := approveTestDir(t, true)
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules: %v", err)
+	}
+	writeTestFile(t, TenantRequestPath(dir, "beta"),
+		"providers: []\nclaim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: beta.example\n")
+	if err := ApproveTenant(dir, "beta"); err != nil {
+		t.Fatalf("ApproveTenant: %v", err)
+	}
+	return dir
+}
+
+// acmeOAuth is acme's oauth.yaml from approveTestDir plus claimMatchers.
+func acmeOAuth(claimMatchers string) string {
+	return "providers:\n  - enable: true\n    issuer_url: https://idp.acme.example\n    client_id: acme-web\n    client_secret: s\n" + claimMatchers
+}
+
+// TestSyncTenantRulesAppendsNewClaimMatcher: an existing tenant's new
+// email_domain matcher is appended as exactly its claim rule; everything the
+// file held — hand-written rules and the tenant's own provider rules — stays
+// byte-for-byte, and a second run changes nothing.
+func TestSyncTenantRulesAppendsNewClaimMatcher(t *testing.T) {
+	dir := syncTestDir(t)
+	regoPath := filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego")
+	regoBefore := fileText(t, regoPath)
+	if !strings.Contains(regoBefore, handRule) {
+		t.Fatalf("fixture lost the hand-written rule:\n%s", regoBefore)
+	}
+	writeTestFile(t, filepath.Join(TenantConfigDir(dir, "acme"), "oauth.yaml"),
+		acmeOAuth("claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: acme.example\n"))
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules: %v", err)
+	}
+	want := regoBefore + claimNamespaceRule(TenantIdp{
+		IssuerURL: "https://accounts.google.com", ClaimKey: "email_domain", ClaimValue: "acme.example",
+		TenantNamespace: "/tenants/acme",
+	})
+	regoAfter := fileText(t, regoPath)
+	if regoAfter != want {
+		t.Fatalf("namespace.rego =\n%s\n\nwant\n%s", regoAfter, want)
+	}
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("second SyncTenantRules: %v", err)
+	}
+	if got := fileText(t, regoPath); got != regoAfter {
+		t.Errorf("second run changed namespace.rego:\n%s", got)
+	}
+}
+
+// TestSyncTenantRulesRefusesAndChangesNothing: every refusal leaves
+// namespace.rego as it was.
+func TestSyncTenantRulesRefusesAndChangesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name, tenant, claimMatchers, wantErr string
+	}{
+		{"public mail domain", "acme",
+			"claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: gmail.com\n",
+			"public mail domain"},
+		{"domain routed to another tenant", "acme",
+			"claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: beta.example\n",
+			"claimed by both"},
+		{"hd of another tenant's email_domain", "acme",
+			"claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: beta.example\n",
+			"claimed by both"},
+		{"unknown tenant", "nobody", "", "not a tenant"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := syncTestDir(t)
+			writeTestFile(t, filepath.Join(TenantConfigDir(dir, "acme"), "oauth.yaml"), acmeOAuth(tc.claimMatchers))
+			regoPath := filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego")
+			regoBefore := fileText(t, regoPath)
+
+			err := SyncTenantRules(dir, tc.tenant)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("SyncTenantRules error = %v, want one containing %q", err, tc.wantErr)
+			}
+			if got := fileText(t, regoPath); got != regoBefore {
+				t.Errorf("namespace.rego changed:\n%s", got)
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -117,6 +118,51 @@ func ApproveTenant(cfgDir, tenant string) error {
 		return err
 	}
 	return os.WriteFile(kernelPath, kernelYAML, 0644)
+}
+
+var syncTenantRulesCmd = &cobra.Command{
+	Use:   "sync-tenant-rules <name>",
+	Short: "Append an existing tenant's oauth.yaml routing to namespace.rego",
+	Long: `Brings services/opa/tenants/namespace.rego up to date with
+tenants/<name>/oauth.yaml for a tenant operator.yaml already lists: each of
+its providers and claim_matchers renders the rule approve-tenant would append,
+and only the rules the file does not already hold are appended. Hand-written
+rules are left as they are, and running it again changes nothing.
+
+Every tenant's oauth.yaml is checked first, exactly as deploy checks it; a
+public mail domain, or an IdP or domain another tenant claims, is refused and
+the file is left unchanged.
+
+Example:
+  schematic-operator sync-tenant-rules acme`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := SyncTenantRules(resolveConfigDir(), args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("Namespace rules for tenant %s are up to date.\n", args[0])
+		fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
+		return nil
+	},
+}
+
+// SyncTenantRules appends the namespace rules tenants/<tenant>/oauth.yaml
+// declares that services/opa/tenants/namespace.rego does not hold yet. tenant
+// must already be listed in operator.yaml; new tenants go through
+// ApproveTenant.
+func SyncTenantRules(cfgDir, tenant string) error {
+	cfg, err := LoadConfig(cfgDir)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(cfg.GetTenants(), tenant) {
+		return fmt.Errorf("%q is not a tenant of this cluster", tenant)
+	}
+	idps, err := loadTenantIdps(cfgDir, cfg.GetTenants())
+	if err != nil {
+		return err
+	}
+	return appendTenantNamespaceRules(cfgDir, tenant, idps)
 }
 
 // ApproveTenantRecords approves every tenant kernel's ConfigState records as
@@ -318,6 +364,9 @@ func validateNewTenant(cfg *protoOperator.Config, tenant string) error {
 // mention already, so its claim rule is refused only when the file holds an
 // issuer-only rule for that issuer: both would match the tenant's callers.
 //
+// A rule the file already holds byte-for-byte is skipped, so appending the
+// same tenant's rules again changes nothing.
+//
 // A config dir without services/opa has nothing to append to: its policy is
 // generated at deploy time from LoadTenantIdps, which already includes tenant.
 func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
@@ -338,16 +387,24 @@ func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 			continue
 		}
 		if idp.ClaimKey != "" {
+			rule := claimNamespaceRule(idp)
+			if strings.Contains(string(existing), rule) {
+				continue
+			}
 			if strings.Contains(string(existing), fmt.Sprintf("\tinput.claims.origin_iss == %q\n}", idp.IssuerURL)) {
 				return fmt.Errorf("issuer %s has an issuer-only rule in %s; bind %s by hand", idp.IssuerURL, path, ns)
 			}
-			rules.WriteString(claimNamespaceRule(idp))
+			rules.WriteString(rule)
+			continue
+		}
+		rule := exactNamespaceRule(idp)
+		if strings.Contains(string(existing), rule) {
 			continue
 		}
 		if strings.Contains(string(existing), fmt.Sprintf("%q", idp.IssuerURL)) {
 			return fmt.Errorf("issuer %s already appears in %s; bind it to %s by hand", idp.IssuerURL, path, ns)
 		}
-		rules.WriteString(exactNamespaceRule(idp))
+		rules.WriteString(rule)
 		issuers[idp.IssuerURL] = true
 	}
 	for _, idp := range idps {
