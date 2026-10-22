@@ -354,51 +354,22 @@ default eval := {"token_entitlements": {}}
 # there is no fallback to the cluster root. An issuer this policy cannot name a
 # tenant for therefore cannot log in, which is the point.
 
-# The grants below name only services the platform actually ships. An earlier
-# version of this generator granted MCP_ANY, ANTHROPIC_ANY, GITHUB_ANY,
-# GITLAB_ANY and OPENAI_ANY -- all application services that have since left the
-# platform -- which meant the ` + "`user`" + ` role, whose entire grant set was
-# OPENAI_ANY + ANTHROPIC_ANY, resolved to nothing usable at all. That was fixed
-# by hand in the generated output but never here, so regenerating reintroduced
-# the broken set. Keep this list and the shipped service set in step.
+# This is the PLATFORM fallback, used only when a config dir ships no
+# services/opa/ of its own. It names no application package: the operator is
+# built against one app's catalog, and a fallback that granted that app's
+# packages (it once granted testapp's ECHO_ANY/TASKS_ANY/QUERY_ANY, none of which
+# exist in sonar's catalog) hands out symbols that expand to nothing elsewhere.
+# An application ships its own services/opa/main.rego with its user grants
+# (sonar/backend/bootstrap/services/opa/main.rego). Without one, only admin gets
+# anything, and that is kernel's administrative surface.
 
-# admin — full access, including kernel's administrative surface.
+# admin — kernel's administrative surface.
 eval := {"namespace": tenants.namespace, "token_entitlements": {
 	"grants": [
-		"ECHO_ANY",
-		"TASKS_ANY",
-		"QUERY_ANY",
 		"KERNEL_ANY",
 	],
 }} if {
 	roles["admin"]
-}
-
-# prod / user — everything the shipped webapp needs EXCEPT kernel.
-#
-# Both seeded groups land here. The distinction that matters is kernel: it is
-# the cluster's administrative surface and its own token-minting authority, so a
-# non-admin does not get it. QUERY_ANY sits with the data-plane grants rather
-# than with kernel: the record plane is the record of truth that every query
-# enters through, and its protection is egress redaction plus server-pinned
-# predicates, not RPC-level denial. A record type added to the plane needs no new
-# grant -- QUERY_ANY already covers the RPCs the trait generates over it -- so
-# this list scales with services, never with application types.
-#
-# QUERY_ANY, not STRATUM_ANY: since BIG GOAL 3 item 16 the record query plane is
-# a TRAIT (testapp/proto/vservices/query.proto), so its grants are keyed on the
-# contract rather than on the service that hosts it. STRATUM_* is no longer in
-# the generated catalog at all, and the test below is what would have caught it.
-eval := {"namespace": tenants.namespace, "token_entitlements": {
-	"grants": [
-		"ECHO_ANY",
-		"TASKS_ANY",
-		"QUERY_ANY",
-	],
-}} if {
-	some role in {"prod", "user"}
-	roles[role]
-	not roles["admin"]
 }
 `
 
