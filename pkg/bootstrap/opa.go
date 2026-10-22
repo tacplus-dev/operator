@@ -119,6 +119,9 @@ type TenantIdp struct {
 // only when the IdP marks that email verified.
 const emailDomainClaimKey = "email_domain"
 
+// hdClaimKey is Google's hosted-domain claim, present for Workspace users.
+const hdClaimKey = "hd"
+
 // publicMailDomains are consumer mail domains no tenant can claim through an
 // email_domain matcher: anyone can sign up for an address there, so the claim
 // says nothing about which organisation the user belongs to.
@@ -157,6 +160,10 @@ func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 	// would render a policy OPA rejects at eval time, so reject it here.
 	seen := map[[2]string]string{}
 	seenMatchers := map[[3]string]string{}
+	// Keyed by (issuer, domain) across the hd and email_domain claims: a
+	// Workspace user carries both for their own domain, so hd=X in one tenant
+	// and email_domain=X in another would match that user to both.
+	seenDomains := map[[2]string]string{}
 	var out []TenantIdp
 	for _, tenant := range tenants {
 		path := filepath.Join(TenantConfigDir(cfgDir, tenant), "oauth.yaml")
@@ -201,6 +208,14 @@ func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 			}
 			if m.GetProviderIssuerUrl() == "" || m.GetClaimKey() == "" || m.GetClaimValue() == "" {
 				continue
+			}
+			if k := m.GetClaimKey(); k == hdClaimKey || k == emailDomainClaimKey {
+				dkey := [2]string{m.GetProviderIssuerUrl(), m.GetClaimValue()}
+				if prev, ok := seenDomains[dkey]; ok && prev != ns {
+					return nil, fmt.Errorf("domain %s on %s is claimed by both %s and %s (hd or email_domain)",
+						dkey[1], dkey[0], prev, ns)
+				}
+				seenDomains[dkey] = ns
 			}
 			key := [3]string{m.GetProviderIssuerUrl(), m.GetClaimKey(), m.GetClaimValue()}
 			if prev, ok := seenMatchers[key]; ok {

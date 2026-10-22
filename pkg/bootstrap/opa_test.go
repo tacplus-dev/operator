@@ -357,6 +357,32 @@ func TestEmailDomainMatcherAcrossTenants(t *testing.T) {
 	}
 }
 
+// hd=X in one tenant and email_domain=X in another on the same issuer would
+// match a Workspace user of X to both, so it is refused; one tenant may carry
+// both.
+func TestHdAndEmailDomainMatcherAcrossTenants(t *testing.T) {
+	hd := "claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: acme.com\n"
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"), hd)
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
+		emailDomainMatcher("https://accounts.google.com", "acme.com"))
+	if _, err := LoadTenantIdps(dir); err == nil || !strings.Contains(err.Error(), "claimed by both") {
+		t.Fatalf("LoadTenantIdps error = %v, want one containing %q", err, "claimed by both")
+	}
+
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+		hd+"  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: acme.com\n")
+	idps, err := LoadTenantIdps(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantIdps: %v", err)
+	}
+	if len(idps) != 2 {
+		t.Fatalf("LoadTenantIdps = %+v, want both of acme's matchers", idps)
+	}
+}
+
 // A company email_domain matcher loads and renders its (issuer, claim) rule.
 func TestTenantNamespaceRuleForEmailDomain(t *testing.T) {
 	dir := t.TempDir()
