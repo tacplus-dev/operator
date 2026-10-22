@@ -306,6 +306,82 @@ func TestDuplicateClaimMatcherAcrossTenantsIsRejected(t *testing.T) {
 	}
 }
 
+// emailDomainMatcher is an oauth.yaml claiming one email_domain on issuer.
+func emailDomainMatcher(issuer, domain string) string {
+	return "claim_matchers:\n  - provider_issuer_url: " + issuer + "\n    claim_key: email_domain\n    claim_value: " + domain + "\n"
+}
+
+// An email_domain matcher anyone could satisfy, or one oauth's lowercased
+// claim can never equal, is refused on load.
+func TestUnsafeEmailDomainMatcherIsRejected(t *testing.T) {
+	for _, tc := range []struct{ name, domain, wantErr string }{
+		{"public mail domain", "gmail.com", "public mail domain"},
+		{"uppercase", "Acme.com", "lowercase ASCII"},
+		{"non-ASCII", "acmé.com", "lowercase ASCII"},
+		{"empty", `""`, "lowercase ASCII"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n")
+			writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+				emailDomainMatcher("https://accounts.google.com", tc.domain))
+
+			if _, err := LoadTenantIdps(dir); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("LoadTenantIdps error = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A domain belongs to at most one tenant per issuer; the same domain on a
+// different issuer is a different claim and is allowed.
+func TestEmailDomainMatcherAcrossTenants(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n  - beta\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+		emailDomainMatcher("https://accounts.google.com", "acme.com"))
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
+		emailDomainMatcher("https://accounts.google.com", "acme.com"))
+	if _, err := LoadTenantIdps(dir); err == nil || !strings.Contains(err.Error(), "claimed by both") {
+		t.Fatalf("LoadTenantIdps error = %v, want one containing %q", err, "claimed by both")
+	}
+
+	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
+		emailDomainMatcher("https://login.microsoftonline.com/organizations/v2.0", "acme.com"))
+	idps, err := LoadTenantIdps(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantIdps: %v", err)
+	}
+	if len(idps) != 2 {
+		t.Fatalf("LoadTenantIdps = %+v, want both tenants' matchers", idps)
+	}
+}
+
+// A company email_domain matcher loads and renders its (issuer, claim) rule.
+func TestTenantNamespaceRuleForEmailDomain(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "operator.yaml"), "tenants:\n  - acme\n")
+	writeTestFile(t, filepath.Join(dir, "tenants", "acme", "oauth.yaml"),
+		emailDomainMatcher("https://accounts.google.com", "acme.com"))
+
+	idps, err := LoadTenantIdps(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantIdps: %v", err)
+	}
+	want := []TenantIdp{
+		{IssuerURL: "https://accounts.google.com", ClaimKey: "email_domain", ClaimValue: "acme.com", TenantNamespace: "/tenants/acme"},
+	}
+	if !reflect.DeepEqual(idps, want) {
+		t.Fatalf("LoadTenantIdps = %+v, want %+v", idps, want)
+	}
+
+	rego := bundleFile(t, DefaultOPABundle(nil, idps), "tenants", "namespace.rego")
+	rule := "namespace := \"/tenants/acme\" if {\n\tinput.claims.provider_iss == \"https://accounts.google.com\"\n\tinput.claims[\"email_domain\"] == \"acme.com\"\n}"
+	if !strings.Contains(rego, rule) {
+		t.Errorf("tenants/namespace.rego is missing rule:\n%s\n\ngot:\n%s", rule, rego)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

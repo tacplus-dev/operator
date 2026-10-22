@@ -211,6 +211,9 @@ func TestApproveTenantRefusesAndChangesNothing(t *testing.T) {
 		{"issuer already in namespace.rego", "beta",
 			"providers:\n  - enable: true\n    issuer_url: https://accounts.google.com\n    client_id: beta-web\n    client_secret: s\n",
 			"by hand"},
+		{"public mail domain", "beta",
+			"claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: gmail.com\n",
+			"public mail domain"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := approveTestDir(t, true)

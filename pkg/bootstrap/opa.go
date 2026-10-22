@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoFilesystem "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/filesystem"
@@ -114,6 +115,20 @@ type TenantIdp struct {
 	TenantNamespace string
 }
 
+// emailDomainClaimKey is the claim oauth mints from an id_token's email, and
+// only when the IdP marks that email verified.
+const emailDomainClaimKey = "email_domain"
+
+// publicMailDomains are consumer mail domains no tenant can claim through an
+// email_domain matcher: anyone can sign up for an address there, so the claim
+// says nothing about which organisation the user belongs to.
+var publicMailDomains = map[string]bool{
+	"gmail.com": true, "googlemail.com": true, "icloud.com": true, "me.com": true,
+	"mac.com": true, "outlook.com": true, "hotmail.com": true, "live.com": true,
+	"msn.com": true, "yahoo.com": true, "aol.com": true, "proton.me": true,
+	"protonmail.com": true, "gmx.com": true, "yandex.com": true, "zoho.com": true,
+}
+
 // TenantConfigDir returns the directory holding one tenant's config slices
 // within a config dir.
 func TenantConfigDir(cfgDir, tenant string) string {
@@ -173,6 +188,17 @@ func loadTenantIdps(cfgDir string, tenants []string) ([]TenantIdp, error) {
 			out = append(out, TenantIdp{IssuerURL: key[0], ClientID: key[1], TenantNamespace: ns})
 		}
 		for _, m := range tc.GetClaimMatchers() {
+			// oauth mints email_domain lowercased, so any other spelling never
+			// matches; a public mail domain or an empty one would let anyone in.
+			if v := m.GetClaimValue(); m.GetClaimKey() == emailDomainClaimKey {
+				if v == "" || v != strings.ToLower(v) ||
+					strings.IndexFunc(v, func(r rune) bool { return r > unicode.MaxASCII }) >= 0 {
+					return nil, fmt.Errorf("%s: email_domain claim value %q must be a non-empty lowercase ASCII domain", path, v)
+				}
+				if publicMailDomains[v] {
+					return nil, fmt.Errorf("%s: email_domain %q is a public mail domain and cannot be claimed by a tenant", path, v)
+				}
+			}
 			if m.GetProviderIssuerUrl() == "" || m.GetClaimKey() == "" || m.GetClaimValue() == "" {
 				continue
 			}
