@@ -1,7 +1,9 @@
 package bootstrap
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -406,6 +408,69 @@ func TestTenantNamespaceRuleForEmailDomain(t *testing.T) {
 	if !strings.Contains(rego, rule) {
 		t.Errorf("tenants/namespace.rego is missing rule:\n%s\n\ngot:\n%s", rule, rego)
 	}
+}
+
+// TestDefaultPolicyMakesUnroutedPeopleAPerson: a login from Apple, Google or a
+// Microsoft directory that no tenant routes holds role "person" — kernel mints
+// it a personal token, and without a role its entitlements are empty. A login a
+// tenant routes, or one from any other issuer, does not.
+func TestDefaultPolicyMakesUnroutedPeopleAPerson(t *testing.T) {
+	if _, err := exec.LookPath("opa"); err != nil {
+		t.Skip("opa not on PATH")
+	}
+	dir := t.TempDir()
+	idps := []TenantIdp{{IssuerURL: "https://accounts.google.com", ClaimKey: "email_domain", ClaimValue: "thescottsweb.com", TenantNamespace: "/tenants/scottsweb"}}
+	if err := WriteDefaultOPAPolicy(dir, []string{"https://keycloak.example/realms/acme"}, idps); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		claims map[string]any
+		want   []string
+	}{
+		{"gmail", map[string]any{"origin_iss": "https://accounts.google.com", "provider_iss": "https://accounts.google.com", "email_domain": "gmail.com"}, []string{"person"}},
+		{"apple", map[string]any{"origin_iss": "https://appleid.apple.com", "provider_iss": "https://appleid.apple.com"}, []string{"person"}},
+		{"microsoft directory", map[string]any{"origin_iss": "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0", "provider_iss": "https://login.microsoftonline.com/common/v2.0"}, []string{"person"}},
+		{"microsoft common is no token issuer", map[string]any{"origin_iss": "https://login.microsoftonline.com/common/v2.0"}, []string{}},
+		{"routed into scottsweb", map[string]any{"origin_iss": "https://accounts.google.com", "provider_iss": "https://accounts.google.com", "email_domain": "thescottsweb.com"}, []string{}},
+		{"keycloak", map[string]any{"origin_iss": "https://keycloak.example/realms/unknown"}, []string{}},
+	} {
+		got := opaEval(t, dir, map[string]any{"claims": tc.claims}, "data.entitlements.roles")
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: roles = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// opaEval evaluates query against the policy in dir with input, and returns
+// the value decoded into a []string.
+func opaEval(t *testing.T, dir string, input map[string]any, query string) []string {
+	t.Helper()
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, inputPath, string(data))
+	out, err := exec.Command("opa", "eval", "-f", "json", "-d", dir, "-i", inputPath, query).Output()
+	if err != nil {
+		t.Fatalf("opa eval %s: %v\n%s", query, err, out)
+	}
+	var result struct {
+		Result []struct {
+			Expressions []struct {
+				Value []string `json:"value"`
+			} `json:"expressions"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("decoding opa output %s: %v", out, err)
+	}
+	if len(result.Result) != 1 || len(result.Result[0].Expressions) != 1 {
+		t.Fatalf("opa eval %s: no single result in %s", query, out)
+	}
+	return result.Result[0].Expressions[0].Value
 }
 
 func writeTestFile(t *testing.T, path, content string) {

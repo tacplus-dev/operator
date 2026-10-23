@@ -136,7 +136,8 @@ and only the rules the file does not already hold are appended. A generated
 rule for the tenant that its oauth.yaml no longer renders (say, a claim
 matcher whose provider issuer changed) is removed. services/opa/grants/static.rego
 is synced the same way with the role "user" rule each email_domain claim
-matcher renders. Hand-written rules are left as they are, and running it again
+matcher renders, and gains the role "person" rule (an Apple, Google or
+Microsoft login no tenant routes) if it lacks it. Hand-written rules are left as they are, and running it again
 changes nothing.
 
 Every tenant's oauth.yaml is checked first, exactly as deploy checks it; a
@@ -485,6 +486,10 @@ func renderedRulePattern(ns string) *regexp.Regexp {
 // wins (user's requires not roles["admin"]). Every rendered rule grants the
 // same {"user"}, so two of them matching one caller cannot conflict either.
 //
+// The tenant-independent personRoleRule is appended too when the file lacks
+// it, so a static.rego written before that rule existed gains it on the next
+// approve-tenant or sync-tenant-rules.
+//
 // As with namespace.rego, the file is never regenerated: a rendered rule for
 // tenant its oauth.yaml no longer renders is removed, every other rule stays
 // byte-for-byte, missing rules are appended, and a second run changes nothing.
@@ -516,6 +521,9 @@ func syncTenantRoleRules(cfgDir, tenant string, idps []TenantIdp) error {
 		if !strings.Contains(kept, rule) {
 			updated += rule
 		}
+	}
+	if !strings.Contains(updated, personRoleRule) {
+		updated += personRoleRule
 	}
 	if updated == string(existing) {
 		return nil

@@ -422,6 +422,25 @@ const defaultGrantsRego = `# Static role grants — not derived from IDP claims.
 package entitlements.grants
 
 default roles := set()
+` + personRoleRule
+
+// personRoleRule gives role "person" to a login kernel mints a personal token
+// for: one from Apple, Google or a Microsoft directory that no tenant routes.
+// The issuers are the ones kernel's PeopleTenant.providerForIssuer recognises —
+// a Microsoft token's iss names its directory, never the common endpoint. A
+// person routed into a tenant resolves a namespace, so this rule and the
+// tenant's "user" rules never match the same caller. The application's
+// main.rego decides what the role grants.
+const personRoleRule = `
+# Generated: a verified Apple, Google or Microsoft login no tenant routes is a person.
+roles := {"person"} if {
+	data.entitlements.tenants.namespace == ""
+	people_issuer(input.claims.origin_iss)
+}
+
+people_issuer(iss) if iss in {"https://appleid.apple.com", "https://accounts.google.com"}
+
+people_issuer(iss) if regex.match("^https://login\\.microsoftonline\\.com/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/v2\\.0$", iss)
 `
 
 // tenantNamespaceRegoHeader/Footer bracket the generated (issuer, client_id)

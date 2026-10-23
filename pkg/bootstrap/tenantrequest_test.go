@@ -526,3 +526,30 @@ func TestSyncTenantRulesRemovesStaleUserRoleRules(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncTenantRulesAddsPersonRoleRule: a static.rego from before the person
+// rule existed gains it once on sync; the hand-written rule stays and a second
+// run changes nothing.
+func TestSyncTenantRulesAddsPersonRoleRule(t *testing.T) {
+	dir := approveTestDir(t, true)
+	staticPath := filepath.Join(OPAPolicyDir(dir), "grants", "static.rego")
+	writeTestFile(t, staticPath, "package entitlements.grants\n\ndefault roles := set()\n"+handRoleRule)
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules: %v", err)
+	}
+	after := fileText(t, staticPath)
+	if n := strings.Count(after, `roles := {"person"} if {`); n != 1 {
+		t.Fatalf("static.rego holds %d person rules, want 1:\n%s", n, after)
+	}
+	if !strings.Contains(after, handRoleRule) {
+		t.Errorf("sync dropped the hand-written rule:\n%s", after)
+	}
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("second SyncTenantRules: %v", err)
+	}
+	if got := fileText(t, staticPath); got != after {
+		t.Errorf("second run changed static.rego:\n%s", got)
+	}
+}
