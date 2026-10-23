@@ -4,6 +4,11 @@ language: go
 pkg: com.gitlab.seabeam.schematic.platform.services.operator
 output-dir: .
 src: proto
+# operator composes other services' config, so its proto imports theirs; they come
+# through depends (registry names), not by copying their protos here.
+depends:
+  - oauth
+  - kmaker
 header: |
   Copyright (c) 2026 Jody Scott
   SPDX-License-Identifier: Apache-2.0

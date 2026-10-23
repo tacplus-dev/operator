@@ -9,3 +9,8 @@ the launch fleet unchanged and new-design changes land here.
 
 Divergences: `kind: service`; headers in tacplus.yaml (Jody Scott, Apache-2.0; LICENSE added); `src: proto`;
 `proto/registry.yaml` is a lock of github.com/tacplus-dev/registry.
+
+Known gap (2026-10-23): operator.proto imports other services' protos (see `depends:` in tacplus.yaml), so
+`tacplus registry --proto-dir proto` cannot scan it standalone yet and `proto/registry.yaml` has no entry for
+operator (registry id 47). `tacplus registry` must learn to resolve `depends` when scanning; until then the
+fleet build will refuse operator ("no entry for it in registry.yaml").
