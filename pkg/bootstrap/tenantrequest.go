@@ -47,6 +47,8 @@ var approveTenantCmd = &cobra.Command{
   tenants/<name>/oauth.yaml              the request, moved into place
   services/opa/tenants/namespace.rego    the tenant's IdP → /tenants/<name> rules
                                          appended (only when services/opa exists)
+  services/opa/grants/static.rego        role "user" for each email_domain claim
+                                         matcher appended (likewise)
   services/kernel.yaml                   one delegate per tenant-owned service for
                                          <name>; every other delegate untouched
 
@@ -108,6 +110,9 @@ func ApproveTenant(cfgDir, tenant string) error {
 	if err == nil {
 		err = syncTenantNamespaceRules(cfgDir, tenant, idps)
 	}
+	if err == nil {
+		err = syncTenantRoleRules(cfgDir, tenant, idps)
+	}
 	if err != nil {
 		if rbErr := os.Rename(oauthPath, reqPath); rbErr != nil {
 			return fmt.Errorf("%w (and restoring the request failed: %v)", err, rbErr)
@@ -123,14 +128,16 @@ func ApproveTenant(cfgDir, tenant string) error {
 
 var syncTenantRulesCmd = &cobra.Command{
 	Use:   "sync-tenant-rules <name>",
-	Short: "Sync an existing tenant's oauth.yaml routing into namespace.rego",
+	Short: "Sync an existing tenant's oauth.yaml routing into namespace.rego and static.rego",
 	Long: `Brings services/opa/tenants/namespace.rego up to date with
 tenants/<name>/oauth.yaml for a tenant operator.yaml already lists: each of
 its providers and claim_matchers renders the rule approve-tenant would append,
 and only the rules the file does not already hold are appended. A generated
 rule for the tenant that its oauth.yaml no longer renders (say, a claim
-matcher whose provider issuer changed) is removed. Hand-written rules are left
-as they are, and running it again changes nothing.
+matcher whose provider issuer changed) is removed. services/opa/grants/static.rego
+is synced the same way with the role "user" rule each email_domain claim
+matcher renders. Hand-written rules are left as they are, and running it again
+changes nothing.
 
 Every tenant's oauth.yaml is checked first, exactly as deploy checks it; a
 public mail domain, or an IdP or domain another tenant claims, is refused and
@@ -143,17 +150,17 @@ Example:
 		if err := SyncTenantRules(resolveConfigDir(), args[0]); err != nil {
 			return err
 		}
-		fmt.Printf("Namespace rules for tenant %s are up to date.\n", args[0])
+		fmt.Printf("Namespace and role rules for tenant %s are up to date.\n", args[0])
 		fmt.Printf("Run 'schematic-operator generate' to rebuild.\n")
 		return nil
 	},
 }
 
 // SyncTenantRules makes tenant's generated rules in
-// services/opa/tenants/namespace.rego the ones tenants/<tenant>/oauth.yaml
-// declares: missing rules are appended, stale ones removed. tenant
-// must already be listed in operator.yaml; new tenants go through
-// ApproveTenant.
+// services/opa/tenants/namespace.rego and services/opa/grants/static.rego the
+// ones tenants/<tenant>/oauth.yaml declares: missing rules are appended, stale
+// ones removed. tenant must already be listed in operator.yaml; new tenants go
+// through ApproveTenant.
 func SyncTenantRules(cfgDir, tenant string) error {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
@@ -166,7 +173,10 @@ func SyncTenantRules(cfgDir, tenant string) error {
 	if err != nil {
 		return err
 	}
-	return syncTenantNamespaceRules(cfgDir, tenant, idps)
+	if err := syncTenantNamespaceRules(cfgDir, tenant, idps); err != nil {
+		return err
+	}
+	return syncTenantRoleRules(cfgDir, tenant, idps)
 }
 
 // ApproveTenantRecords approves every tenant kernel's ConfigState records as
@@ -459,4 +469,73 @@ func renderedRulePattern(ns string) *regexp.Regexp {
 		`\tinput\.claims\.origin_iss == ` + quoted + `\n(?:\taud_matches\(` + quoted + `\)\n)?` +
 		`|\tinput\.claims\.provider_iss == ` + quoted + `\n\tinput\.claims\[` + quoted + `\] == ` + quoted + `\n` +
 		`)\}\n`)
+}
+
+// syncTenantRoleRules makes tenant's generated role rules in
+// services/opa/grants/static.rego the ones its oauth.yaml renders: a person an
+// email_domain claim matcher routes into the tenant holds role "user". oauth
+// mints email_domain only from an email the IdP verified, so the approved
+// matcher is the whole grant. admin and owner are never granted here.
+//
+// The rules live in grants, not idp/claims.rego. roles is a complete rule in
+// both packages, and claims.rego's hand-written per-person rules
+// (roles := {"admin"}) match people a domain also matches; two complete rules
+// with different values fail at eval. main.rego unions idp.roles with
+// grants.roles, so such a person holds {"admin", "user"} and admin's eval
+// wins (user's requires not roles["admin"]). Every rendered rule grants the
+// same {"user"}, so two of them matching one caller cannot conflict either.
+//
+// As with namespace.rego, the file is never regenerated: a rendered rule for
+// tenant its oauth.yaml no longer renders is removed, every other rule stays
+// byte-for-byte, missing rules are appended, and a second run changes nothing.
+func syncTenantRoleRules(cfgDir, tenant string, idps []TenantIdp) error {
+	if _, err := os.Stat(OPAPolicyDir(cfgDir)); os.IsNotExist(err) {
+		return nil
+	}
+	path := filepath.Join(OPAPolicyDir(cfgDir), "grants", "static.rego")
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	ns := tenantNamespacePrefix + tenant
+	var rendered []string
+	for _, idp := range idps {
+		if idp.TenantNamespace == ns && idp.ClaimKey == emailDomainClaimKey {
+			rendered = append(rendered, userRoleRule(idp))
+		}
+	}
+	kept := renderedRoleRulePattern(ns).ReplaceAllStringFunc(string(existing), func(rule string) string {
+		if slices.Contains(rendered, rule) {
+			return rule
+		}
+		return ""
+	})
+	updated := kept
+	for _, rule := range rendered {
+		if !strings.Contains(kept, rule) {
+			updated += rule
+		}
+	}
+	if updated == string(existing) {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(updated), 0); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// userRoleRule is the role rule for an email_domain claim matcher. The comment
+// names the tenant's namespace, so sync can tell the tenant's rules apart.
+func userRoleRule(idp TenantIdp) string {
+	return fmt.Sprintf("\n# Generated: a verified %s address routed into %s is a user.\nroles := {\"user\"} if {\n\tinput.claims.provider_iss == %q\n\tinput.claims[%q] == %q\n}\n",
+		idp.ClaimValue, idp.TenantNamespace, idp.IssuerURL, idp.ClaimKey, idp.ClaimValue)
+}
+
+// renderedRoleRulePattern matches a role rule userRoleRule renders for ns.
+func renderedRoleRulePattern(ns string) *regexp.Regexp {
+	const quoted = `"(?:[^"\\\n]|\\.)*"`
+	return regexp.MustCompile(`\n# Generated: a verified \S+ address routed into ` + regexp.QuoteMeta(ns) + ` is a user\.\n` +
+		`roles := \{"user"\} if \{\n\tinput\.claims\.provider_iss == ` + quoted + `\n\tinput\.claims\["email_domain"\] == ` + quoted + `\n\}\n`)
 }

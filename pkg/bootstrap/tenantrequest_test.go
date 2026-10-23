@@ -17,13 +17,21 @@ namespace := "/tenants/acme" if {
 }
 `
 
+// handRoleRule is a hand-written role grant in grants/static.rego; generated
+// role rules must leave it alone.
+const handRoleRule = `
+roles := {"ci"} if {
+	input.claims.sub == "ci-bot"
+}
+`
+
 // operatorComment stands for the hand-written history operator.yaml carries;
 // approval must not strip it.
 const operatorComment = "# why the tenants are what they are\n"
 
 // approveTestDir is a config dir with one tenant, acme, a tenant-owned dog,
-// and — when withOPA — a services/opa policy whose namespace.rego carries a
-// hand-written rule.
+// and — when withOPA — a services/opa policy whose namespace.rego and
+// grants/static.rego each carry a hand-written rule.
 func approveTestDir(t *testing.T, withOPA bool) string {
 	t.Helper()
 	withRegistry(t, registryMarking([]string{"dog"}, nil))
@@ -36,6 +44,7 @@ func approveTestDir(t *testing.T, withOPA bool) string {
 	if withOPA {
 		writeTestFile(t, filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego"),
 			tenantNamespaceRegoHeader+handRule+tenantNamespaceRegoFooter)
+		writeTestFile(t, filepath.Join(OPAPolicyDir(dir), "grants", "static.rego"), defaultGrantsRego+handRoleRule)
 	}
 	return dir
 }
@@ -428,5 +437,92 @@ func TestSyncTenantRulesRefusesAndChangesNothing(t *testing.T) {
 				t.Errorf("namespace.rego changed:\n%s", got)
 			}
 		})
+	}
+}
+
+// wantUserRoleRule is the role rule an email_domain matcher on issuer for domain
+// renders for ns, spelled out so a change to its shape is a test change.
+func wantUserRoleRule(ns, issuer, domain string) string {
+	return "\n# Generated: a verified " + domain + " address routed into " + ns + " is a user.\n" +
+		"roles := {\"user\"} if {\n\tinput.claims.provider_iss == \"" + issuer + "\"\n\tinput.claims[\"email_domain\"] == \"" + domain + "\"\n}\n"
+}
+
+// TestApproveTenantGrantsUserForEmailDomain: approving a tenant with an
+// email_domain matcher appends its user role rule to grants/static.rego and
+// leaves the hand-written grant alone; an hd matcher grants no role.
+func TestApproveTenantGrantsUserForEmailDomain(t *testing.T) {
+	dir := approveTestDir(t, true)
+	writeTestFile(t, TenantRequestPath(dir, "beta"),
+		"providers: []\nclaim_matchers:\n"+
+			"  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: beta.example\n"+
+			"  - provider_issuer_url: https://accounts.google.com\n    claim_key: hd\n    claim_value: beta-hd.example\n")
+
+	if err := ApproveTenant(dir, "beta"); err != nil {
+		t.Fatalf("ApproveTenant: %v", err)
+	}
+
+	got := fileText(t, filepath.Join(OPAPolicyDir(dir), "grants", "static.rego"))
+	want := defaultGrantsRego + handRoleRule + wantUserRoleRule("/tenants/beta", "https://accounts.google.com", "beta.example")
+	if got != want {
+		t.Errorf("static.rego =\n%s\n\nwant\n%s", got, want)
+	}
+}
+
+// TestSyncTenantRulesGrantsUserForEmailDomain: an existing tenant's new
+// email_domain matcher appends its user role rule; beta's and the hand-written
+// rule stay byte-for-byte, and a second run changes nothing.
+func TestSyncTenantRulesGrantsUserForEmailDomain(t *testing.T) {
+	dir := syncTestDir(t)
+	staticPath := filepath.Join(OPAPolicyDir(dir), "grants", "static.rego")
+	before := fileText(t, staticPath)
+	if want := defaultGrantsRego + handRoleRule + wantUserRoleRule("/tenants/beta", "https://accounts.google.com", "beta.example"); before != want {
+		t.Fatalf("fixture static.rego =\n%s\n\nwant\n%s", before, want)
+	}
+	writeTestFile(t, filepath.Join(TenantConfigDir(dir, "acme"), "oauth.yaml"),
+		acmeOAuth("claim_matchers:\n  - provider_issuer_url: https://accounts.google.com\n    claim_key: email_domain\n    claim_value: acme.example\n"))
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules: %v", err)
+	}
+	after := fileText(t, staticPath)
+	if want := before + wantUserRoleRule("/tenants/acme", "https://accounts.google.com", "acme.example"); after != want {
+		t.Fatalf("static.rego =\n%s\n\nwant\n%s", after, want)
+	}
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("second SyncTenantRules: %v", err)
+	}
+	if got := fileText(t, staticPath); got != after {
+		t.Errorf("second run changed static.rego:\n%s", got)
+	}
+}
+
+// TestSyncTenantRulesRemovesStaleUserRoleRules: a matcher moved from the
+// Microsoft organizations endpoint to common leaves only the common role rule
+// for acme, and dropping the matcher drops acme's role rule; beta's and the
+// hand-written rule stay byte-for-byte throughout.
+func TestSyncTenantRulesRemovesStaleUserRoleRules(t *testing.T) {
+	dir := syncTestDir(t)
+	staticPath := filepath.Join(OPAPolicyDir(dir), "grants", "static.rego")
+	before := fileText(t, staticPath)
+	const organizations = "https://login.microsoftonline.com/organizations/v2.0"
+	const common = "https://login.microsoftonline.com/common/v2.0"
+	oauthPath := filepath.Join(TenantConfigDir(dir, "acme"), "oauth.yaml")
+	matcher := func(issuer string) string {
+		return "claim_matchers:\n  - provider_issuer_url: " + issuer + "\n    claim_key: email_domain\n    claim_value: acme.example\n"
+	}
+
+	for _, step := range []struct{ oauth, want string }{
+		{acmeOAuth(matcher(organizations)), before + wantUserRoleRule("/tenants/acme", organizations, "acme.example")},
+		{acmeOAuth(matcher(common)), before + wantUserRoleRule("/tenants/acme", common, "acme.example")},
+		{acmeOAuth(""), before},
+	} {
+		writeTestFile(t, oauthPath, step.oauth)
+		if err := SyncTenantRules(dir, "acme"); err != nil {
+			t.Fatalf("SyncTenantRules: %v", err)
+		}
+		if got := fileText(t, staticPath); got != step.want {
+			t.Fatalf("static.rego =\n%s\n\nwant\n%s", got, step.want)
+		}
 	}
 }
