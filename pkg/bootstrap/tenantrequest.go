@@ -247,24 +247,67 @@ func ApproveTenantRecords(cfgDir string, state *protoKernel.ConfigState) ([]stri
 	return approved, errors.Join(errs...)
 }
 
-// withTenantDelegates returns kernel.yaml with a delegate added for each of
-// tenant's tenant-owned service instances in cfg — the delegate generate's
-// EnsureServiceDelegates writes for it — and nothing else changed. generate
-// also reconciles every other delegate to the registry, which is not approval's
-// business. A delegate kernel.yaml already holds for the tenant is kept as is.
+// recordTenants returns, sorted, the tenants kernel's ConfigState records as
+// ACTIVE that cfg does not list, other than kernel's reserved people tenant.
+// These are the tenants Accounts.PromoteAccount makes at runtime; the operator
+// deploys them as it deploys operator.yaml's own, without writing anything for
+// them to the config dir. Sorted because the chart renders tenants in list
+// order and state's order is kernel's map order: unsorted, every pass would
+// render a new chart. A tenant validateNewTenant refuses is left out, and the
+// refusals are returned together without stopping the others.
+func recordTenants(cfg *protoOperator.Config, state *protoKernel.ConfigState) ([]string, error) {
+	listed := make(map[string]bool, len(cfg.GetTenants()))
+	for _, t := range cfg.GetTenants() {
+		listed[t] = true
+	}
+	var tenants []string
+	var errs []error
+	for _, t := range state.GetTenants() {
+		tenant := t.GetName()
+		if t.GetStatus() != protoKernel.TenantStatus_TENANT_STATUS_ACTIVE || tenant == peopleTenant || listed[tenant] {
+			continue
+		}
+		if err := validateNewTenant(cfg, tenant); err != nil {
+			errs = append(errs, fmt.Errorf("tenant %q: %w", tenant, err))
+			continue
+		}
+		tenants = append(tenants, tenant)
+	}
+	slices.Sort(tenants)
+	return tenants, errors.Join(errs...)
+}
+
+// withTenantDelegates returns kernel.yaml with tenant's delegates added
+// (addTenantDelegates) and nothing else changed.
 func withTenantDelegates(kernelPath string, cfg *protoOperator.Config, tenant string) ([]byte, error) {
 	kernelCfg, err := LoadKernelSourceConfig(kernelPath)
 	if err != nil {
 		return nil, err
 	}
+	if err := addTenantDelegates(kernelCfg, cfg, tenant); err != nil {
+		return nil, err
+	}
+	data, err := yaml.Marshal(kernelCfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling kernel config: %w", err)
+	}
+	return data, nil
+}
+
+// addTenantDelegates adds to kernelCfg a delegate for each of tenant's
+// tenant-owned service instances in cfg — the delegate generate's
+// EnsureServiceDelegates writes for it — and changes nothing else. generate
+// also reconciles every other delegate to the registry, which is not approval's
+// business. A delegate kernelCfg already holds for the tenant is kept as is.
+func addTenantDelegates(kernelCfg *KernelSourceConfig, cfg *protoOperator.Config, tenant string) error {
 	RegisterAppServices(AppServiceNames(cfg))
 	sd, err := loadServiceDeps()
 	if err != nil {
-		return nil, fmt.Errorf("loading service dependencies: %w", err)
+		return fmt.Errorf("loading service dependencies: %w", err)
 	}
 	instances, err := DeployedServiceInstances(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("resolving deployed service instances: %w", err)
+		return fmt.Errorf("resolving deployed service instances: %w", err)
 	}
 	existing := make(map[delegateKey]bool, len(kernelCfg.Delegates))
 	for _, d := range kernelCfg.Delegates {
@@ -276,11 +319,7 @@ func withTenantDelegates(kernelPath string, cfg *protoOperator.Config, tenant st
 		}
 		kernelCfg.Delegates = append(kernelCfg.Delegates, newServiceDelegate(cfg, inst, sd.authorizedServicesFor(inst.Service)))
 	}
-	data, err := yaml.Marshal(kernelCfg)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling kernel config: %w", err)
-	}
-	return data, nil
+	return nil
 }
 
 // appendTenantToSettings adds tenant to operator.yaml's tenants list by

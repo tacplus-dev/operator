@@ -1342,7 +1342,7 @@ func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	provider := NewServiceConfigProvider(dir)
+	provider := NewServiceConfigProvider(dir, nil)
 
 	serviceConfig := func(svc string, sc *reconciler.ServiceConfigs) string {
 		entry, ok := sc.Values[svc].(map[string]interface{})

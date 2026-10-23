@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 	"helm.sh/helm/v3/pkg/action"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
@@ -83,6 +84,14 @@ type ServiceConfigs struct {
 	// Values are the per-service Helm values (map of service name →
 	// {"config": yaml-string}). Nil means "no overrides — use chart defaults".
 	Values map[string]interface{}
+	// Tenants are the tenants kernel's ConfigState records that operator.yaml
+	// does not list. The chart renders their tenant-owned instances exactly as
+	// it renders operator.yaml's own tenants'.
+	Tenants []string
+	// RefusedTenants explains the record tenants left out of Tenants because
+	// approve-tenant would refuse them too (say, a name that makes an invalid
+	// Kubernetes object name); nil when none were.
+	RefusedTenants error
 }
 
 // ServiceConfigProvider returns the generated configuration on each reconcile.
@@ -272,21 +281,25 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	}
 	r.log.Info("reconciling", zap.Int("schedulable_nodes", nodeCount), zap.Bool("node_pools", nodePools))
 
-	charts, err := r.generator.Generate(r.cfg, nodeCount, nodePools)
-	if err != nil {
-		return fmt.Errorf("generating charts: %w", err)
-	}
-
+	var sc *ServiceConfigs
 	var svcValues map[string]interface{}
 	if r.configProvider != nil {
-		sc, err := r.configProvider()
+		sc, err = r.configProvider()
 		if err != nil {
 			return fmt.Errorf("building service configs: %w", err)
 		}
 		if sc != nil {
 			svcValues = sc.Values
+			if sc.RefusedTenants != nil {
+				r.log.Warn("kernel tenant records not deployed", zap.Error(sc.RefusedTenants))
+			}
 		}
 		r.log.Info("built service configs", zap.Int("services", len(svcValues)))
+	}
+
+	charts, err := r.generator.Generate(chartConfig(r.cfg, sc), nodeCount, nodePools)
+	if err != nil {
+		return fmt.Errorf("generating charts: %w", err)
 	}
 
 	if err := r.apply(ctx, charts, svcValues); err != nil {
@@ -304,6 +317,17 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 
 	r.log.Info("reconcile complete", zap.Int("files", len(charts.Files)))
 	return nil
+}
+
+// chartConfig is cfg with the tenants sc carries from kernel's records
+// appended, so the chart renders their tenant-owned instances.
+func chartConfig(cfg *protoOperator.Config, sc *ServiceConfigs) *protoOperator.Config {
+	if sc == nil || len(sc.Tenants) == 0 {
+		return cfg
+	}
+	withTenants := proto.Clone(cfg).(*protoOperator.Config)
+	withTenants.Tenants = append(withTenants.Tenants, sc.Tenants...)
+	return withTenants
 }
 
 // schedulableNodeCount returns the number of Ready, non-tainted worker nodes,

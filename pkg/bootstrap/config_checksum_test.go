@@ -79,7 +79,7 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 		t.Fatalf("loading chart: %v", err)
 	}
 
-	provider := NewServiceConfigProvider(dir)
+	provider := NewServiceConfigProvider(dir, nil)
 
 	// Revision one: one delegate.
 	writeSeed(`delegates:
@@ -243,7 +243,7 @@ func TestOauthProviderChangeRollsKernelPods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading chart: %v", err)
 	}
-	provider := NewServiceConfigProvider(dir)
+	provider := NewServiceConfigProvider(dir, nil)
 
 	writeOauth(google)
 	first, err := provider()

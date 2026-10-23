@@ -32,7 +32,7 @@ func BuildConfigOutput(cfgDir string) error {
 		return fmt.Errorf("reading existing configs/kmaker.yaml: %w", err)
 	}
 
-	dc, err := buildDeployConfigs(cfgDir, nil, kmakerTLS)
+	dc, err := buildDeployConfigs(cfgDir, nil, kmakerTLS, nil)
 	if err != nil {
 		return err
 	}

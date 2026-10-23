@@ -286,6 +286,14 @@ func InitOPA(cfgDir string) error {
 
 // BuildKernelConfigProto reads the config directory and assembles the kernel Config proto.
 func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
+	return buildKernelConfigProto(cfgDir, nil)
+}
+
+// buildKernelConfigProto is BuildKernelConfigProto with, in memory, the
+// delegates approve-tenant would write to kernel.yaml for each of
+// recordTenants: tenants kernel's records hold that operator.yaml does not
+// list. kernel.yaml itself is not written.
+func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel.Config, error) {
 	servicesDir := filepath.Join(cfgDir, "services")
 
 	// 1. Load kernel.yaml
@@ -299,6 +307,19 @@ func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
 		opCfg = nil
 	}
 	kubernetesNamespace := operatorKubernetesNamespace(opCfg)
+
+	if len(recordTenants) > 0 {
+		if opCfg == nil {
+			return nil, fmt.Errorf("adding record tenants' delegates: %w", err)
+		}
+		withTenants := proto.Clone(opCfg).(*protoOperator.Config)
+		withTenants.Tenants = append(withTenants.Tenants, recordTenants...)
+		for _, tenant := range recordTenants {
+			if err := addTenantDelegates(kernelCfg, withTenants, tenant); err != nil {
+				return nil, fmt.Errorf("tenant %q: %w", tenant, err)
+			}
+		}
+	}
 
 	// 2. Validate TLS key if present
 	if kernelCfg.TLS != nil && kernelCfg.TLS.Key != "" {

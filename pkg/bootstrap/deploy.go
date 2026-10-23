@@ -65,10 +65,12 @@ type DeployConfigs struct {
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
 // per-service configs, and returns them in a DeployConfigs struct.
 func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
-	return buildDeployConfigs(cfgDir, nil, nil)
+	return buildDeployConfigs(cfgDir, nil, nil, nil)
 }
 
-func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLSOverride *protoX509.X509CertChain) (*DeployConfigs, error) {
+// buildDeployConfigs is BuildDeployConfigs with kernel's delegates extended by
+// recordTenants (see buildKernelConfigProto).
+func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLSOverride *protoX509.X509CertChain, recordTenants []string) (*DeployConfigs, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
@@ -105,7 +107,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 
 	nodeCount := int(t.KernelNodes)
 
-	kernelConfig, err := BuildKernelConfigProto(cfgDir)
+	kernelConfig, err := buildKernelConfigProto(cfgDir, recordTenants)
 	if err != nil {
 		return nil, fmt.Errorf("building kernel config: %w", err)
 	}
@@ -824,7 +826,12 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 // NewServiceConfigProvider returns a reconciler.ServiceConfigProvider that calls
 // BuildDeployConfigs(cfgDir) on each invocation. If cfgDir is empty or the
 // config directory is not yet fully initialized, it returns nil values (no override).
-func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs, error) {
+//
+// records, when non-nil, returns kernel's ConfigState as of this pass. The
+// tenants it records that operator.yaml does not list (recordTenants) get
+// their kernel delegates in memory and come back as ServiceConfigs.Tenants for
+// the chart; nothing is written to the config dir for them.
+func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigState) func() (*reconciler.ServiceConfigs, error) {
 	var pkiCache *protoOperator.PKI
 	// kmaker's serving cert is not part of cfg.Pki, so it is not persisted to
 	// crypto.yaml and LoadConfig never returns it. Cache it here alongside
@@ -835,7 +842,16 @@ func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs,
 		if cfgDir == "" {
 			return nil, nil
 		}
-		dc, err := buildDeployConfigs(cfgDir, pkiCache, kmakerTLSCache)
+		var tenants []string
+		var refused error
+		if records != nil {
+			cfg, err := LoadConfig(cfgDir)
+			if err != nil {
+				return nil, err
+			}
+			tenants, refused = recordTenants(cfg, records())
+		}
+		dc, err := buildDeployConfigs(cfgDir, pkiCache, kmakerTLSCache, tenants)
 		if err != nil {
 			return nil, err
 		}
@@ -854,7 +870,9 @@ func NewServiceConfigProvider(cfgDir string) func() (*reconciler.ServiceConfigs,
 			kmakerTLSCache = tls
 		}
 		return &reconciler.ServiceConfigs{
-			Values: ServiceConfigValues(dc),
+			Values:         ServiceConfigValues(dc),
+			Tenants:        tenants,
+			RefusedTenants: refused,
 		}, nil
 	}
 }
