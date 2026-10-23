@@ -347,7 +347,7 @@ func TestEmailDomainMatcherAcrossTenants(t *testing.T) {
 	}
 
 	writeTestFile(t, filepath.Join(dir, "tenants", "beta", "oauth.yaml"),
-		emailDomainMatcher("https://login.microsoftonline.com/organizations/v2.0", "acme.com"))
+		emailDomainMatcher("https://login.microsoftonline.com/common/v2.0", "acme.com"))
 	idps, err := LoadTenantIdps(dir)
 	if err != nil {
 		t.Fatalf("LoadTenantIdps: %v", err)

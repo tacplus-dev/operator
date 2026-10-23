@@ -349,6 +349,54 @@ func TestSyncTenantRulesAppendsNewClaimMatcher(t *testing.T) {
 	}
 }
 
+// TestSyncTenantRulesReplacesAChangedProviderIssuer: a matcher moved from the
+// Microsoft organizations endpoint to common leaves only the common rule for
+// acme; acme's provider rules, the hand-written rule and beta's rule stay
+// byte-for-byte, and a second run changes nothing.
+func TestSyncTenantRulesReplacesAChangedProviderIssuer(t *testing.T) {
+	dir := syncTestDir(t)
+	regoPath := filepath.Join(OPAPolicyDir(dir), "tenants", "namespace.rego")
+	regoBefore := fileText(t, regoPath)
+	matcher := func(issuer string) string {
+		return "claim_matchers:\n  - provider_issuer_url: " + issuer + "\n    claim_key: email_domain\n    claim_value: acme.example\n"
+	}
+	rule := func(issuer string) string {
+		return claimNamespaceRule(TenantIdp{
+			IssuerURL: issuer, ClaimKey: "email_domain", ClaimValue: "acme.example", TenantNamespace: "/tenants/acme",
+		})
+	}
+	const organizations = "https://login.microsoftonline.com/organizations/v2.0"
+	const common = "https://login.microsoftonline.com/common/v2.0"
+	oauthPath := filepath.Join(TenantConfigDir(dir, "acme"), "oauth.yaml")
+
+	writeTestFile(t, oauthPath, acmeOAuth(matcher(organizations)))
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules (organizations): %v", err)
+	}
+	if got, want := fileText(t, regoPath), regoBefore+rule(organizations); got != want {
+		t.Fatalf("namespace.rego =\n%s\n\nwant\n%s", got, want)
+	}
+
+	writeTestFile(t, oauthPath, acmeOAuth(matcher(common)))
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("SyncTenantRules (common): %v", err)
+	}
+	regoAfter := fileText(t, regoPath)
+	if want := regoBefore + rule(common); regoAfter != want {
+		t.Fatalf("namespace.rego =\n%s\n\nwant\n%s", regoAfter, want)
+	}
+	if strings.Contains(regoAfter, organizations) {
+		t.Errorf("the organizations rule lingers:\n%s", regoAfter)
+	}
+
+	if err := SyncTenantRules(dir, "acme"); err != nil {
+		t.Fatalf("second SyncTenantRules: %v", err)
+	}
+	if got := fileText(t, regoPath); got != regoAfter {
+		t.Errorf("second run changed namespace.rego:\n%s", got)
+	}
+}
+
 // TestSyncTenantRulesRefusesAndChangesNothing: every refusal leaves
 // namespace.rego as it was.
 func TestSyncTenantRulesRefusesAndChangesNothing(t *testing.T) {

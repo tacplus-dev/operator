@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -105,7 +106,7 @@ func ApproveTenant(cfgDir, tenant string) error {
 	tenants := append(append([]string{}, cfg.GetTenants()...), tenant)
 	idps, err := loadTenantIdps(cfgDir, tenants)
 	if err == nil {
-		err = appendTenantNamespaceRules(cfgDir, tenant, idps)
+		err = syncTenantNamespaceRules(cfgDir, tenant, idps)
 	}
 	if err != nil {
 		if rbErr := os.Rename(oauthPath, reqPath); rbErr != nil {
@@ -122,12 +123,14 @@ func ApproveTenant(cfgDir, tenant string) error {
 
 var syncTenantRulesCmd = &cobra.Command{
 	Use:   "sync-tenant-rules <name>",
-	Short: "Append an existing tenant's oauth.yaml routing to namespace.rego",
+	Short: "Sync an existing tenant's oauth.yaml routing into namespace.rego",
 	Long: `Brings services/opa/tenants/namespace.rego up to date with
 tenants/<name>/oauth.yaml for a tenant operator.yaml already lists: each of
 its providers and claim_matchers renders the rule approve-tenant would append,
-and only the rules the file does not already hold are appended. Hand-written
-rules are left as they are, and running it again changes nothing.
+and only the rules the file does not already hold are appended. A generated
+rule for the tenant that its oauth.yaml no longer renders (say, a claim
+matcher whose provider issuer changed) is removed. Hand-written rules are left
+as they are, and running it again changes nothing.
 
 Every tenant's oauth.yaml is checked first, exactly as deploy checks it; a
 public mail domain, or an IdP or domain another tenant claims, is refused and
@@ -146,8 +149,9 @@ Example:
 	},
 }
 
-// SyncTenantRules appends the namespace rules tenants/<tenant>/oauth.yaml
-// declares that services/opa/tenants/namespace.rego does not hold yet. tenant
+// SyncTenantRules makes tenant's generated rules in
+// services/opa/tenants/namespace.rego the ones tenants/<tenant>/oauth.yaml
+// declares: missing rules are appended, stale ones removed. tenant
 // must already be listed in operator.yaml; new tenants go through
 // ApproveTenant.
 func SyncTenantRules(cfgDir, tenant string) error {
@@ -162,7 +166,7 @@ func SyncTenantRules(cfgDir, tenant string) error {
 	if err != nil {
 		return err
 	}
-	return appendTenantNamespaceRules(cfgDir, tenant, idps)
+	return syncTenantNamespaceRules(cfgDir, tenant, idps)
 }
 
 // ApproveTenantRecords approves every tenant kernel's ConfigState records as
@@ -352,10 +356,14 @@ func validateNewTenant(cfg *protoOperator.Config, tenant string) error {
 	return nil
 }
 
-// appendTenantNamespaceRules adds tenant's IdP → namespace rules to
-// services/opa/tenants/namespace.rego. The file is appended to, never
-// regenerated: it carries hand-written rules (Google's per-person binding) that
-// tenants/<name>/oauth.yaml cannot express. An issuer the file already
+// syncTenantNamespaceRules makes tenant's IdP → namespace rules in
+// services/opa/tenants/namespace.rego the ones its oauth.yaml renders. The file
+// is never regenerated: it carries hand-written rules (Google's per-person
+// binding) that tenants/<name>/oauth.yaml cannot express. A rule of a rendered
+// shape (exactNamespaceRule, issuerNamespaceRule, claimNamespaceRule) naming
+// tenant's namespace that tenant no longer renders is removed — a matcher
+// whose provider issuer changed leaves no stale rule behind — and every other
+// rule stays byte-for-byte. Missing rules are appended. An issuer the file already
 // mentions is refused rather than appended, because a second issuer-only rule
 // naming a different namespace makes the policy fail at eval for every caller
 // of that issuer — that edit needs a person.
@@ -364,12 +372,12 @@ func validateNewTenant(cfg *protoOperator.Config, tenant string) error {
 // mention already, so its claim rule is refused only when the file holds an
 // issuer-only rule for that issuer: both would match the tenant's callers.
 //
-// A rule the file already holds byte-for-byte is skipped, so appending the
+// A rule the file already holds byte-for-byte is skipped, so syncing the
 // same tenant's rules again changes nothing.
 //
-// A config dir without services/opa has nothing to append to: its policy is
+// A config dir without services/opa has nothing to sync: its policy is
 // generated at deploy time from LoadTenantIdps, which already includes tenant.
-func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
+func syncTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 	if _, err := os.Stat(OPAPolicyDir(cfgDir)); os.IsNotExist(err) {
 		return nil
 	}
@@ -380,6 +388,25 @@ func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 	}
 
 	ns := tenantNamespacePrefix + tenant
+	rendered := map[string]bool{}
+	for _, idp := range idps {
+		if idp.TenantNamespace != ns {
+			continue
+		}
+		if idp.ClaimKey != "" {
+			rendered[claimNamespaceRule(idp)] = true
+			continue
+		}
+		rendered[exactNamespaceRule(idp)] = true
+		rendered[issuerNamespaceRule(idp)] = true
+	}
+	kept := renderedRulePattern(ns).ReplaceAllStringFunc(string(existing), func(rule string) string {
+		if rendered[rule] {
+			return rule
+		}
+		return ""
+	})
+
 	var rules strings.Builder
 	issuers := map[string]bool{}
 	for _, idp := range idps {
@@ -388,20 +415,20 @@ func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 		}
 		if idp.ClaimKey != "" {
 			rule := claimNamespaceRule(idp)
-			if strings.Contains(string(existing), rule) {
+			if strings.Contains(kept, rule) {
 				continue
 			}
-			if strings.Contains(string(existing), fmt.Sprintf("\tinput.claims.origin_iss == %q\n}", idp.IssuerURL)) {
+			if strings.Contains(kept, fmt.Sprintf("\tinput.claims.origin_iss == %q\n}", idp.IssuerURL)) {
 				return fmt.Errorf("issuer %s has an issuer-only rule in %s; bind %s by hand", idp.IssuerURL, path, ns)
 			}
 			rules.WriteString(rule)
 			continue
 		}
 		rule := exactNamespaceRule(idp)
-		if strings.Contains(string(existing), rule) {
+		if strings.Contains(kept, rule) {
 			continue
 		}
-		if strings.Contains(string(existing), fmt.Sprintf("%q", idp.IssuerURL)) {
+		if strings.Contains(kept, fmt.Sprintf("%q", idp.IssuerURL)) {
 			return fmt.Errorf("issuer %s already appears in %s; bind it to %s by hand", idp.IssuerURL, path, ns)
 		}
 		rules.WriteString(rule)
@@ -414,17 +441,22 @@ func appendTenantNamespaceRules(cfgDir, tenant string, idps []TenantIdp) error {
 		delete(issuers, idp.IssuerURL)
 		rules.WriteString(issuerNamespaceRule(idp))
 	}
-	if rules.Len() == 0 {
+	updated := kept + rules.String()
+	if updated == string(existing) {
 		return nil
 	}
+	if err := os.WriteFile(path, []byte(updated), 0); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", path, err)
-	}
-	if _, err := f.WriteString(rules.String()); err != nil {
-		f.Close()
-		return fmt.Errorf("appending to %s: %w", path, err)
-	}
-	return f.Close()
+// renderedRulePattern matches a namespace rule naming ns in any of the shapes
+// exactNamespaceRule, issuerNamespaceRule and claimNamespaceRule render.
+func renderedRulePattern(ns string) *regexp.Regexp {
+	const quoted = `"(?:[^"\\\n]|\\.)*"`
+	return regexp.MustCompile(`\nnamespace := ` + regexp.QuoteMeta(fmt.Sprintf("%q", ns)) + ` if \{\n(?:` +
+		`\tinput\.claims\.origin_iss == ` + quoted + `\n(?:\taud_matches\(` + quoted + `\)\n)?` +
+		`|\tinput\.claims\.provider_iss == ` + quoted + `\n\tinput\.claims\[` + quoted + `\] == ` + quoted + `\n` +
+		`)\}\n`)
 }

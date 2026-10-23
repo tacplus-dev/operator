@@ -299,7 +299,7 @@ func exactNamespaceRule(idp TenantIdp) string {
 // claimNamespaceRule is the namespace rule matching the cluster IDP AND one
 // claim value. The issuer is the configured provider issuer, which oauth
 // forwards as provider_iss; origin_iss is the token's own iss and differs from
-// it for a per-directory IDP (an Entra `organizations` provider). The oauth
+// it for a per-directory IDP (an Entra `common` provider). The oauth
 // broker forwards a claim that is not a well-known JWT claim under its own
 // name, so input.claims[key] is the IDP's claim (e.g. hd, tid).
 func claimNamespaceRule(idp TenantIdp) string {
