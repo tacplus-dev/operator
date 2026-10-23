@@ -318,6 +318,7 @@ func emailDomainMatcher(issuer, domain string) string {
 func TestUnsafeEmailDomainMatcherIsRejected(t *testing.T) {
 	for _, tc := range []struct{ name, domain, wantErr string }{
 		{"public mail domain", "gmail.com", "public mail domain"},
+		{"apple relay domain", "privaterelay.appleid.com", "public mail domain"},
 		{"uppercase", "Acme.com", "lowercase ASCII"},
 		{"non-ASCII", "acmé.com", "lowercase ASCII"},
 		{"empty", `""`, "lowercase ASCII"},

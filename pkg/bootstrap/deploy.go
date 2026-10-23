@@ -56,9 +56,8 @@ type DeployConfigs struct {
 	// the same shape every other service gets, built from the same kernel
 	// endpoints, trusted CAs and SPIFFE fields. Nothing else generates this file
 	// for it: it is the thing that generates everyone else's. Carries no private
-	// key (bootstrap is a projected k8s token). The operator no longer uses its
-	// kernel identity at runtime — the live opa config push it existed for was
-	// retired 2026-09-24 (the bundle is the only config writer).
+	// key (bootstrap is a projected k8s token). In cluster the operator uses
+	// it to read kernel's tenant records (startKernelConfigState).
 	OperatorBootstrapConfig []byte
 }
 

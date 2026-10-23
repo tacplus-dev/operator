@@ -67,8 +67,8 @@ spec:
         # (pkg/helm/generator.go withKernelServiceAuth). BOOTSTRAP_CONFIG is NOT
         # set here: the operator generates its own chassis bootstrap config at
         # runtime from its PKI and topology and points the env var at it. The
-        # live opa config push this identity was introduced for was retired
-        # 2026-09-24.
+        # reconciler uses this identity to read kernel's tenant records
+        # (pkg/bootstrap/kernelconfigstate.go).
         - name: KERNEL_K8S_TOKEN_FILE
           value: /var/run/secrets/schematic/kernel/token
         # Mirrors the SCHEMATIC_LOCAL_IMAGES env var the one-shot `apply` CLI

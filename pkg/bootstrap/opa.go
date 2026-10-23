@@ -125,11 +125,14 @@ const hdClaimKey = "hd"
 // publicMailDomains are consumer mail domains no tenant can claim through an
 // email_domain matcher: anyone can sign up for an address there, so the claim
 // says nothing about which organisation the user belongs to.
+// privaterelay.appleid.com is Apple's Hide My Email domain, shared by every
+// relay user. Kernel's AccountsServiceImpl.PUBLIC_MAIL_DOMAINS is the same list.
 var publicMailDomains = map[string]bool{
 	"gmail.com": true, "googlemail.com": true, "icloud.com": true, "me.com": true,
 	"mac.com": true, "outlook.com": true, "hotmail.com": true, "live.com": true,
 	"msn.com": true, "yahoo.com": true, "aol.com": true, "proton.me": true,
 	"protonmail.com": true, "gmx.com": true, "yandex.com": true, "zoho.com": true,
+	"privaterelay.appleid.com": true,
 }
 
 // TenantConfigDir returns the directory holding one tenant's config slices

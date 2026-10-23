@@ -91,11 +91,10 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("creating manager: %w", err)
 	}
 
-	// No kernel ConfigState source yet: operator.proto declares no
-	// (spec.state_imports) of kernel.ConfigState, so tacplus generates the
-	// operator no state client for it and kernel's generated policy grants that
-	// root to kernel alone. Record tenants are picked up once one exists.
-	provider := NewServiceConfigProvider(dir, nil)
+	// Kernel's tenant records come from the generated kernel.ConfigState state
+	// client, brought up in the background (startKernelConfigState). Until it
+	// is, the provider renders operator.yaml's tenants only.
+	provider := NewServiceConfigProvider(dir, startKernelConfigState(dir, log).Proto)
 	pollInterval := upgrade.PollInterval
 	if cfg.Dev {
 		pollInterval = upgrade.DevPollInterval

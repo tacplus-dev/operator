@@ -1,0 +1,473 @@
+// Package operator defines configuration for the schematic operator.
+//
+// The operator is the cluster lifecycle manager. It generates Helm charts
+// for all schematic services and either applies them to a live Kubernetes cluster
+// (IN_CLUSTER mode) or writes them to disk (GENERATE_ONLY mode).
+//
+// Tenant lifecycle is owned by kernel (see kernel.proto TenantAdmin and
+// Accounts services). The operator's role on the multi-tenancy front is:
+//   - Carrying cluster-level bootstrap material (root_cred_pairs, cluster_oauth)
+//     in operator.yaml and rendering it into kernel's and oauth's Helm-deployed
+//     config at deploy time.
+//   - Reading kernel's tenant records (state import of kernel.ConfigState) and
+//     rendering the per-tenant services and kernel delegates of every ACTIVE
+//     record tenant. It never writes tenant records.
+// Operator is typically managed by a CI pipeline holding K8s credentials.
+//
+// Config is split across two files on disk:
+//   operator.yaml  — topology, mode, FQDN, optional services, root_cred_pairs (safe to commit, modulo public keys)
+//   crypto.yaml    — PKI material (pki field); treat as a secret, never commit
+// Both deserialize as operator.Config and are merged via proto.Merge.
+
+syntax = "proto3";
+
+package operator;
+
+import "sys/spec.proto";
+import "sys/x509.proto";
+import "sys/diskstore.proto";
+import "common/credentials.proto";
+import "services/oauth.proto";
+import "services/kmaker.proto";
+
+option (spec.grpc_s2s_client) = {service: "kernel.Mint"};
+option (spec.state_imports) = {source: "kernel.ConfigState"};
+
+// OperatorMode controls how the operator runs.
+enum OperatorMode {
+  // IN_CLUSTER is the default: the operator runs inside Kubernetes and
+  // continuously reconciles the desired cluster state by managing Helm releases.
+  // gateway_nodes is automatically set to the number of schedulable nodes.
+  IN_CLUSTER = 0;
+
+  // GENERATE_ONLY: one-shot CLI mode. Generates Helm charts, writes them to
+  // output_dir, and exits. Does not communicate with the Kubernetes API.
+  GENERATE_ONLY = 1;
+}
+
+// TLSConfig controls how edge-facing TLS certificates are obtained.
+// When letsencrypt = true, the operator deploys one letsencrypt service replica.
+message TLSConfig {
+  // When true, Let's Encrypt is used for edge TLS and one letsencrypt service
+  // replica is deployed. The gateway must be reachable on port 443 from the
+  // public internet.
+  // When false, ca must be populated with a valid CA chain.
+  bool letsencrypt = 1;
+
+  // Custom CA chain for edge TLS certificates.
+  // Required when letsencrypt = false. Ignored when letsencrypt = true.
+  x509.X509CertChain ca = 2;
+
+  // email is the ACME account registration address, rendered into the
+  // letsencrypt service's config as lets_encrypt_email. Let's Encrypt sends
+  // certificate expiry notices there. Empty leaves the letsencrypt service on
+  // its own "admin@<fqdn>" default. Ignored when letsencrypt = false.
+  string email = 3;
+}
+
+// Topology declares the desired replica count for each service.
+//
+// gateway_nodes is special: when set to 0 and mode = IN_CLUSTER, the operator
+// automatically sets it to the number of schedulable Kubernetes nodes at each
+// reconciliation cycle (one gateway per node). When mode = GENERATE_ONLY,
+// gateway_nodes must be set explicitly.
+//
+message Topology {
+  int32 kernel_nodes     = 1  [(spec.default_int) = 3];
+
+  // 2 held sentinel_nodes. Sentinel went to the boneyard 2026-10-12 (sonar
+  // mvp-plan "Amendment 2026-10-12"; it returns later as part of the Admiral)
+  // — out of the fleet, proto deleted — so the topology cannot ask for replicas
+  // of it. Same treatment as timedb/graphdb below: reserved, not silently
+  // reused.
+  reserved 2;
+  reserved "sentinel_nodes";
+
+  int32 eventbus_nodes   = 3  [(spec.default_int) = 3];
+
+  // Set to 0 to auto-derive from schedulable node count (IN_CLUSTER only).
+  // When enabled proxy services (anthropic, openai, gitlab, github) also
+  // scale to one replica per gateway node.
+  int32 gateway_nodes    = 4;
+
+  // oauth_nodes is used when optional_services.oauth = true (default).
+  int32 oauth_nodes  = 5  [(spec.default_int) = 3];
+
+  // 6 held msggateway_nodes. The service was permanently on hold and has been
+  // removed from the platform.
+  reserved 6;
+  reserved "msggateway_nodes";
+
+  int32 opa_nodes   = 7  [(spec.default_int) = 3];
+
+  // 8 held timedb_nodes and 9 held graphdb_nodes. Both services went to the
+  // boneyard 2026-08-25 (BIG GOAL 3, first move #1) — out of the fleet build,
+  // protos deleted — so the topology cannot ask for replicas of them. Same
+  // treatment as msggateway above: reserved, not silently reused.
+  reserved 8, 9;
+  reserved "timedb_nodes", "graphdb_nodes";
+
+  // 11 held argus_nodes. argus was removed from the fleet build 2026-08-20 and
+  // its proto, service and client were deleted 2026-09-01 (BIG GOAL 8 phase 2
+  // item 9), so the topology cannot ask for replicas of it. Same treatment as
+  // timedb/graphdb above: reserved, not silently reused.
+  reserved 11;
+  reserved "argus_nodes";
+
+  // stratum_nodes is the number of WRITER members: the StatefulSet with volumes.
+  // A writer holds partitions like any member AND persists every write — its redo
+  // log, its record index, its share of the daily checkpoint — so this is the
+  // count that decides durability. It is counted for min_durable_copies and for
+  // the hot-restore barrier, and it is meant to be fairly static (2 or 3).
+  int32 stratum_nodes    = 12 [(spec.default_int) = 3];
+
+  // stratum_search_nodes is the number of SEARCH members: a second, volume-less
+  // workload joining the same Hazelcast cluster with the member attribute
+  // stratum.role=search.
+  //
+  // A search member holds partitions (primaries and backups) and answers the
+  // parallel scatter-gather a predicate query is, and does nothing else: no
+  // volume, no redo log, no record index, no checkpoint. It is never a durable
+  // copy and never a restore contributor, so a search member that leaves loses
+  // nothing durable and scaling this number up or down changes query throughput
+  // and nothing about durability.
+  //
+  // Defaults to 0: query throughput is a thing a deployment asks for. Raising
+  // this is NOT a way to raise durability — min_durable_copies counts writers
+  // (stratum_nodes) only, and a cluster with fewer writers than the floor refuses
+  // writes however many search members are running.
+  int32 stratum_search_nodes = 22;
+
+  // 13 held saml_nodes. SAML went to the boneyard 2026-10-02 (D29 amendment 2)
+  // — removed from the product, proto deleted — so the topology cannot ask for
+  // replicas of it. Same treatment as timedb/graphdb above: reserved, not
+  // silently reused.
+  reserved 13;
+  reserved "saml_nodes";
+
+  // kmaker_nodes is the number of bootstrap certificate authority replicas.
+  // Kernel instances contact kmaker with Kubernetes projected service account
+  // tokens to obtain kernel certificates before kernel itself is available.
+  int32 kmaker_nodes = 16 [(spec.default_int) = 3];
+
+  // echo_nodes is used when optional_services.echo = true.
+  // Defaults to 1 rather than 3: the sample service is stateless and exists to
+  // be poked at, so a second replica proves nothing and costs a pod.
+  int32 echo_nodes = 17 [(spec.default_int) = 1];
+
+  // messaging_nodes is used when optional_services.messaging = true.
+  // Defaults to 1: the service is stateless mediation over eventbus, so a
+  // second replica buys availability, not throughput, and a cluster that wants
+  // it says so.
+  int32 messaging_nodes = 19 [(spec.default_int) = 1];
+
+  // mailbox_nodes is used when optional_services.mailbox = true.
+  // Defaults to 1 for the same reason as messaging_nodes.
+  int32 mailbox_nodes = 20 [(spec.default_int) = 1];
+
+  // personalauth_nodes is used when optional_services.personalauth = true.
+  // Defaults to 3, not 1: this is the login path for PERSONAL principals, so a
+  // single replica makes every device registration and every device login
+  // unavailable for the length of a rollout. Same reasoning, and the same
+  // count, as oauth_nodes.
+  int32 personalauth_nodes = 21 [(spec.default_int) = 3];
+
+  // blobstore_nodes is used when optional_services.blobstore = true.
+  //
+  // DEFAULTS TO 2, AND 2 IS THE ONLY SUPPORTED VALUE. blobstore is a mirrored
+  // PAIR: an upload is acked only when both pods have the bytes fsynced, and each
+  // pod streams to exactly one peer (blob-store-2026-09-25.md R2). The service
+  // refuses to start if the peer list it is given does not reduce to one peer, so a
+  // 1 or a 3 here is a cluster that will not come up rather than a cluster that
+  // quietly degrades. It is a field rather than a constant only so that the
+  // rendering path is uniform with every other service's.
+  int32 blobstore_nodes = 23 [(spec.default_int) = 2];
+
+  // app_services declares replica counts for services that are NOT part of the
+  // platform: an application's own services, defined in the application's proto
+  // repo and merged into the build.
+  //
+  // Every field above is a PLATFORM service with a fixed field number. That is
+  // fine for the platform, whose service set is what "the platform" means — but
+  // it made the platform unable to host anything else. An application could not
+  // declare a service without editing this file, and proto3 gives no way to add
+  // a field to a message from another repo, so "schematic is reusable" was not
+  // true: echo, a sample service, had to take field 17 here to be deployable.
+  //
+  // Keyed by service name, so an app adds a service by naming it in its own
+  // config and this file never changes. Presence with a count > 0 IS the
+  // enablement — an app service needs no parallel optional_services flag.
+  map<string, int32> app_services = 18 [(spec.assert_max_size) = 64];
+}
+
+// OptionalServices controls which optional services are enabled.
+message OptionalServices {
+  // 1-5 held the application proxy services (anthropic, openai, gitlab, github)
+  // and the MCP server. Those moved out of the platform: schematic is the base
+  // an application is built ON, not the application. RESERVED rather than
+  // deleted so the numbers can never be reused and an old config cannot be
+  // silently reinterpreted.
+  reserved 1, 2, 3, 4, 5;
+  reserved "anthropic", "openai", "gitlab", "github", "mcp";
+
+  // 6 held saml, the SAML identity provider bridge. SAML went to the boneyard
+  // 2026-10-02 (D29 amendment 2): reserved, not silently reused.
+  reserved 6;
+  reserved "saml";
+
+  // OAuth2/OIDC broker — oauth_nodes replicas when enabled.
+  // Enabled by default.
+  bool oauth = 7 [(spec.default_bool) = true];
+
+  // Keycloak IDP — production identity provider.
+  // Replaces mockidp. Enabled by default.
+  bool keycloak = 8 [(spec.default_bool) = true];
+
+  // Echo sample service — echo_nodes replicas when enabled.
+  // Disabled by default: it is a diagnostic/reference service, not something a
+  // production cluster should carry.
+  bool echo = 9;
+
+  // Messaging — the platform's message primitive (messaging.proto).
+  // messaging_nodes replicas when enabled. Disabled by default: it is a
+  // primitive an application opts into, not something every cluster carries.
+  bool messaging = 10;
+
+  // Mailbox — pull delivery and eviction eligibility over messaging's
+  // deliveries (mailbox.proto). mailbox_nodes replicas when enabled.
+  // Disabled by default; requires messaging.
+  bool mailbox = 11;
+
+  // personalauth — the login broker for PERSONAL principals (personalauth.proto).
+  // Today one arm: DEVICE, a device-held key registering and logging itself in.
+  // personalauth_nodes replicas when enabled. Disabled by default: a cluster
+  // whose people all arrive through a tenant IdP has no use for it.
+  bool personalauth = 12;
+
+  // blobstore — the platform's binary blob primitive (blobstore.proto): a
+  // two-pod mirror of content-addressed files, with its metadata in stratum
+  // records. blobstore_nodes replicas when enabled, which is 2.
+  //
+  // Disabled by default, and enabling it costs two PersistentVolumeClaims, so a
+  // cluster whose services declare no volume groups should leave it off — with no
+  // group declared it would accept no upload anyway ("no group, no upload").
+  bool blobstore = 13;
+
+  // harness — the runtime test harness (D27, clients/harness.proto). Not a
+  // service: a suspended CronJob template "harness" running the gate profile,
+  // which the pipeline starts with `kubectl create job --from=cronjob/harness`.
+  // Its ServiceAccount has no kernel delegate and its pod mounts no token, so
+  // it reaches the fleet only through public doors. Disabled by default.
+  bool harness = 14;
+
+  // harness_destructive adds the second template, "harness-destructive", which
+  // runs the destructive profile (pod kill, PVC wipe) under a Role that may
+  // delete only the named blobstore and kernel pods and blobstore PVCs. Dev
+  // only: never enable it on pilot. Has no effect unless harness is enabled.
+  bool harness_destructive = 15;
+}
+
+// PKI holds all PKI material for the cluster.
+//
+// root_ca is generated once per organization via 'operator init ca'.
+// All other fields are generated per-cluster via 'operator init cluster'.
+// PKI material lives in crypto.yaml and is merged into OperatorConfig at
+// load time. The crypto.yaml file must be kept secret.
+message PKI {
+  // Shared root CA across all clusters (cert + private key).
+  x509.X509CertChain root_ca = 1;
+
+  // Cluster intermediate CA, signed by root_ca.
+  x509.X509CertChain cluster_ca = 2;
+
+  // Per-node TLS server certificates (one per kernel replica).
+  repeated x509.X509CertChain node_tls = 3 [(spec.assert_max_size) = 1024];
+
+  // Per-node signing CAs for token issuance (one per kernel replica).
+  repeated x509.X509CertChain node_signing_ca = 4 [(spec.assert_max_size) = 1024];
+
+  // Edge TLS certificates for gateway and oauth.
+  // Not used when tls.letsencrypt = true.
+  repeated x509.X509CertChain edge_tls = 5 [(spec.assert_max_size) = 1024];
+
+  // Edge signing CAs.
+  repeated x509.X509CertChain edge_signing_ca = 6 [(spec.assert_max_size) = 1024];
+
+  // Kmaker signing CA, signed by cluster_ca and constrained to issue only
+  // kernel bootstrap leaf certificates.
+  x509.X509CertChain kmaker_signing_ca = 7;
+
+  // 8 held blobstore_token_key, an HMAC secret blobstore signed upload tokens
+  // with. There is no such secret: an upload token is raw randomness whose
+  // sha256 keys the UploadSession row that holds the grant, so verification is
+  // a lookup and there is nothing to generate, deliver or rotate (decided
+  // 2026-09-27, blob-store-2026-09-25.md R3). Reserved rather than simply
+  // removed because the field DID reach a live cluster's crypto.yaml.
+  reserved 8;
+  reserved "blobstore_token_key";
+}
+
+// OperatorConfig is the top-level operator configuration.
+//
+// Lifecycle:
+//   1. operator init ca                   — generate root CA → crypto.yaml
+//   2. operator init cluster --ca <path>  — generate cluster PKI + write operator.yaml
+//   3. operator                           — run (IN_CLUSTER) or generate charts (GENERATE_ONLY)
+//
+// When deployed to Kubernetes:
+//   operator.yaml  → ConfigMap  (schematic-operator-config)
+//   crypto.yaml    → Secret     (schematic-operator-crypto)
+// Both are mounted and merged by the operator at startup.
+message Config {
+  option (spec.grpc_config) = {service_name: "operator"};
+
+  // How the operator runs.
+  OperatorMode mode = 1;
+
+  // Public FQDN for the cluster (e.g. "api.example.com").
+  string fqdn = 3;
+
+  // HTTPS gateway port. Default 443 for production; 8443 for local testing.
+  int32 port = 4 [(spec.default_int) = 443];
+
+  // Kubernetes namespace to deploy all schematic services into.
+  string namespace = 5 [(spec.default_string) = "schematic"];
+
+  // Service replica topology.
+  Topology topology = 6;
+
+  // TLS configuration — letsencrypt or custom CA.
+  // Validation: if tls.letsencrypt = false, tls.ca must be set.
+  TLSConfig tls = 7;
+
+  // PKI material. Loaded from crypto.yaml and merged at runtime.
+  PKI pki = 8;
+
+  // Optional add-on services.
+  OptionalServices optional_services = 9;
+
+  // Filesystem path where generated Helm charts are written.
+  // Only used in GENERATE_ONLY mode. Default: "charts".
+  string output_dir = 10 [(spec.default_string) = "charts"];
+
+  // Filesystem path to the web UI build, mounted read-only into gateway.
+  // Leave empty to use the gateway's embedded webapp.
+  string web_root = 11;
+
+  // patch is the service image patch number to deploy.
+  // When 0 (default), the operator auto-tracks the latest patch and polls the
+  // registry for upgrades (every hour for stable, every 60s for dev builds).
+  // When set, the operator pins to that exact patch and does no polling.
+  int32 patch = 12;
+
+  // dev selects dev builds when true, stable builds when false (default).
+  // Affects both the image tag suffix and the polling interval.
+  bool dev = 13;
+
+  // gitlab_registry_token is an OAuth2 personal access token (read_registry scope)
+  // used to pull images from registry.gitlab.com. When set, the operator creates a
+  // "gitlab-registry" docker-registry Secret in the schematic namespace as part of
+  // the generated Helm chart. Keep this out of version control — store in crypto.yaml.
+  string gitlab_registry_token = 14;
+
+  // SPIFFE trust domain for identity URIs: the URI authority, so it must not
+  // contain '/'. Workload identities are formed as
+  // `spiffe://${spiffe_prefix}/system/services/${service_name}` — this powers
+  // token subject claims, mTLS URI SANs, and (post-B-end-state) SPIFFE-aware
+  // client cert verification. Operator propagates this value to kernel's
+  // bootstrap AND to every service configmap so all components agree on the
+  // trust domain at boot, without a runtime SCS round-trip. Must equal
+  // kernel.Config.spiffe_trust_domain.
+  string spiffe_prefix = 15 [(spec.default_string) = "local.dev"];
+
+  // root_cred_pairs are the bootstrap admin credentials, loaded from
+  // operator.yaml. The operator renders them into kernel's Helm-deployed config
+  // (kernel.Config.root_cred_pairs); kernel installs them into the root
+  // namespace's TenantConfig so they can provision tenants via TenantAdmin.
+  // Ordinary C2S CredPairs at the root namespace; only public halves are carried.
+  repeated credentials.CredPair root_cred_pairs = 18 [(spec.assert_max_size) = 64];
+
+  // cluster_oauth holds shared (cluster-level) IDP providers — Google, GitHub, etc.
+  // Configured once by a cluster admin. Delivered to the oauth service for
+  // initial token validation; tenant routing happens via ClaimMatcher entries
+  // in each tenant's OAuthTenantConfig.
+  oauth.ClusterOAuthConfig cluster_oauth = 17;
+
+  // kmaker owns cluster bootstrap certificate signing for kernel. Operator
+  // renders this into kmaker's mounted runtime config and owns the Secret that
+  // carries kmaker.Config.signing_ca.
+  kmaker.Config kmaker = 19;
+
+  // llm_credential is a shared secret (e.g. an Anthropic API key) fanned out
+  // into the generated bootstrap config of every app service named in
+  // llm_credential_services, under the YAML key "llm_credential" — so it is
+  // configured once here rather than duplicated per app service. The
+  // receiving app service's own Config must declare a matching field. Keep
+  // this out of version control — store in crypto.yaml.
+  string llm_credential = 20;
+
+  // llm_credential_services names the app services (by AppServiceNames key)
+  // that should receive llm_credential in their generated bootstrap config.
+  repeated string llm_credential_services = 21 [(spec.assert_max_size) = 64];
+
+  // tenants names the tenants this cluster hosts, e.g. ["acme", "beta"]. Each
+  // entry is a bare tenant name; the canonical authorization namespace is
+  // "/tenants/<name>" (see kernel.Delegate.tenant_namespace).
+  //
+  // The operator is the single source of truth for the tenant list, the same
+  // way it is for app_services: nothing queries kernel to discover tenants and
+  // no second config file lists them. For every service that registry.json
+  // marks (spec.service).tenant_owned, the operator deploys one Deployment +
+  // ServiceAccount named "<svc>-<tenant>" per entry here, and writes one kernel
+  // delegate named <svc> with tenant_namespace "/tenants/<name>" for each.
+  // Services NOT marked tenant_owned ignore this field entirely and keep their
+  // single shared instance.
+  //
+  // This does NOT tell a service its own tenant. Tenant identity is derived
+  // only from the SPIFFE ID in the caller's token at runtime, never from
+  // config a service can read.
+  repeated string tenants = 22 [(spec.assert_max_size) = 64];
+
+  // external_ip pins the cluster's external LoadBalancer Service to a
+  // pre-reserved static external address (e.g. a GCP regional compute
+  // address). It is rendered as spec.loadBalancerIP on the gateway's
+  // "<gateway>-lb" Service — the ONE externally-exposed Service there is,
+  // carrying TCP/443 and TCP/80 together.
+  //
+  // Both ports are on the one Service on purpose: fqdn's public A record
+  // resolves to this address, and ACME HTTP-01 validation connects to port 80
+  // on that same name. The gateway answers on 80 and proxies challenge
+  // requests to the letsencrypt service in-cluster, so letsencrypt needs no
+  // external address of its own.
+  //
+  // Leave empty to let the provider assign an ephemeral address per Service —
+  // fine for local and dev clusters, but then the address changes on every
+  // re-render and any DNS record pointing at it goes stale.
+  string external_ip = 23;
+
+  // extra_hostnames are public names served IN ADDITION to fqdn (e.g. a second
+  // domain during a cutover). The operator renders fqdn followed by these into
+  // the gateway's external_hostnames and letsencrypt's hostnames. fqdn stays
+  // the primary name: the OIDC issuer and every other single-name use of fqdn
+  // ignore this field.
+  //
+  // Not usable until N-cert/SNI (option b) exists: certmagic issues one
+  // single-name certificate per name (not one multi-SAN cert), letsencrypt
+  // publishes only fqdn's, and the gateway has no SNI selection — an extra name
+  // is served fqdn's certificate and fails TLS name checks. Leave empty.
+  repeated string extra_hostnames = 24 [(spec.assert_max_size) = 16];
+
+  // image_digests pins service images by digest. Key is the image name (the
+  // registry project, equal to the service name for every platform service);
+  // value is a manifest digest "sha256:<hex>". A pinned image renders as
+  // <repository>@<digest> in place of <repository>:<tag>; an image with no
+  // entry keeps its tag. Loaded from images.yaml (written by
+  // scripts/promote.sh), not operator.yaml.
+  map<string, string> image_digests = 25 [(spec.assert_max_size) = 256];
+
+  // stratum_disk_persistence is rendered verbatim as disk_persistence in the
+  // bootstrap config of stratum's writers (stratum-0..N). The search members
+  // persist nothing and have no volume, so their bootstrap never carries it.
+  // Unset: no stratum bootstrap carries disk_persistence.
+  diskstore.DiskPersistenceConfig stratum_disk_persistence = 26;
+}
