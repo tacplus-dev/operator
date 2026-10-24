@@ -10,20 +10,23 @@ import (
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
-// Every message entry of kernel's services holder must have a defaulter. A new
-// service added to the holder without one would be seeded an all-zero config by
-// kernel and crash-loop at boot on its own assert_ge floors, which is how
-// mailbox, messaging and weather went down.
-func TestServicesHolderDefaultersCoverEveryEntry(t *testing.T) {
-	fields := (&protoServicesConfig.Services{}).ProtoReflect().Descriptor().Fields()
-	for i := 0; i < fields.Len(); i++ {
-		fd := fields.Get(i)
-		if fd.Message() == nil {
-			continue
-		}
-		if _, ok := servicesHolderDefaulters[string(fd.Name())]; !ok {
-			t.Errorf("kernel's services holder declares %s with no servicesHolderDefaulters entry", fd.Name())
-		}
+// A deployed service's holder entry is made present and gets its generated
+// defaults; a service the fleet does not carry is skipped. This replaces the
+// hand-written per-service table: the generated ServicesDefaults recurses into
+// every present entry for whatever services the fleet is built from.
+func TestApplyServicesHolderDefaultsPopulatesDeployedEntries(t *testing.T) {
+	s := &protoServicesConfig.Services{}
+	if err := ApplyServicesHolderDefaults(s, []string{"gateway", "not-in-this-fleet"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.GatewayConfig == nil {
+		t.Fatal("a deployed service's entry must be present so kernel does not seed it all-zero")
+	}
+	if s.GatewayConfig.HealthPollIntervalSeconds != 5 {
+		t.Fatalf("generated defaults must reach the entry: health_poll_interval_seconds = %d, want 5", s.GatewayConfig.HealthPollIntervalSeconds)
+	}
+	if s.KmakerConfig != nil {
+		t.Fatal("a service not deployed must stay absent")
 	}
 }
 

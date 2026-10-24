@@ -14,3 +14,10 @@ Known gap (2026-10-23): operator.proto imports other services' protos (see `depe
 `tacplus registry --proto-dir proto` cannot scan it standalone yet and `proto/registry.yaml` has no entry for
 operator (registry id 47). `tacplus registry` must learn to resolve `depends` when scanning; until then the
 fleet build will refuse operator ("no entry for it in registry.yaml").
+
+2026-10-23 night (Jody): *"Operator might should be a library and not a service within tacplus-dev because it
+does not know about upstream services that will exist."* So `kind: library`: operator is the machinery a
+deployment repo builds its own operator from, against that fleet's merged tree. Follow-ups: split the Go
+module so a deployment repo can import it and supply the fleet model; move fleet-specific rendering (the
+test-harness CronJobs, hand-written service special cases) out of the library to the fleet layer. The
+hand-written per-service defaults table is already gone (the generated ServicesDefaults recurses).
