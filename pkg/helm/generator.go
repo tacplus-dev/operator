@@ -29,7 +29,6 @@ import (
 	"strings"
 	"text/template"
 
-	protoHarness "gitlab.com/seabeam/schematic/platform/services/operator/model/types/clients/harness"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -202,9 +201,10 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 			return nil, fmt.Errorf("generating %s templates: %w", svc.Name, err)
 		}
 	}
-	if err := g.addHarness(charts, cfg); err != nil {
-		return nil, fmt.Errorf("generating harness templates: %w", err)
-	}
+	// The runtime test harness (D27) is rendered by the fleet layer, not by
+	// this library: which harness, if any, a fleet runs is the deployment's
+	// choice (Jody, 2026-10-23: operator is a library; it does not know the
+	// upstream services a fleet will carry).
 	manifest, err := pipelineSecretsConfigMap(services)
 	if err != nil {
 		return nil, fmt.Errorf("generating the pipeline secrets manifest: %w", err)
@@ -2629,218 +2629,6 @@ spec:
 	return nil
 }
 
-// --- runtime test harness (D27) ---
-//
-// The harness is a client, not a service: no Deployment, no Service, no config
-// in kernel's seed, no kernel delegate. It is rendered as suspended CronJob
-// templates the pipeline runs with `kubectl create job --from=cronjob/<name>`,
-// so the image and pod spec stay under operator rendering and a run is never a
-// hand-written manifest. Design: looper/schematic/decisions/
-// d27-runtime-test-harness-design-2026-10-02.md §2.2.
-
-// harnessAccountsSecret holds the harness tenants' account passwords. The
-// pipeline writes it from GitLab CI variables (the D25 pipeline-provisioned
-// Secret): the chart references it and never renders it, so the operator never
-// holds a password. Its keys are the environment variable names the harness
-// reads.
-const harnessAccountsSecret = "harness-accounts"
-
-// harnessChaosPods and harnessChaosPVCs are everything the destructive profile
-// may delete, by name. An empty resourceNames would grant every object of the
-// kind, which is why these are fixed lists and never derived to possibly-empty
-// ones.
-var (
-	harnessChaosPods = []string{"blobstore-0", "blobstore-1", "kernel-0", "kernel-1", "kernel-2"}
-	harnessChaosPVCs = []string{"data-blobstore-0", "data-blobstore-1"}
-)
-
-// addHarness renders the harness templates when optional_services.harness is
-// set: the gate profile always, the destructive profile only with
-// harness_destructive as well.
-func (g *Generator) addHarness(charts *Charts, cfg *protoOperator.Config) error {
-	opt := cfg.GetOptionalServices()
-	if !opt.GetHarness() {
-		return nil
-	}
-	image := g.imageRef(cfg, "harness")
-
-	gate, err := harnessCronJob("harness", "harness", image, harnessConfig(cfg, protoHarness.Profile_PROFILE_GATE))
-	if err != nil {
-		return err
-	}
-	charts.Files["templates/harness/serviceaccount.yaml"] = serviceAccountYAML("harness")
-	charts.Files["templates/harness/cronjob.yaml"] = gate
-
-	if !opt.GetHarnessDestructive() {
-		return nil
-	}
-	destructive, err := harnessCronJob("harness-destructive", "harness-chaos", image, harnessConfig(cfg, protoHarness.Profile_PROFILE_DESTRUCTIVE))
-	if err != nil {
-		return err
-	}
-	charts.Files["templates/harness-destructive/serviceaccount.yaml"] = serviceAccountYAML("harness-chaos")
-	charts.Files["templates/harness-destructive/cronjob.yaml"] = destructive
-	charts.Files["templates/harness-destructive/chaos-rbac.yaml"] = harnessChaosRBAC()
-	return nil
-}
-
-// harnessConfig is the harness Job's runtime config. expected_digests are the
-// image digests this fleet is pinned to (cfg.image_digests, which the pipeline
-// writes), as "<image>@<digest>" sorted by image, so the report a run produces
-// can be matched to the digest set it ran against.
-func harnessConfig(cfg *protoOperator.Config, profile protoHarness.Profile) *protoHarness.Config {
-	images := make([]string, 0, len(cfg.GetImageDigests()))
-	for image := range cfg.GetImageDigests() {
-		images = append(images, image)
-	}
-	sort.Strings(images)
-	digests := make([]string, 0, len(images))
-	for _, image := range images {
-		digests = append(digests, image+"@"+cfg.GetImageDigests()[image])
-	}
-	return &protoHarness.Config{Fqdn: cfg.GetFqdn(), Profile: profile, ExpectedDigests: digests}
-}
-
-// harnessCronJob renders one profile's CronJob.
-//
-// The pod mounts no ambient token and its ServiceAccount has no kernel
-// delegate, so it cannot mint an s2s token even by accident. The one exception
-// is harness-chaos, which gets an explicit projected Kubernetes API token: the
-// destructive profile deletes pods and PVCs through the API, under the Role
-// harnessChaosRBAC grants and nothing more.
-//
-// The config travels as the env names tacplus's generated ConfigToEnvVar
-// produces — the same ones the harness reads with config_from_env_var — and is
-// validated here against the proto's constraints, so a config the harness
-// would refuse fails generation instead of a run.
-func harnessCronJob(name, serviceAccount, image string, hc *protoHarness.Config) ([]byte, error) {
-	if err := protoHarness.ValidateConfig(hc); err != nil {
-		return nil, fmt.Errorf("%s config: %w", name, err)
-	}
-	env := protoHarness.ConfigToEnvVar(hc)
-	envNames := make([]string, 0, len(env))
-	for k := range env {
-		envNames = append(envNames, k)
-	}
-	sort.Strings(envNames)
-
-	chaos := serviceAccount == "harness-chaos"
-	var b bytes.Buffer
-	b.WriteString(fmt.Sprintf(`apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: %s
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-spec:
-  # A template, not a schedule: suspend keeps it from ever firing, and a run is
-  # started with kubectl create job --from=cronjob/%s.
-  schedule: "0 0 1 1 *"
-  suspend: true
-  jobTemplate:
-    spec:
-      # A run is a test result. A retry would turn a red run green, and a
-      # destructive one would break the fleet twice.
-      backoffLimit: 0
-      template:
-        metadata:
-          labels:
-            app: %s
-            {{- include "schematic.labels" . | nindent 12 }}
-        spec:
-          {{- include "schematic.imagePullSecrets" . | nindent 10 }}
-          serviceAccountName: %s
-          automountServiceAccountToken: false
-          restartPolicy: Never
-`, name, name, name, serviceAccount))
-	b.WriteString(indentLines(archTolerationLines(), "    "))
-	b.WriteString(fmt.Sprintf(`          containers:
-          - name: %s
-            image: %s
-            imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-            env:
-`, name, image))
-	for _, k := range envNames {
-		b.WriteString(fmt.Sprintf("            - name: %s\n              value: %q\n", k, env[k]))
-	}
-	b.WriteString(fmt.Sprintf(`            envFrom:
-            - secretRef:
-                name: %s
-            resources:
-              requests:
-                memory: 64Mi
-                cpu: 25m
-              limits:
-                memory: 256Mi
-`, harnessAccountsSecret))
-	if chaos {
-		b.WriteString(`            volumeMounts:
-            - name: kubernetes-api-token
-              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-              readOnly: true
-          volumes:
-`)
-		b.WriteString(indentLines(projectedServiceAccountTokenProjectionVolume(&serviceAccountTokenProjection{
-			VolumeName:        "kubernetes-api-token",
-			TokenPath:         "token",
-			ExpirationSeconds: 3600,
-			IncludeKubeRootCA: true,
-			IncludeNamespace:  true,
-		}), "    "))
-	}
-	return b.Bytes(), nil
-}
-
-// harnessChaosRBAC is the destructive profile's only grant: delete, by name,
-// on the pods and PVCs its scenarios break. No get, no list, no other verb.
-func harnessChaosRBAC() []byte {
-	return []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: harness-chaos
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["delete"]
-  resourceNames: [%s]
-- apiGroups: [""]
-  resources: ["persistentvolumeclaims"]
-  verbs: ["delete"]
-  resourceNames: [%s]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: harness-chaos
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: harness-chaos
-subjects:
-- kind: ServiceAccount
-  name: harness-chaos
-  namespace: {{ .Values.global.namespace }}
-`, quotedList(harnessChaosPods), quotedList(harnessChaosPVCs)))
-}
-
-// quotedList renders names as the body of a YAML flow sequence.
-func quotedList(names []string) string {
-	quoted := make([]string, len(names))
-	for i, n := range names {
-		quoted[i] = fmt.Sprintf("%q", n)
-	}
-	return strings.Join(quoted, ", ")
-}
-
-// indentLines prefixes every non-empty line of s. The pod-spec helpers render
-// at a Deployment's depth; a CronJob's pod spec sits two levels deeper.
 func indentLines(s, prefix string) string {
 	lines := strings.SplitAfter(s, "\n")
 	for i, l := range lines {

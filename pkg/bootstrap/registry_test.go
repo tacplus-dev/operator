@@ -25,23 +25,19 @@ func TestLoadServiceDepsFromRegistry(t *testing.T) {
 	}
 }
 
-// TestSubscriberGetsEventbus verifies that services whose config state is
-// hosted by eventbus (tag: "eventbus" on boundaries) get eventbus in their
-// authorized_services. stratum is the record store that subscribes to eventbus
-// topics. (graphdb and timedb were the other two subscribers until the
-// 2026-08-25 boneyard removed them from the fleet.)
-func TestSubscriberGetsEventbus(t *testing.T) {
+// TestSubscriberGetsEventbus lived here. It asserted stratum gets eventbus
+// through a config-state boundary tagged "eventbus"; stratum no longer declares
+// one, in the fleet registry or this one, so the assertion had no subject. The
+// watch → broker derivation is exercised by mailbox (messaging.MessageBus.stream
+// → eventbus) below.
+func TestWatcherGetsBroker(t *testing.T) {
 	sd, err := loadServiceDeps()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	for _, svc := range []string{"stratum"} {
-		deps := sd.authorizedServicesFor(svc)
-		has := toSet(deps)
-		if !has["eventbus"] {
-			t.Errorf("%s deps %v missing 'eventbus'", svc, deps)
-		}
+	deps := sd.authorizedServicesFor("mailbox")
+	if !toSet(deps)["eventbus"] {
+		t.Errorf("mailbox deps %v missing 'eventbus' (it watches messaging.MessageBus.stream)", deps)
 	}
 }
 

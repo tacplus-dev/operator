@@ -35,25 +35,19 @@ func TestApplyServicesHolderDefaultsPopulatesDeployedEntries(t *testing.T) {
 // each died with "field ... must be >= N, got: 0" after 30s. The generated
 // bootstrap must carry their proto defaults instead.
 func TestKernelBootstrapDefaultsHolderEntriesAbsentFromBundle(t *testing.T) {
-	RegisterAppServices([]string{"weather"})
-	t.Cleanup(func() { RegisterAppServices(nil) })
-
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
 		Fqdn:         "schematic.localtest.me",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
-			KernelNodes:    1,
-			GatewayNodes:   1,
-			EventbusNodes:  1,
-			MailboxNodes:   1,
-			MessagingNodes: 1,
-			AppServices:    map[string]int32{"weather": 1},
+			KernelNodes:   1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+			MailboxNodes:  1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
-			Mailbox:   true,
-			Messaging: true,
+			Mailbox: true,
 		},
 	}
 	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
@@ -89,11 +83,5 @@ func TestKernelBootstrapDefaultsHolderEntriesAbsentFromBundle(t *testing.T) {
 	configs := kernelCfg.GetConfigs()
 	if got := configs.GetMailboxConfig().GetSweepIntervalSeconds(); got != 300 {
 		t.Errorf("mailbox_config.sweep_interval_seconds = %d, want 300 (assert_ge 10)", got)
-	}
-	if got := configs.GetMessagingConfig().GetMaxRecipients(); got != 64 {
-		t.Errorf("messaging_config.max_recipients = %d, want 64 (assert_ge 1)", got)
-	}
-	if got := configs.GetWeatherConfig().GetObservationPollSeconds(); got != 3600 {
-		t.Errorf("weather_config.observation_poll_seconds = %d, want 3600 (assert_ge 300)", got)
 	}
 }

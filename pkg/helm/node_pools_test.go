@@ -9,6 +9,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8syaml "sigs.k8s.io/yaml"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -141,5 +142,18 @@ func TestNoNodePoolsRendersNoPlacement(t *testing.T) {
 				t.Errorf("%s contains %q with no node pools", path, unwanted)
 			}
 		}
+	}
+}
+
+// decodeManifest strictly decodes one rendered manifest (keyed Kind/name) into
+// the typed object, failing the test if the chart did not render it.
+func decodeManifest(t *testing.T, manifests map[string]string, key string, into any) {
+	t.Helper()
+	doc, ok := manifests[key]
+	if !ok {
+		t.Fatalf("rendered chart has no %s", key)
+	}
+	if err := k8syaml.UnmarshalStrict([]byte(doc), into); err != nil {
+		t.Fatalf("decoding %s: %v\n%s", key, err, doc)
 	}
 }
