@@ -13,7 +13,6 @@ import (
 
 	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
 	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
-	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
 	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
@@ -363,40 +362,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg.RootCa = gatewayOpts.RootCAs
 	}
 
-	// blobstore's holder entry.
-	//
-	// IT CARRIES NO SECRET. The upload token blobstore mints is raw randomness
-	// whose sha256 keys the UploadSession row holding the grant, so verification
-	// is a lookup and there is no signing key to generate, deliver or rotate
-	// (decided 2026-09-27, blob-store-2026-09-25.md R3). Nothing on
-	// blobstore.Config is secret, which is why this entry can live in kernel's
-	// combined seed at all — that seed is one blob every config-holder in the
-	// fleet, and any tombstone of one, can read.
-	//
-	// The entry is created and defaulted rather than left out: without it kernel
-	// re-seeds blobstore's ConfigState from an all-zero config on every boot and
-	// blobstore crash-loops on its own validation, which is exactly the failure
-	// mailbox, messaging and weather each hit before ApplyServicesHolderDefaults
-	// existed.
-	if opt := cfg.GetOptionalServices(); opt.GetBlobstore() && cfg.GetTopology().GetBlobstoreNodes() > 0 {
-		if kernelConfig.Configs == nil {
-			kernelConfig.Configs = &protoServicesConfig.Services{}
-		}
-		if kernelConfig.Configs.BlobstoreConfig == nil {
-			kernelConfig.Configs.BlobstoreConfig = &protoBlobstore.Config{}
-			protoBlobstore.ConfigDefaults(kernelConfig.Configs.BlobstoreConfig)
-		}
-
-		// Render every volume group the fleet declares. Groups are declared at
-		// build time by each consuming service through the (spec.volume_group)
-		// annotation tacplus surfaces in registry.json, and turning those
-		// declarations into blobstore's config is the operator's half of that work
-		// split. An empty registry leaves the list empty, which is the correct
-		// fail-closed state: no group, no upload.
-		if err := setBlobstoreVolumeGroups(kernelConfig.Configs.BlobstoreConfig, registryJSON); err != nil {
-			return nil, err
-		}
-	}
 
 	// Seed the real llm_credential into kernel's services holder for every
 	// service named in llm_credential_services. Kernel writes each holder entry

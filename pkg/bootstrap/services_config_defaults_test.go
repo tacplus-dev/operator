@@ -44,10 +44,6 @@ func TestKernelBootstrapDefaultsHolderEntriesAbsentFromBundle(t *testing.T) {
 			KernelNodes:   1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
-			MailboxNodes:  1,
-		},
-		OptionalServices: &protoOperator.OptionalServices{
-			Mailbox: true,
 		},
 	}
 	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
@@ -81,7 +77,7 @@ func TestKernelBootstrapDefaultsHolderEntriesAbsentFromBundle(t *testing.T) {
 		t.Fatalf("parsing kernel bootstrap YAML: %v", err)
 	}
 	configs := kernelCfg.GetConfigs()
-	if got := configs.GetMailboxConfig().GetSweepIntervalSeconds(); got != 300 {
-		t.Errorf("mailbox_config.sweep_interval_seconds = %d, want 300 (assert_ge 10)", got)
+	if got := configs.GetEventbusConfig().GetDefaultRetentionHours(); got != 168 {
+		t.Errorf("eventbus_config.default_retention_hours = %d, want 168 (the proto default; assert_ge 1)", got)
 	}
 }

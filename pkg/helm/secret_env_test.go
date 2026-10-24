@@ -7,7 +7,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	protoMailbox "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/mailbox"
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -97,20 +96,18 @@ func TestPipelineSecretsManifestNamesTheConsumingWorkloads(t *testing.T) {
 	}
 }
 
-// End to end through helm: the fleet's real declarers (oauth always, mailbox
-// when enabled) appear in the rendered manifest with their GitLab variables,
+// End to end through helm: the fleet's real declarers (oauth, the one this
+// library knows) appear in the rendered manifest with their GitLab variables,
 // every workload it names is one the chart renders and that workload reads the
 // Secret, and no Secret object of that name is rendered.
 func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			KmakerNodes:  1,
-			OauthNodes:   2,
-			MailboxNodes: 1,
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			OauthNodes:  2,
 		},
-		OptionalServices: &protoOperator.OptionalServices{Messaging: true, Mailbox: true},
 	})
 	manifests := renderedManifests(t, charts)
 
@@ -126,8 +123,7 @@ func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
 	}
 
 	want := map[string]struct{ key, variable string }{
-		"oauth-pipeline-secrets":   {"apple_signin_key_p8", "APPLE_SIGNIN_KEY_P8"},
-		"mailbox-pipeline-secrets": {"gmail_service_account_json", "CREW_MAIL_SA_KEY_JSON"},
+		"oauth-pipeline-secrets": {"apple_signin_key_p8", "APPLE_SIGNIN_KEY_P8"},
 	}
 	if len(got) != len(want) {
 		t.Errorf("manifest Secrets = %v, want exactly %v", secrets, want)
@@ -170,13 +166,11 @@ func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
 // Go helper rather than trusting the literal in enabledServices.
 func TestSecretEnvVarNamesAreTheGeneratedOnes(t *testing.T) {
 	generated := map[string]map[string]string{
-		"oauth":   protoOauth.SecretsToEnvVar(&protoOauth.Secrets{}),
-		"mailbox": protoMailbox.SecretsToEnvVar(&protoMailbox.Secrets{}),
+		"oauth": protoOauth.SecretsToEnvVar(&protoOauth.Secrets{}),
 	}
 	g := New("test", "1.2", nil, nil, nil)
 	cfg := &protoOperator.Config{
-		Topology:         &protoOperator.Topology{OauthNodes: 1, MailboxNodes: 1},
-		OptionalServices: &protoOperator.OptionalServices{Mailbox: true},
+		Topology: &protoOperator.Topology{OauthNodes: 1},
 	}
 	declared := 0
 	for _, svc := range g.enabledServices(cfg, effectiveTopology(cfg, 1)) {

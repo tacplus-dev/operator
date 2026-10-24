@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	protoBlobstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/blobstore"
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.
@@ -302,70 +301,6 @@ func pinnedTenantServicesFrom(data []byte) (map[string]string, error) {
 	return out, nil
 }
 
-// setBlobstoreVolumeGroups renders every volume group declared anywhere in the
-// registry into blobstore's config. A group is declared at BUILD TIME by the
-// service that owns it, through the (spec.volume_group) annotation tacplus
-// surfaces as ServiceInfo.volume_groups; blobstore never creates one at
-// runtime, so this rendering is the only way a group reaches it.
-//
-// Platform and app services are walked identically — the registry the operator
-// embeds is the merged one, so an app's declarations are already in it and need
-// no separate traversal.
-//
-// A name declared by two services is an ERROR, not a merge: the name is the
-// first path segment of every file in the group, so two services that disagree
-// about a group's rules would silently write into each other's namespace. The
-// error names both services so the duplicate is fixable from the message alone.
-// tacplus refuses a duplicate at generation, but the operator merges registries
-// from more than one proto repo and is the last place the two can meet.
-//
-// Zero declared groups leaves the list empty, which is blobstore's correct
-// fail-closed state: no group, no upload.
-func setBlobstoreVolumeGroups(cfg *protoBlobstore.Config, data []byte) error {
-	var root registryNode
-	if err := json.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("parsing registry.json: %w", err)
-	}
-
-	declaredBy := make(map[string]string)
-	var walkErr error
-	var groups []*protoBlobstore.VolumeGroup
-	walkNodes(&root, func(node *registryNode) {
-		if walkErr != nil || !strings.HasPrefix(node.FullPath, "services/") {
-			return
-		}
-		for _, svc := range node.Services {
-			for _, vg := range svc.VolumeGroups {
-				if owner, ok := declaredBy[vg.Name]; ok {
-					if owner == node.Name {
-						// The annotation is service-level, so tacplus stamps it onto
-						// every ServiceInfo one proto file produces. The same service
-						// re-declaring its own group is that duplication, not a clash.
-						continue
-					}
-					walkErr = fmt.Errorf("volume group %q is declared by both %q and %q: group names are unique fleet-wide", vg.Name, owner, node.Name)
-					return
-				}
-				declaredBy[vg.Name] = node.Name
-				groups = append(groups, &protoBlobstore.VolumeGroup{
-					Name:             vg.Name,
-					MaxBlobBytes:     int64(vg.MaxBlobBytes),
-					ContentTypes:     vg.ContentTypes,
-					TenantQuotaBytes: int64(vg.TenantQuotaBytes),
-				})
-			}
-		}
-	})
-	if walkErr != nil {
-		return walkErr
-	}
-
-	// Sorted by name so the rendered config -- and every checksum taken over it
-	// -- does not change with registry node order.
-	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
-	cfg.VolumeGroups = groups
-	return nil
-}
 
 func walkNodes(node *registryNode, fn func(*registryNode)) {
 	fn(node)

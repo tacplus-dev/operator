@@ -25,19 +25,27 @@ func TestLoadServiceDepsFromRegistry(t *testing.T) {
 	}
 }
 
-// TestSubscriberGetsEventbus lived here. It asserted stratum gets eventbus
-// through a config-state boundary tagged "eventbus"; stratum no longer declares
-// one, in the fleet registry or this one, so the assertion had no subject. The
-// watch → broker derivation is exercised by mailbox (messaging.MessageBus.stream
-// → eventbus) below.
+// A service that watches an eventbus topic gets the broker in its
+// authorized_services. Driven from a fixture registry: which fleet services
+// watch a topic is the fleet's business, and this library is generated against
+// whichever fleet builds it (the proof fleet has no watcher at all).
 func TestWatcherGetsBroker(t *testing.T) {
-	sd, err := loadServiceDeps()
+	sd, err := loadServiceDepsFrom([]byte(`{
+  "name": "root",
+  "children": [
+    {"name": "eventbus", "full_path": "services/eventbus",
+     "services": [{"name": "Admin", "package": "eventbus", "grpc_service": "eventbus.Admin"}]},
+    {"name": "oauth", "full_path": "services/oauth",
+     "services": [{"name": "Auth", "package": "oauth", "grpc_service": "oauth.Auth"}],
+     "event_watches": [{"broker_label": "eventbus"}]}
+  ]
+}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := sd.authorizedServicesFor("mailbox")
+	deps := sd.authorizedServicesFor("oauth")
 	if !toSet(deps)["eventbus"] {
-		t.Errorf("mailbox deps %v missing 'eventbus' (it watches messaging.MessageBus.stream)", deps)
+		t.Errorf("oauth deps %v missing 'eventbus' (it watches a topic the broker carries)", deps)
 	}
 }
 
