@@ -23,6 +23,10 @@ syntax = "proto3";
 
 package operator;
 
+// operator is a service of the fleet like any other: it has a registry
+// identity (id 47) and the fleet build resolves it by name.
+option (spec.service) = {name: "operator"};
+
 import "sys/spec.proto";
 import "sys/x509.proto";
 import "sys/diskstore.proto";

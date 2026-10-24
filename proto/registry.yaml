@@ -1,4 +1,8 @@
 # Managed by tacplus — do not edit IDs manually.
 registries:
     - https://github.com/tacplus-dev/registry.git
-services: []
+services:
+    - name: operator
+      id: 47
+      contract: https://github.com/tacplus-dev/operator.git
+      visibility: private
