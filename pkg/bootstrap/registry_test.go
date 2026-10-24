@@ -221,3 +221,34 @@ func TestRecordReadResolvesStratumDelegate(t *testing.T) {
 		t.Errorf("mailbox declares a record read; deps %v missing 'stratum'", deps)
 	}
 }
+
+// A service that subscribes to a topic hosted by eventbus (named in the topic
+// RPC's auth_services, on the publisher's node) gets eventbus in its deps:
+// stratum ingests letsencrypt's record topic and must be able to mint for the
+// broker.
+func TestTopicSubscriberGetsBroker(t *testing.T) {
+	sd, err := loadServiceDepsFrom([]byte(`{
+  "name": "root",
+  "children": [
+    {"name": "eventbus", "full_path": "services/eventbus",
+     "services": [{"name": "Admin", "package": "eventbus", "grpc_service": "eventbus.Admin"}]},
+    {"name": "stratum", "full_path": "services/stratum",
+     "services": [{"name": "Stratum", "package": "stratum", "grpc_service": "stratum.Stratum"}]},
+    {"name": "letsencrypt", "full_path": "services/letsencrypt",
+     "boundaries": [{"state_root": "LetsEncryptCertBus", "label": ["eventbus"], "graph_type": "topic"}],
+     "services": [{"name": "LetsEncryptCertBusStateService", "package": "letsencrypt",
+       "grpc_service": "letsencrypt.LetsEncryptCertBusStateService",
+       "rpcs": [{"rpc": "PublishToStream", "auth_services": ["letsencrypt"]},
+                {"rpc": "SubscribeToStream", "auth_services": ["stratum"]}]}]}
+  ]
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps := sd.authorizedServicesFor("stratum"); !toSet(deps)["eventbus"] {
+		t.Errorf("stratum deps %v missing 'eventbus' (it subscribes to letsencrypt's topic there)", deps)
+	}
+	if deps := sd.authorizedServicesFor("letsencrypt"); !toSet(deps)["eventbus"] {
+		t.Errorf("letsencrypt deps %v missing 'eventbus' (it publishes there)", deps)
+	}
+}

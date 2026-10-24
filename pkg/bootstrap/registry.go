@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
 )
 
 // serviceDeps holds the parsed dependency graph from the tacplus registry.
@@ -32,7 +31,16 @@ type registryNode struct {
 }
 
 type registryBoundary struct {
-	Labels []string `json:"label"`
+	Labels    []string `json:"label"`
+	GraphType string   `json:"graph_type"` // "topic" for an event-bus topic hosted at the label
+}
+
+// registryRPC is the slice of a service's RPC the dependency derivation reads:
+// a topic's SubscribeTo*/PublishTo* names its callers in auth_services, and a
+// subscriber of a topic hosted by eventbus needs eventbus in its deps.
+type registryRPC struct {
+	Name         string   `json:"rpc"`
+	AuthServices []string `json:"auth_services"`
 }
 
 type registryService struct {
@@ -58,6 +66,7 @@ type registryService struct {
 	// every service's entries into blobstore's own config, because a group is
 	// declared at build time by its consumer and never created at runtime.
 	VolumeGroups []registryVolumeGroup `json:"volume_groups"`
+	Rpcs         []registryRPC         `json:"rpcs"`
 }
 
 type registryVolumeGroup struct {
@@ -137,6 +146,7 @@ func loadServiceDepsFrom(data []byte) (*serviceDeps, error) {
 
 	// Phase 2: For each physical service node, collect dependencies.
 	result := make(map[string]map[string]bool)
+	topicCallers := make(map[string]map[string]bool) // caller -> broker labels it reaches
 	walkNodes(&root, func(node *registryNode) {
 		if !strings.HasPrefix(node.FullPath, "services/") {
 			return
@@ -186,7 +196,44 @@ func loadServiceDepsFrom(data []byte) (*serviceDeps, error) {
 		}
 
 		result[svcName] = deps
+
+		// Topic callers → broker service. A topic hosted at a broker label
+		// (boundary graph_type "topic") names who may publish and subscribe on
+		// its RPCs' auth_services; each such caller reaches the broker and
+		// needs it in ITS deps. Those callers are other services, so they are
+		// collected here and folded in after the walk.
+		for _, b := range node.Boundaries {
+			if b.GraphType != "topic" {
+				continue
+			}
+			for _, label := range b.Labels {
+				if !isKernelAuthenticatedService(label) {
+					continue
+				}
+				for _, svc := range node.Services {
+					for _, rpc := range svc.Rpcs {
+						for _, caller := range rpc.AuthServices {
+							if caller == "*" || caller == label {
+								continue
+							}
+							if topicCallers[caller] == nil {
+								topicCallers[caller] = map[string]bool{}
+							}
+							topicCallers[caller][label] = true
+						}
+					}
+				}
+			}
+		}
 	})
+
+	for caller, brokers := range topicCallers {
+		if deps, ok := result[caller]; ok {
+			for broker := range brokers {
+				deps[broker] = true
+			}
+		}
+	}
 
 	// Convert to sorted slices.
 	sd := &serviceDeps{deps: make(map[string][]string, len(result))}
@@ -300,7 +347,6 @@ func pinnedTenantServicesFrom(data []byte) (map[string]string, error) {
 	})
 	return out, nil
 }
-
 
 func walkNodes(node *registryNode, fn func(*registryNode)) {
 	fn(node)
