@@ -2039,10 +2039,10 @@ func TestCoopRendersThePigeonsNamespace(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes: 1,
-			KmakerNodes: 1,
+			KernelNodes:   1,
+			KmakerNodes:   1,
 			EventbusNodes: 2,
-			AppServices: map[string]int32{"coop": 1, "widgeter": 1},
+			AppServices:   map[string]int32{"coop": 1, "widgeter": 1},
 		},
 	})
 	rendered := renderedManifests(t, charts)
