@@ -201,6 +201,14 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 			return nil, fmt.Errorf("generating %s templates: %w", svc.Name, err)
 		}
 	}
+	for _, svc := range services {
+		if svc.PigeonsRBAC {
+			if err := g.addPigeonsNamespace(charts, cfg); err != nil {
+				return nil, fmt.Errorf("generating the pigeons namespace: %w", err)
+			}
+			break
+		}
+	}
 	// The runtime test harness (D27) is rendered by the fleet layer, not by
 	// this library: which harness, if any, a fleet runs is the deployment's
 	// choice (Jody, 2026-10-23: operator is a library; it does not know the
@@ -504,6 +512,10 @@ type serviceSpec struct {
 	TokenReviewRBAC bool
 	// PodReadRBAC grants the service account namespace-scoped permission to read Pods.
 	PodReadRBAC bool
+	// PigeonsRBAC grants the service account the pigeons namespace: Jobs and
+	// their Secrets, and the Pods they run. Set on the coop, the fleet's one
+	// door to pigeons; it also makes the chart render the namespace itself.
+	PigeonsRBAC bool
 	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
 	// Used for kernel where stable pod identity and PVC lifecycle are required.
@@ -1274,6 +1286,20 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			HasGRPC: true, ListenPort: 8443,
 			ConfigHasKeyMaterial: llmCredentialServices[name],
 			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
+		if name == coopServiceName {
+			// The coop runs pigeons as Kubernetes Jobs in the pigeons namespace
+			// (A30: one pigeon = one Job), so it talks to the API server with
+			// its own projected token, as kmaker does.
+			base.ServiceAccountTokenProjections = append(base.ServiceAccountTokenProjections, &serviceAccountTokenProjection{
+				VolumeName:        "kubernetes-api-token",
+				MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
+				TokenPath:         "token",
+				ExpirationSeconds: 3600,
+				IncludeKubeRootCA: true,
+				IncludeNamespace:  true,
+			})
+			base.PigeonsRBAC = true
+		}
 		if !g.tenantOwned[name] {
 			svcs = append(svcs, withKernelServiceAuth(base))
 			continue
@@ -1710,6 +1736,146 @@ metadata:
 	return nil
 }
 
+// coopServiceName is the platform service that runs pigeons (tacplus registry
+// id 106). Listing it in app_services makes the chart render the pigeons
+// namespace it needs; the library knows this one service the way it knows
+// letsencrypt, because the namespace is part of the coop's contract (A30 §3.3,
+// §3.7), not a deployment's choice.
+const coopServiceName = "coop"
+
+// pigeonsNamespace is where the coop runs pigeon Jobs: the fleet's namespace
+// plus "-pigeons", so two fleets on one cluster never share it. The coop's
+// Config.pigeons_namespace must name the same namespace.
+func pigeonsNamespace(fleetNamespace string) string {
+	return fleetNamespace + "-pigeons"
+}
+
+// pigeonsRBACYAML grants svc's service account, in the pigeons namespace, what
+// the coop's Job lifecycle needs and nothing else: Jobs, the Secret each Job
+// mounts, and a read of the Pods a Job runs (A30 §3.3). No RBAC escalation is
+// possible: the Role is namespaced and grants no RBAC verbs.
+func pigeonsRBACYAML(svc serviceSpec, pigeonsNS string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: %s-pigeons
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: %s-pigeons
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: %s-pigeons
+subjects:
+- kind: ServiceAccount
+  name: %s
+  namespace: {{ .Values.global.namespace }}
+`, svc.Name, pigeonsNS, svc.Name, pigeonsNS, svc.Name, svc.ServiceAccountName))
+}
+
+// addPigeonsNamespace renders the namespace pigeon Jobs run in, with its
+// policies (A30 §3.7, slice 2: no internet): default-deny for ingress and
+// egress, egress allowed only to cluster DNS and to the fleet's kernel and
+// eventbus, and a ResourceQuota so a runaway kind cannot take the cluster.
+// Slice 3 adds the pigeonproxy egress rule here.
+func (g *Generator) addPigeonsNamespace(charts *Charts, cfg *protoOperator.Config) error {
+	ns := cfg.Namespace
+	if ns == "" {
+		ns = "schematic"
+	}
+	pns := pigeonsNamespace(ns)
+	charts.Files["templates/pigeons/namespace.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+  labels:
+    schematic.io/pigeons-of: %s
+`, pns, ns))
+	charts.Files["templates/pigeons/networkpolicy.yaml"] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: %[1]s
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pigeon-egress
+  namespace: %[1]s
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %[2]s
+      podSelector:
+        matchLabels:
+          app: kernel
+    ports:
+    - protocol: TCP
+      port: 5000
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %[2]s
+      podSelector:
+        matchLabels:
+          app: eventbus
+    ports:
+    - protocol: TCP
+      port: 8443
+`, pns, ns))
+	charts.Files["templates/pigeons/resourcequota.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pigeons
+  namespace: %s
+spec:
+  hard:
+    pods: "32"
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+`, pns))
+	return nil
+}
+
 var deploymentTmpl = template.Must(template.New("deployment").Funcs(template.FuncMap{
 	"iterate": func(n int32) []int32 {
 		s := make([]int32, n)
@@ -2058,6 +2224,10 @@ subjects:
   name: %s
   namespace: {{ .Values.global.namespace }}
 `, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
+	}
+
+	if svc.PigeonsRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
+		charts.Files[fmt.Sprintf("templates/%s/pigeons-rbac.yaml", svc.Name)] = pigeonsRBACYAML(svc, pigeonsNamespace(ns))
 	}
 
 	// ConfigMap — or a Secret, for configs that embed private key material.

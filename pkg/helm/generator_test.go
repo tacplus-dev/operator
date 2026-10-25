@@ -2030,3 +2030,75 @@ func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
 		t.Fatal("a new build's digest left kernel's pod template unchanged: the StatefulSet would not roll")
 	}
 }
+
+// The coop runs pigeons as Jobs in a namespace of its own (A30 §3.3, §3.7):
+// listing it in app_services renders that namespace with default-deny
+// policies and a quota, and grants the coop's service account exactly the Job
+// lifecycle there. No other app service gets any of it.
+func TestCoopRendersThePigeonsNamespace(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology: &protoOperator.Topology{
+			KernelNodes: 1,
+			KmakerNodes: 1,
+			AppServices: map[string]int32{"coop": 1, "widgeter": 1},
+		},
+	})
+	rendered := renderedManifests(t, charts)
+	if _, ok := rendered["Namespace/schematic-pigeons"]; !ok {
+		t.Fatalf("coop rendered no pigeons namespace; manifests: %v", keys(rendered))
+	}
+	deny, ok := rendered["NetworkPolicy/default-deny"]
+	if !ok || !strings.Contains(deny, "namespace: schematic-pigeons") || !strings.Contains(deny, "Egress") {
+		t.Fatalf("pigeons namespace has no default-deny policy:\n%s", deny)
+	}
+	egress := rendered["NetworkPolicy/pigeon-egress"]
+	for _, want := range []string{"k8s-app: kube-dns", "app: kernel", "app: eventbus", "kubernetes.io/metadata.name: schematic"} {
+		if !strings.Contains(egress, want) {
+			t.Errorf("pigeon egress policy lacks %q:\n%s", want, egress)
+		}
+	}
+	if _, ok := rendered["ResourceQuota/pigeons"]; !ok {
+		t.Error("pigeons namespace has no ResourceQuota")
+	}
+	role := rendered["Role/coop-pigeons"]
+	for _, want := range []string{"namespace: schematic-pigeons", `resources: ["jobs"]`, `resources: ["secrets"]`, `resources: ["pods"]`} {
+		if !strings.Contains(role, want) {
+			t.Errorf("coop pigeons Role lacks %q:\n%s", want, role)
+		}
+	}
+	if strings.Contains(role, "rbac.authorization.k8s.io\"]\n  resources") || strings.Contains(role, `"rolebindings"`) {
+		t.Errorf("coop pigeons Role must grant no RBAC verbs:\n%s", role)
+	}
+	binding := rendered["RoleBinding/coop-pigeons"]
+	if !strings.Contains(binding, "name: coop\n  namespace: schematic") {
+		t.Errorf("RoleBinding does not bind the coop's service account in the fleet namespace:\n%s", binding)
+	}
+	dep := chartFile(t, charts, "templates/coop/deployment.yaml")
+	if !strings.Contains(dep, "kubernetes-api-token") || !strings.Contains(dep, "/var/run/secrets/kubernetes.io/serviceaccount") {
+		t.Errorf("coop deployment mounts no projected API token:\n%s", dep)
+	}
+	if _, ok := rendered["Role/widgeter-pigeons"]; ok {
+		t.Error("an app service that is not the coop got pigeons RBAC")
+	}
+
+	// Without the coop there is no pigeons namespace at all.
+	without := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1, AppServices: map[string]int32{"widgeter": 1}},
+	})
+	for path := range without.Files {
+		if strings.Contains(path, "pigeons") {
+			t.Errorf("no coop, yet %s was rendered", path)
+		}
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
