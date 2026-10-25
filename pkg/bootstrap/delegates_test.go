@@ -770,3 +770,37 @@ func TestEnsureServiceDelegatesGivesHarnessNoDelegate(t *testing.T) {
 		}
 	}
 }
+
+// TestEnsureServiceDelegatesPreservesWorkloadBroker pins the round trip for
+// workload_broker: the coop is marked by hand in kernel.yaml, and a rewrite
+// that dropped it would have kernel refuse every pigeon mint on the next
+// 'generate'.
+func TestEnsureServiceDelegatesPreservesWorkloadBroker(t *testing.T) {
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, []SourceDelegate{{
+		Name:               "coop",
+		AuthorizedServices: []string{"kernel", "eventbus"},
+		WorkloadBroker:     true,
+	}})
+	cfg := &protoOperator.Config{Topology: &protoOperator.Topology{KernelNodes: 1, GatewayNodes: 1}}
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range loadDelegates(t, kernelPath) {
+		if d.Name == "coop" {
+			found = true
+			if !d.WorkloadBroker {
+				t.Fatal("coop lost workload_broker on rewrite")
+			}
+		} else if d.WorkloadBroker {
+			t.Fatalf("delegate %q gained workload_broker", d.Name)
+		}
+	}
+	if !found {
+		t.Fatal("coop delegate not found")
+	}
+}

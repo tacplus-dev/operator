@@ -73,6 +73,11 @@ type SourceDelegate struct {
 	// OWN identity for via Mint.MintExternalServiceToken (exact match; empty
 	// means none). Round-tripped for the same reason as AuthBrokerKinds.
 	ExternalAudiences []string `yaml:"external_audiences,omitempty"`
+	// WorkloadBroker lets this delegate mint workloads rooted under another
+	// service (WorkloadMintRequest.parent_spiffe_id) and revoke them: the coop,
+	// which runs pigeons for the dogs that ask. Round-tripped for the same
+	// reason as AuthBrokerKinds.
+	WorkloadBroker bool `yaml:"workload_broker,omitempty"`
 }
 
 // SourceKubernetesServiceAccount maps a Kubernetes service account to a
@@ -349,6 +354,7 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel
 			TenantNamespace:    sd.TenantNamespace,
 			AuthBrokerKinds:    brokerKinds,
 			ExternalAudiences:  sd.ExternalAudiences,
+			WorkloadBroker:     sd.WorkloadBroker,
 		}
 		for _, sa := range sd.KubernetesServiceAccounts {
 			appendKubernetesServiceAccountMatcher(delegate, sa.KubernetesNamespace, sa.KubernetesServiceAccount)
