@@ -20,6 +20,7 @@ import (
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
+	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 )
@@ -507,6 +508,19 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		if err != nil {
 			return nil, fmt.Errorf("marshaling letsencrypt service config: %w", err)
 		}
+		// The same config into kernel's services holder, as the gateway's
+		// operator-derived fields are above: letsencrypt runs under the
+		// ServiceManager, which fetches its typed Config from kernel and
+		// refuses to start on one with no hostnames. One source (this map),
+		// two deliveries, until the file delivery is retired.
+		leCfg, err := protoLetsencrypt.ConfigFromBytes(letsencryptServiceConfigYAML)
+		if err != nil {
+			return nil, fmt.Errorf("parsing letsencrypt service config: %w", err)
+		}
+		if kernelConfig.Configs == nil {
+			kernelConfig.Configs = &protoServicesConfig.Services{}
+		}
+		kernelConfig.Configs.LetsencryptConfig = leCfg
 	}
 
 	var kmakerConfigYAML []byte

@@ -1036,6 +1036,16 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 	if got := leCfg.GetHostnames(); !slices.Equal(got, want) {
 		t.Errorf("letsencrypt hostnames = %v, want %v", got, want)
 	}
+	// Kernel's services holder carries the same config: letsencrypt's
+	// ServiceManager fetches its Config from kernel and refuses one with no
+	// hostnames.
+	inKernel := kernelCfg.GetConfigs().GetLetsencryptConfig()
+	if got := inKernel.GetHostnames(); !slices.Equal(got, want) {
+		t.Errorf("kernel letsencrypt_config hostnames = %v, want %v", got, want)
+	}
+	if inKernel.GetHttpListener().GetPort() != letsencryptAcmePort || inKernel.GetRenewalCheckIntervalSeconds() != 3600 {
+		t.Errorf("kernel letsencrypt_config = %v", inKernel)
+	}
 }
 
 func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
