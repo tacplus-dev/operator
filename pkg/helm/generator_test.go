@@ -2041,6 +2041,7 @@ func TestCoopRendersThePigeonsNamespace(t *testing.T) {
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
 			KmakerNodes: 1,
+			EventbusNodes: 2,
 			AppServices: map[string]int32{"coop": 1, "widgeter": 1},
 		},
 	})
@@ -2053,7 +2054,8 @@ func TestCoopRendersThePigeonsNamespace(t *testing.T) {
 		t.Fatalf("pigeons namespace has no default-deny policy:\n%s", deny)
 	}
 	egress := rendered["NetworkPolicy/pigeon-egress"]
-	for _, want := range []string{"k8s-app: kube-dns", "app: kernel", "app: eventbus", "kubernetes.io/metadata.name: schematic"} {
+	// Deployment pods are labelled app: <name><i>, StatefulSet pods app: <name>.
+	for _, want := range []string{"k8s-app: kube-dns", "app: kernel", "- eventbus0", "- eventbus1", "kubernetes.io/metadata.name: schematic"} {
 		if !strings.Contains(egress, want) {
 			t.Errorf("pigeon egress policy lacks %q:\n%s", want, egress)
 		}

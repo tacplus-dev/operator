@@ -203,7 +203,7 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	}
 	for _, svc := range services {
 		if svc.PigeonsRBAC {
-			if err := g.addPigeonsNamespace(charts, cfg); err != nil {
+			if err := g.addPigeonsNamespace(charts, cfg, topo); err != nil {
 				return nil, fmt.Errorf("generating the pigeons namespace: %w", err)
 			}
 			break
@@ -1796,12 +1796,20 @@ subjects:
 // egress, egress allowed only to cluster DNS and to the fleet's kernel and
 // eventbus, and a ResourceQuota so a runaway kind cannot take the cluster.
 // Slice 3 adds the pigeonproxy egress rule here.
-func (g *Generator) addPigeonsNamespace(charts *Charts, cfg *protoOperator.Config) error {
+//
+// Pods carry no per-service label: a Deployment's pods are "app: <name><i>"
+// and a StatefulSet's "app: <name>", so the eventbus rule lists every replica
+// the topology renders, the way the Hazelcast policy lists its peers.
+func (g *Generator) addPigeonsNamespace(charts *Charts, cfg *protoOperator.Config, topo *protoOperator.Topology) error {
 	ns := cfg.Namespace
 	if ns == "" {
 		ns = "schematic"
 	}
 	pns := pigeonsNamespace(ns)
+	eventbusApps := ""
+	for i := range int(topo.EventbusNodes) {
+		eventbusApps += fmt.Sprintf("\n          - eventbus%d", i)
+	}
 	charts.Files["templates/pigeons/namespace.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
@@ -1854,12 +1862,14 @@ spec:
         matchLabels:
           kubernetes.io/metadata.name: %[2]s
       podSelector:
-        matchLabels:
-          app: eventbus
+        matchExpressions:
+        - key: app
+          operator: In
+          values:%[3]s
     ports:
     - protocol: TCP
       port: 8443
-`, pns, ns))
+`, pns, ns, eventbusApps))
 	charts.Files["templates/pigeons/resourcequota.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: ResourceQuota
 metadata:
