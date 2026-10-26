@@ -10,6 +10,11 @@ src: proto
 # pkg/bootstrap still names directly (gateway TLS mode, eventbus node role,
 # example config); that composition is fleet knowledge
 # and moves to the fleet layer, at which point these entries go with it.
+# states: all — the operator composes every service's config (the kernel seed,
+# each service's typed Config from services/<name>.yaml), so it generates from
+# every service's config and state, as kernel does; depends alone would scope
+# the services holder to the entries listed below.
+states: all
 depends:
   - kernel
   - oauth
