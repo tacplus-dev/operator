@@ -15,10 +15,10 @@ import (
 	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
 	wrapperSpiffe "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/spiffe"
 	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
 	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
-	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
+	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 )
 
 const (
@@ -759,4 +759,3 @@ func decodeKeyPEM(k *protoKey.Key) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("cannot decode key base64")
 }
-

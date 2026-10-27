@@ -16,8 +16,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 )
 
 // --- generate ---
@@ -113,8 +113,8 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 // --- apply ---
 
 var (
-	applyGateways  int
-	applyDryRun    bool
+	applyGateways   int
+	applyDryRun     bool
 	applyBundleFile string
 )
 

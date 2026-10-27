@@ -207,7 +207,7 @@ func parseVersion(v string) (branch string, protoPatch, localPatch int, ok bool)
 	if dashIdx < 0 {
 		return "", 0, 0, false
 	}
-	numPart := bare[:dashIdx]   // "1.2.12"
+	numPart := bare[:dashIdx]      // "1.2.12"
 	branchPart := bare[dashIdx+1:] // "main.3"
 
 	numSegs := strings.Split(numPart, ".")

@@ -2,13 +2,6 @@
 
 TACPLUS := env_var_or_default("TACPLUS_BIN", "tacplus")
 
-# The operator embeds the fleet registry and imports app service types, so it
-# generates from platform + app protos, the set sonar/backend/build.sh passes.
-# tacplus refuses a platform-only run ("no (spec.trait) hosts a record query plane").
-PLATFORM_PROTO := env_var_or_default("PLATFORM_PROTO", "../../proto")
-APP_PROTO := env_var_or_default("APP_PROTO", "../../../../sonar/backend/proto")
-DOCMANAGER_PROTO := env_var_or_default("DOCMANAGER_PROTO", "../../../../sonar/docmanager/proto")
-
 default: local-binary container
 
 local-binary: generate validate-generated-output
@@ -42,7 +35,9 @@ gates: generate
 generate:
   #!/usr/bin/env bash
   set -euo pipefail
-  {{TACPLUS}} build --tag latest --src {{PLATFORM_PROTO}} --src {{APP_PROTO}} --src {{DOCMANAGER_PROTO}}
+  # tacplus.yaml (its floor, depends, states: all) says what to generate from;
+  # the other services' contracts come through depends, not local proto trees.
+  {{TACPLUS}} build --tag latest
   # pkg/bootstrap embeds the registry so the binary is self-contained; model/ is
   # gitignored and absent in-cluster, and Go embed cannot reach a parent dir.
   cp model/registry.json pkg/bootstrap/registry.json

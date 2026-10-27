@@ -1,4 +1,6 @@
 kind: library
+# Compiler floor: the looper builds with this MAJOR.MINOR's latest patch (tacplus#161).
+tacplus: "2.4"
 language: go
 # pkg kept as copied so the hand-written code keeps compiling; moves with the packages later.
 pkg: com.gitlab.seabeam.schematic.platform.services.operator

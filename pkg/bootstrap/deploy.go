@@ -17,10 +17,10 @@ import (
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
 	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
+	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
-	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 )
@@ -362,7 +362,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		gwCfg.ExternalKeyPem = gatewayOpts.ExternalKeyPEM
 		gwCfg.RootCa = gatewayOpts.RootCAs
 	}
-
 
 	// Seed the real llm_credential into kernel's services holder for every
 	// service named in llm_credential_services. Kernel writes each holder entry
