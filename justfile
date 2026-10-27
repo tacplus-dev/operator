@@ -30,6 +30,15 @@ container: generate validate-generated-output
 validate-generated-output:
   go test ./pkg/bootstrap/ -run 'TestGeneratedOutputSatisfiesConsumerProtos|TestGeneratedKernelConfigCarriesEveryRequiredField|TestValidateDeployConfigsNamesTheMissingField|TestEveryDeployArtifactIsClassified' -count=1
 
+# The repository's gates: what CI's proto-validate and .build-binary enforce,
+# plus gofmt and vet. `generate` runs first so every check sees freshly
+# generated code; `go test ./...` includes the validate-generated-output tests.
+gates: generate
+  test -z "$(gofmt -l $(git ls-files '*.go'))"
+  go vet ./...
+  go build ./...
+  go test ./... -count=1
+
 generate:
   #!/usr/bin/env bash
   set -euo pipefail
