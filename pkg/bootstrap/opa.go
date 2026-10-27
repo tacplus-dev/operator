@@ -379,7 +379,12 @@ default eval := {"token_entitlements": {}}
 # exist in sonar's catalog) hands out symbols that expand to nothing elsewhere.
 # An application ships its own services/opa/main.rego with its user grants
 # (sonar/backend/bootstrap/services/opa/main.rego). Without one, only admin gets
-# anything, and that is kernel's administrative surface.
+# grants, and that is kernel's administrative surface. Every caller still gets
+# their namespace: only the grants depend on the role.
+
+eval := {"namespace": tenants.namespace, "token_entitlements": {}} if {
+	not roles["admin"]
+}
 
 # admin — kernel's administrative surface.
 eval := {"namespace": tenants.namespace, "token_entitlements": {

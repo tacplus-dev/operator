@@ -444,9 +444,58 @@ func TestDefaultPolicyMakesUnroutedPeopleAPerson(t *testing.T) {
 	}
 }
 
+// TestDefaultPolicyRoutesEveryRoleToItsTenant: the fallback main.rego names
+// the routed tenant for every caller, and only the grants depend on the role.
+// It once returned the namespace for admin alone, so a non-admin a claim
+// matcher routed got no namespace and kernel minted them into /tenants/people.
+func TestDefaultPolicyRoutesEveryRoleToItsTenant(t *testing.T) {
+	if _, err := exec.LookPath("opa"); err != nil {
+		t.Skip("opa not on PATH")
+	}
+	dir := t.TempDir()
+	idps := []TenantIdp{{IssuerURL: "https://accounts.google.com", ClaimKey: "email_domain", ClaimValue: "thescottsweb.com", TenantNamespace: "/tenants/alpha"}}
+	if err := WriteDefaultOPAPolicy(dir, []string{"https://accounts.google.com"}, idps); err != nil {
+		t.Fatal(err)
+	}
+
+	routed := map[string]any{"origin_iss": "https://accounts.google.com", "provider_iss": "https://accounts.google.com", "email_domain": "thescottsweb.com"}
+	admin := map[string]any{"groups": []string{"admin"}}
+	for k, v := range routed {
+		admin[k] = v
+	}
+	for _, tc := range []struct {
+		name   string
+		claims map[string]any
+		want   string
+	}{
+		{"routed non-admin", routed, `{"namespace":"/tenants/alpha","token_entitlements":{}}`},
+		{"routed admin", admin, `{"namespace":"/tenants/alpha","token_entitlements":{"grants":["KERNEL_ANY"]}}`},
+		{"unmatched", map[string]any{"origin_iss": "https://keycloak.example/realms/unknown"}, `{"namespace":"","token_entitlements":{}}`},
+	} {
+		var got any
+		opaEvalInto(t, dir, map[string]any{"claims": tc.claims}, "data.entitlements.eval", &got)
+		var want any
+		if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: eval = %v, want %v", tc.name, got, want)
+		}
+	}
+}
+
 // opaEval evaluates query against the policy in dir with input, and returns
 // the value decoded into a []string.
 func opaEval(t *testing.T, dir string, input map[string]any, query string) []string {
+	t.Helper()
+	var value []string
+	opaEvalInto(t, dir, input, query, &value)
+	return value
+}
+
+// opaEvalInto evaluates query against the policy in dir with input, and
+// decodes the value into value.
+func opaEvalInto(t *testing.T, dir string, input map[string]any, query string, value any) {
 	t.Helper()
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	data, err := json.Marshal(input)
@@ -461,7 +510,7 @@ func opaEval(t *testing.T, dir string, input map[string]any, query string) []str
 	var result struct {
 		Result []struct {
 			Expressions []struct {
-				Value []string `json:"value"`
+				Value json.RawMessage `json:"value"`
 			} `json:"expressions"`
 		} `json:"result"`
 	}
@@ -471,7 +520,9 @@ func opaEval(t *testing.T, dir string, input map[string]any, query string) []str
 	if len(result.Result) != 1 || len(result.Result[0].Expressions) != 1 {
 		t.Fatalf("opa eval %s: no single result in %s", query, out)
 	}
-	return result.Result[0].Expressions[0].Value
+	if err := json.Unmarshal(result.Result[0].Expressions[0].Value, value); err != nil {
+		t.Fatalf("decoding opa value %s: %v", result.Result[0].Expressions[0].Value, err)
+	}
 }
 
 func writeTestFile(t *testing.T, path, content string) {
