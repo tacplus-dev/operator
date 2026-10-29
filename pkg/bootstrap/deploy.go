@@ -122,6 +122,9 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		return nil, err
 	}
 	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
+	// kmaker (BuildKmakerConfig) reads spiffe_prefix: give it the one domain
+	// kernel and every service got, even when only kernel.yaml named it.
+	cfg.SpiffePrefix = spiffeTrustDomain
 	spiffeLocationPath := kernelConfig.GetLocationPath()
 	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
 	if err != nil {
