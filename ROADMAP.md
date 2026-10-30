@@ -7,6 +7,7 @@ The operator renders a deployment: its platform services and each tenant's servi
 Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked by tacplus#188).
 
 ## Next
+- Stop rendering kmaker; remove the extra signing CA private key (#16)
 - Nothing unblocked yet; everything waits on #1.
 
 ## Later
