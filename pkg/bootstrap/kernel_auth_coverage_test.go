@@ -26,7 +26,6 @@ func everyPlatformServiceConfig() *protoOperator.Config {
 		},
 		Topology: &protoOperator.Topology{
 			KernelNodes:        1,
-			KmakerNodes:        1,
 			EventbusNodes:      1,
 			GatewayNodes:       1,
 			OpaNodes:           1,

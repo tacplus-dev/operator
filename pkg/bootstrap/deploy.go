@@ -11,12 +11,10 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
-	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
 	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
 	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
@@ -45,7 +43,6 @@ type DeployConfigs struct {
 	OpaConfig                []byte
 	StratumConfig            []byte
 	StratumSearchConfig      []byte
-	KmakerConfig             []byte
 	LetsencryptConfig        []byte
 	BlobstoreConfig          []byte
 	LetsencryptServiceConfig []byte
@@ -64,12 +61,12 @@ type DeployConfigs struct {
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
 // per-service configs, and returns them in a DeployConfigs struct.
 func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
-	return buildDeployConfigs(cfgDir, nil, nil, nil)
+	return buildDeployConfigs(cfgDir, nil, nil)
 }
 
 // buildDeployConfigs is BuildDeployConfigs with kernel's delegates extended by
 // recordTenants (see buildKernelConfigProto).
-func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLSOverride *protoX509.X509CertChain, recordTenants []string) (*DeployConfigs, error) {
+func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTenants []string) (*DeployConfigs, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
@@ -80,16 +77,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 			return nil, fmt.Errorf("cloning cached pki")
 		}
 		cfg.Pki = pki
-	}
-	if kmakerTLSOverride != nil {
-		tls, ok := proto.Clone(kmakerTLSOverride).(*protoX509.X509CertChain)
-		if !ok {
-			return nil, fmt.Errorf("cloning cached kmaker serving tls")
-		}
-		if cfg.Kmaker == nil {
-			cfg.Kmaker = &protoKmaker.Config{}
-		}
-		cfg.Kmaker.Tls = tls
 	}
 
 	if cfg.Topology == nil {
@@ -141,10 +128,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		}
 		cryptoUpdated = true
 	}
-	if kmakerSigningCANeedsGeneration(cfg) {
-		if err := ensureKmakerSigningCA(cfg); err != nil {
-			return nil, fmt.Errorf("generating kmaker signing CA: %w", err)
-		}
+	// A crypto.yaml written before kmaker was retired (#16) still holds
+	// pki.kmaker_signing_ca, a CA private key nothing uses any more. Loading
+	// ignores the reserved field; only rewriting the file drops the key.
+	if cryptoHoldsRetiredKeys(cfgDir) {
 		cryptoUpdated = true
 	}
 	// Defer crypto save until after all crypto mutations (including gateway external TLS).
@@ -402,7 +389,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		}
 	}
 
-	// Save crypto after all mutations (kernel TLS, kmaker signing CA, gateway external TLS).
+	// Save crypto after all mutations (kernel TLS, gateway external TLS).
 	if cryptoUpdated {
 		if err := SaveCrypto(cfgDir, cfg); err != nil {
 			if !isReadOnlyConfigWriteError(err) {
@@ -522,18 +509,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		kernelConfig.Configs.LetsencryptConfig = leCfg
 	}
 
-	var kmakerConfigYAML []byte
-	if t.KmakerNodes > 0 {
-		kmakerConfig, err := BuildKmakerConfig(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("building kmaker config: %w", err)
-		}
-		kmakerConfigYAML, err = protoKmaker.ConfigToYAML(kmakerConfig)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling kmaker config: %w", err)
-		}
-	}
-
 	// Per-node kernel bootstrap configs.
 	members := make([]*protoHost.Host, nodeCount)
 	for i := range nodeCount {
@@ -582,7 +557,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, kmakerTLS
 		OpaConfig:                opaConfigYAML,
 		StratumConfig:            stratumConfigYAML,
 		StratumSearchConfig:      stratumSearchConfigYAML,
-		KmakerConfig:             kmakerConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		BlobstoreConfig:          blobstoreConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
@@ -613,114 +587,6 @@ func hasClusterCAKey(cfg *protoOperator.Config) bool {
 		cfg.Pki.ClusterCa.Key != nil
 }
 
-func BuildKmakerConfig(cfg *protoOperator.Config) (*protoKmaker.Config, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("operator config is nil")
-	}
-	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
-		return nil, fmt.Errorf("pki.cluster_ca with private key is required")
-	}
-
-	// Mint kmaker's own serving cert before cloning so the generated config
-	// carries it; without it kmaker refuses to start (ErrTLSRequired) unless
-	// the plaintext opt-in is set.
-	if _, err := EnsureKmakerServingTLS(cfg); err != nil {
-		return nil, err
-	}
-
-	kmakerConfig := &protoKmaker.Config{}
-	if cfg.GetKmaker() != nil {
-		kmakerConfig = proto.Clone(cfg.GetKmaker()).(*protoKmaker.Config)
-	}
-
-	if kmakerConfig.ClusterName == "" {
-		kmakerConfig.ClusterName = cfg.Fqdn
-		if kmakerConfig.ClusterName == "" {
-			kmakerConfig.ClusterName = "schematic"
-		}
-	}
-	if kmakerConfig.Listener == nil {
-		kmakerConfig.Listener = &protoHost.Host{}
-	}
-	if kmakerConfig.Listener.Host == "" {
-		kmakerConfig.Listener.Host = "0.0.0.0"
-	}
-	if kmakerConfig.Listener.Port == 0 {
-		kmakerConfig.Listener.Port = 8443
-	}
-	if len(kmakerConfig.ClusterCa) == 0 {
-		if cfg.Pki.RootCa != nil {
-			kmakerConfig.ClusterCa = append(kmakerConfig.ClusterCa, cfg.Pki.RootCa.Chain...)
-		}
-		kmakerConfig.ClusterCa = append(kmakerConfig.ClusterCa, cfg.Pki.ClusterCa.Chain...)
-	}
-	if kmakerConfig.SigningCa == nil {
-		if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
-			return nil, fmt.Errorf("pki.kmaker_signing_ca with private key is required")
-		}
-		kmakerConfig.SigningCa = cfg.Pki.KmakerSigningCa
-	}
-	if err := validateKmakerSigningCA(kmakerConfig.SigningCa, cfg.Pki.ClusterCa); err != nil {
-		return nil, err
-	}
-	if kmakerConfig.SpiffePrefix == "" {
-		kmakerConfig.SpiffePrefix = cfg.SpiffePrefix
-		if kmakerConfig.SpiffePrefix == "" {
-			kmakerConfig.SpiffePrefix = "local.dev"
-		}
-	}
-	if kmakerConfig.TokenAudience == "" {
-		kmakerConfig.TokenAudience = "kmaker"
-	}
-	if len(kmakerConfig.KernelServiceAccounts) == 0 {
-		ns := cfg.Namespace
-		if ns == "" {
-			ns = "schematic"
-		}
-		kmakerConfig.KernelServiceAccounts = []*protoKmaker.KernelServiceAccount{{
-			Namespace: ns,
-			Name:      "kernel",
-		}}
-	}
-	if kmakerConfig.KernelCertLifetimeSeconds <= 0 {
-		kmakerConfig.KernelCertLifetimeSeconds = 86400
-	}
-
-	return kmakerConfig, nil
-}
-
-func validateKmakerSigningCA(signingCA, clusterCA *protoX509.X509CertChain) error {
-	if signingCA == nil || len(signingCA.Chain) == 0 || signingCA.Key == nil {
-		return fmt.Errorf("pki.kmaker_signing_ca with private key is required")
-	}
-	if clusterCA == nil || len(clusterCA.Chain) == 0 {
-		return fmt.Errorf("pki.cluster_ca certificate is required")
-	}
-	if signingCA.Chain[0].Base64 == clusterCA.Chain[0].Base64 {
-		return fmt.Errorf("kmaker signing_ca must not reuse the broad cluster_ca")
-	}
-
-	signingChain, err := wrapperX509.NewImmutableX509CertChain(signingCA)
-	if err != nil {
-		return fmt.Errorf("loading kmaker signing CA: %w", err)
-	}
-	clusterChain, err := wrapperX509.NewImmutableX509CertChain(clusterCA)
-	if err != nil {
-		return fmt.Errorf("loading cluster CA: %w", err)
-	}
-	signingCert := signingChain.Leaf().X509Certificate()
-	if !signingCert.IsCA {
-		return fmt.Errorf("kmaker signing_ca must be a CA")
-	}
-	if signingCert.MaxPathLen != 0 || !signingCert.MaxPathLenZero {
-		return fmt.Errorf("kmaker signing_ca must have path length zero")
-	}
-	if err := signingCert.CheckSignatureFrom(clusterChain.Leaf().X509Certificate()); err != nil {
-		return fmt.Errorf("kmaker signing_ca must be signed by cluster_ca: %w", err)
-	}
-	return nil
-}
-
 // FilterTopology zeros out node counts for services not in the allowed set.
 // No-op if allowed is nil.
 func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
@@ -741,7 +607,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	// The search members are the same service, so they are filtered by the same
 	// name: a fleet that does not deploy stratum does not deploy half of it.
 	check("stratum", &t.StratumSearchNodes)
-	check("kmaker", &t.KmakerNodes)
 	check("echo", &t.EchoNodes)
 	check("messaging", &t.MessagingNodes)
 	check("mailbox", &t.MailboxNodes)
@@ -773,7 +638,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
-		{"kmaker", dc.KmakerConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {
@@ -810,11 +674,6 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 // the chart; nothing is written to the config dir for them.
 func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigState) func() (*reconciler.ServiceConfigs, error) {
 	var pkiCache *protoOperator.PKI
-	// kmaker's serving cert is not part of cfg.Pki, so it is not persisted to
-	// crypto.yaml and LoadConfig never returns it. Cache it here alongside
-	// pkiCache: without this every reconcile mints a fresh cert, changing the
-	// chart's config checksum and rolling kmaker's pods every interval.
-	var kmakerTLSCache *protoX509.X509CertChain
 	return func() (*reconciler.ServiceConfigs, error) {
 		if cfgDir == "" {
 			return nil, nil
@@ -828,7 +687,7 @@ func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigS
 			}
 			tenants, refused = recordTenants(cfg, records())
 		}
-		dc, err := buildDeployConfigs(cfgDir, pkiCache, kmakerTLSCache, tenants)
+		dc, err := buildDeployConfigs(cfgDir, pkiCache, tenants)
 		if err != nil {
 			return nil, err
 		}
@@ -838,13 +697,6 @@ func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigS
 				return nil, fmt.Errorf("cloning pki cache")
 			}
 			pkiCache = pki
-		}
-		if dc.Cfg != nil && dc.Cfg.Kmaker != nil && dc.Cfg.Kmaker.Tls != nil {
-			tls, ok := proto.Clone(dc.Cfg.Kmaker.Tls).(*protoX509.X509CertChain)
-			if !ok {
-				return nil, fmt.Errorf("cloning kmaker serving tls cache")
-			}
-			kmakerTLSCache = tls
 		}
 		return &reconciler.ServiceConfigs{
 			Values:         ServiceConfigValues(dc),

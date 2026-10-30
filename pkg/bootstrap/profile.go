@@ -27,21 +27,18 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.OauthNodes = 5
 		t.OpaNodes = 5
 		t.StratumNodes = 5
-		t.KmakerNodes = 3
 	case "medium":
 		t.KernelNodes = 5
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
 		t.StratumNodes = 3
-		t.KmakerNodes = 3
 	default: // small — matches proto field annotation defaults
 		t.KernelNodes = 3
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
 		t.StratumNodes = 3
-		t.KmakerNodes = 1
 	}
 }
 

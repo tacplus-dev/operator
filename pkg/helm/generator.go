@@ -235,7 +235,7 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 		}
 		// 0600, like the kernel bootstrap configs: this tree holds the GitLab
 		// registry token (templates/registry-secret.yaml) and the service configs
-		// carrying kernel's and kmaker's private keys (templates/<svc>/secret-N.yaml),
+		// carrying kernel's and gateway's private keys (templates/<svc>/secret-N.yaml),
 		// and it is routinely regenerated into an existing directory — WriteFile
 		// leaves an already-present file's mode alone, so a chart rendered by an
 		// older binary stays world-readable without this chmod.
@@ -504,14 +504,10 @@ type serviceSpec struct {
 	ServiceAccountName string
 	// AutomountServiceAccountToken, when set, controls ambient Kubernetes token automounting.
 	AutomountServiceAccountToken *bool
-	// ServiceAccountTokenProjection, if non-nil, mounts an explicit projected Kubernetes token.
-	ServiceAccountTokenProjection *serviceAccountTokenProjection
-	// ServiceAccountTokenProjections mounts additional explicit projected Kubernetes tokens.
+	// ServiceAccountTokenProjections mounts explicit projected Kubernetes tokens.
 	ServiceAccountTokenProjections []*serviceAccountTokenProjection
 	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
 	TokenReviewRBAC bool
-	// PodReadRBAC grants the service account namespace-scoped permission to read Pods.
-	PodReadRBAC bool
 	// PigeonsRBAC grants the service account the pigeons namespace: Jobs and
 	// their Secrets, and the Pods they run. Set on the coop, the fleet's one
 	// door to pigeons; it also makes the chart render the namespace itself.
@@ -528,10 +524,9 @@ type serviceSpec struct {
 	// Rolling updates are one pod at a time under either policy.
 	OrderedReady bool
 	// ConfigHasKeyMaterial, if true, packages the service's generated config as
-	// a Secret instead of a ConfigMap. Three configs embed private keys: kernel's
+	// a Secret instead of a ConfigMap. Two configs embed private keys: kernel's
 	// per-node config (node TLS key, node signing CA key, and the gateway
-	// external TLS key it serves), kmaker's (the cluster CA signing key), and
-	// gateway's (the external TLS key). A ConfigMap is not secret storage —
+	// external TLS key it serves) and gateway's (the external TLS key). A ConfigMap is not secret storage —
 	// no encryption at rest, and readable by anything holding configmap get.
 	ConfigHasKeyMaterial bool
 	// SecretEnvVars are configuration fields that MUST NOT travel in kernel's
@@ -817,12 +812,7 @@ func projectedServiceAccountTokenVolume(svc serviceSpec) string {
 }
 
 func serviceAccountTokenProjections(svc serviceSpec) []*serviceAccountTokenProjection {
-	projections := make([]*serviceAccountTokenProjection, 0, len(svc.ServiceAccountTokenProjections)+1)
-	if svc.ServiceAccountTokenProjection != nil {
-		projections = append(projections, svc.ServiceAccountTokenProjection)
-	}
-	projections = append(projections, svc.ServiceAccountTokenProjections...)
-	return projections
+	return svc.ServiceAccountTokenProjections
 }
 
 func projectedServiceAccountTokenProjectionVolume(proj *serviceAccountTokenProjection) string {
@@ -927,13 +917,6 @@ func falsePtr() *bool {
 	return &v
 }
 
-func kmakerTokenAudience(cfg *protoOperator.Config) string {
-	if cfg.GetKmaker().GetTokenAudience() != "" {
-		return cfg.GetKmaker().GetTokenAudience()
-	}
-	return "kmaker"
-}
-
 const (
 	kernelServiceTokenMountPath = "/var/run/secrets/schematic/kernel"
 	kernelServiceTokenFile      = kernelServiceTokenMountPath + "/token"
@@ -993,7 +976,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 		OpaNodes:           t.OpaNodes,
 		StratumNodes:       t.StratumNodes,
 		StratumSearchNodes: t.StratumSearchNodes,
-		KmakerNodes:        t.KmakerNodes,
 		EchoNodes:          t.EchoNodes,
 		MessagingNodes:     t.MessagingNodes,
 		MailboxNodes:       t.MailboxNodes,
@@ -1078,13 +1060,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			AutomountServiceAccountToken: falsePtr(),
 			ServiceAccountTokenProjections: []*serviceAccountTokenProjection{
 				{
-					VolumeName:        "kmaker-token",
-					MountPath:         "/var/run/secrets/schematic/kmaker",
-					TokenPath:         "token",
-					Audience:          kmakerTokenAudience(cfg),
-					ExpirationSeconds: 600,
-				},
-				{
 					VolumeName:        "kubernetes-api-token",
 					MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
 					TokenPath:         "token",
@@ -1094,26 +1069,10 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 				},
 			},
 			TokenReviewRBAC: true,
-			ExtraEnvVars: fmt.Sprintf(`        - name: KMAKER_K8S_TOKEN_FILE
-          value: /var/run/secrets/schematic/kmaker/token
-        - name: KERNEL_K8S_TOKEN_AUDIENCE
+			ExtraEnvVars: fmt.Sprintf(`        - name: KERNEL_K8S_TOKEN_AUDIENCE
           value: %s
 `, kernelTokenAudience()),
 			MemRequest: "384Mi", MemLimit: "1Gi", CpuRequest: "250m", JavaHeap: "512m", JavaHeapMin: "128m"},
-		{Name: "kmaker", Replicas: topo.KmakerNodes, Image: g.imageRef(cfg, "kmaker"), HasGRPC: true, ListenPort: 8443, ConfigHasKeyMaterial: true,
-			ServiceAccountName:           "kmaker",
-			AutomountServiceAccountToken: falsePtr(),
-			ServiceAccountTokenProjection: &serviceAccountTokenProjection{
-				VolumeName:        "kubernetes-api-token",
-				MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
-				TokenPath:         "token",
-				ExpirationSeconds: 3600,
-				IncludeKubeRootCA: true,
-				IncludeNamespace:  true,
-			},
-			TokenReviewRBAC: true, PodReadRBAC: true,
-			ExtraEnvVars: "        - name: SERVICE_CONFIG\n          value: /data/bootstrap.yaml\n",
-			MemRequest:   "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB"},
 		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef(cfg, "eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
 			// Measured 2026-09-19 on the live fleet: ~30m steady. 250m reserved
 			// 8x what it used and, with three fleets' worth of 250m Java pods,
@@ -1274,7 +1233,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// A service named in llm_credential_services has the real llm_credential
 	// value injected into its bootstrap config (pkg/bootstrap/deploy.go), so
 	// that config must be packaged as a Secret, not a ConfigMap — same reason
-	// as kernel/kmaker/gateway above. The list is config-driven, so this has to
+	// as kernel/gateway above. The list is config-driven, so this has to
 	// be read from it rather than hardcoded per service name.
 	llmCredentialServices := map[string]bool{}
 	for _, name := range cfg.GetLlmCredentialServices() {
@@ -1289,7 +1248,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		if name == coopServiceName {
 			// The coop runs pigeons as Kubernetes Jobs in the pigeons namespace
 			// (A30: one pigeon = one Job), so it talks to the API server with
-			// its own projected token, as kmaker does.
+			// its own projected token.
 			base.ServiceAccountTokenProjections = append(base.ServiceAccountTokenProjections, &serviceAccountTokenProjection{
 				VolumeName:        "kubernetes-api-token",
 				MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
@@ -2205,37 +2164,6 @@ subjects:
   namespace: {{ .Values.global.namespace }}
 `, tokenReviewName, tokenReviewName, tokenReviewName, svc.ServiceAccountName))
 	}
-	if svc.PodReadRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
-		charts.Files[fmt.Sprintf("templates/%s/pod-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: %s-pod-reader
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: %s-pod-reader
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: %s-pod-reader
-subjects:
-- kind: ServiceAccount
-  name: %s
-  namespace: {{ .Values.global.namespace }}
-`, svc.Name, svc.Name, svc.Name, svc.ServiceAccountName))
-	}
-
 	if svc.PigeonsRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		charts.Files[fmt.Sprintf("templates/%s/pigeons-rbac.yaml", svc.Name)] = pigeonsRBACYAML(svc, pigeonsNamespace(ns))
 	}

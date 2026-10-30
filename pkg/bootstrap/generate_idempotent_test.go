@@ -9,7 +9,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -69,7 +68,6 @@ func TestGenerateNeverReMintsCrypto(t *testing.T) {
 			KernelNodes:   1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
-			KmakerNodes:   1,
 			AppServices:   map[string]int32{"dog": 1},
 		},
 	}
@@ -108,16 +106,6 @@ func TestGenerateNeverReMintsCrypto(t *testing.T) {
 
 	if !bytes.Equal(readBytes(t, filepath.Join(dir, "crypto.yaml")), firstCrypto) {
 		t.Error("crypto.yaml changed across generate runs")
-	}
-	if !bytes.Equal(second["kmaker.yaml"], first["kmaker.yaml"]) {
-		t.Error("configs/kmaker.yaml changed after approve-tenant + generate")
-	}
-	firstKmaker, err := protoKmaker.ConfigFromBytes(first["kmaker.yaml"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstKmaker.GetTls().GetKey() == nil {
-		t.Fatal("kmaker.yaml carries no serving key — the stability check above is vacuous")
 	}
 
 	before, err := protoKernel.ConfigFromBytes(first["bootstrap0.yaml"])

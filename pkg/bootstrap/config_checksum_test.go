@@ -41,7 +41,6 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 		},
 	}
 	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
@@ -193,7 +192,6 @@ func TestOauthProviderChangeRollsKernelPods(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			OauthNodes:  1,
 		},
 	}

@@ -105,7 +105,6 @@ func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			OauthNodes:  2,
 		},
 	})

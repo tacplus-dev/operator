@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoGrpcConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
 )
 
@@ -48,17 +47,6 @@ func validateKernelConfig(data []byte) error {
 	return protoKernel.ValidateConfig(m)
 }
 
-// validateKmakerConfig parses emitted kmaker config YAML as kmaker.Config and
-// runs the generated validator.
-func validateKmakerConfig(data []byte) error {
-	m, err := protoKmaker.ConfigFromBytes(data)
-	if err != nil {
-		return err
-	}
-	protoKmaker.ConfigDefaults(m)
-	return protoKmaker.ValidateConfig(m)
-}
-
 // validateServiceBootstrap parses an emitted service bootstrap YAML as the
 // chassis grpcconfig.Config the ServiceManager loads at boot and runs the
 // generated validator.
@@ -83,9 +71,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 			name = dc.BootstrapNames[i]
 		}
 		out = append(out, generatedArtifact{name, "kernel.Config", y, validateKernelConfig})
-	}
-	if dc.KmakerConfig != nil {
-		out = append(out, generatedArtifact{"kmaker", "kmaker.Config", dc.KmakerConfig, validateKmakerConfig})
 	}
 
 	// Platform service bootstrap files. Each is the chassis grpcconfig.Config

@@ -12,7 +12,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	k8syaml "sigs.k8s.io/yaml"
 
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
 
@@ -21,23 +20,16 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 		},
-		Kmaker: &protoKmaker.Config{TokenAudience: "custom-kmaker"},
 	})
 
 	statefulSet := chartFile(t, charts, "templates/kernel/statefulset.yaml")
 	for _, want := range []string{
 		"serviceAccountName: kernel",
 		"automountServiceAccountToken: false",
-		"- name: KMAKER_K8S_TOKEN_FILE\n          value: /var/run/secrets/schematic/kmaker/token",
 		"- name: KERNEL_K8S_TOKEN_AUDIENCE\n          value: schematic-kernel",
-		"- name: kmaker-token\n          mountPath: /var/run/secrets/schematic/kmaker\n          readOnly: true",
-		"- name: kmaker-token\n        projected:",
 		"defaultMode: 0444",
 		"path: token",
-		"audience: custom-kmaker",
-		"expirationSeconds: 600",
 		"- name: kubernetes-api-token\n          mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n          readOnly: true",
 		"- name: kubernetes-api-token\n        projected:",
 		"defaultMode: 0444",
@@ -61,57 +53,6 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 	} {
 		if !strings.Contains(tokenReviewRBAC, want) {
 			t.Fatalf("kernel TokenReview RBAC missing %q\n--- rbac ---\n%s", want, tokenReviewRBAC)
-		}
-	}
-}
-
-func TestGenerateKmakerProjectedKubernetesAPITokenAndRBAC(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KmakerNodes: 1,
-		},
-	})
-
-	deployment := chartFile(t, charts, "templates/kmaker/deployment.yaml")
-	for _, want := range []string{
-		"serviceAccountName: kmaker",
-		"automountServiceAccountToken: false",
-		"- name: kubernetes-api-token\n          mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n          readOnly: true",
-		"- name: kubernetes-api-token\n        projected:",
-		"defaultMode: 0444",
-		"path: token",
-		"expirationSeconds: 3600",
-		"name: kube-root-ca.crt",
-		"path: ca.crt",
-		"- downwardAPI:",
-		"path: namespace",
-		"fieldPath: metadata.namespace",
-	} {
-		if !strings.Contains(deployment, want) {
-			t.Fatalf("kmaker Deployment missing %q\n--- deployment ---\n%s", want, deployment)
-		}
-	}
-
-	tokenReviewRBAC := chartFile(t, charts, "templates/kmaker/tokenreview-rbac.yaml")
-	for _, want := range []string{
-		"resources: [\"tokenreviews\"]",
-		"verbs: [\"create\"]",
-		"name: kmaker",
-	} {
-		if !strings.Contains(tokenReviewRBAC, want) {
-			t.Fatalf("kmaker TokenReview RBAC missing %q\n--- rbac ---\n%s", want, tokenReviewRBAC)
-		}
-	}
-
-	podRBAC := chartFile(t, charts, "templates/kmaker/pod-rbac.yaml")
-	for _, want := range []string{
-		"resources: [\"pods\"]",
-		"verbs: [\"get\"]",
-		"name: kmaker",
-	} {
-		if !strings.Contains(podRBAC, want) {
-			t.Fatalf("kmaker pod RBAC missing %q\n--- rbac ---\n%s", want, podRBAC)
 		}
 	}
 }
@@ -244,7 +185,7 @@ func TestOperatorChartRBACCanManageGeneratedServiceRBAC(t *testing.T) {
 		}
 	}
 
-	// Everything else is namespaced, including the <service>-pod-reader Role the
+	// Everything else is namespaced, including the <service>-pigeons Role the
 	// generated chart emits and the pods/get the operator must hold to mint it.
 	for _, want := range []string{
 		"- roles",
@@ -315,7 +256,6 @@ func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 		},
 	})
 
@@ -801,7 +741,6 @@ func TestAppServicesRenderWithoutAPlatformProtoField(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			AppServices: map[string]int32{"widgeter": 2},
 		},
 	})
@@ -819,7 +758,6 @@ func TestAppServicesRenderWithoutAPlatformProtoField(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			AppServices: map[string]int32{"widgeter": 0},
 		},
 	})
@@ -844,12 +782,12 @@ func TestAppServicesRenderWithoutAPlatformProtoField(t *testing.T) {
 func TestAppServiceRendersIdenticallyToTheFixedFieldPath(t *testing.T) {
 	viaField := generateTestChart(t, &protoOperator.Config{
 		Namespace:        "schematic",
-		Topology:         &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1, EchoNodes: 1},
+		Topology:         &protoOperator.Topology{KernelNodes: 1, EchoNodes: 1},
 		OptionalServices: &protoOperator.OptionalServices{Echo: true},
 	})
 	viaMap := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
-		Topology: &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1,
+		Topology: &protoOperator.Topology{KernelNodes: 1,
 			AppServices: map[string]int32{"echo": 1}},
 	})
 
@@ -1061,8 +999,8 @@ func TestKernelMountsTheConfigOverrideWithoutOwningIt(t *testing.T) {
 }
 
 // TestKeyMaterialConfigsArePackagedAsSecrets: kernel's per-node config carries
-// the node TLS key and its signing CA key, kmaker's carries the cluster CA
-// signing key, and gateway's carries the external TLS key. All three were
+// the node TLS key and its signing CA key, and gateway's carries the external
+// TLS key. Both were
 // packaged as ConfigMaps, which are not treated as secret data by Kubernetes —
 // no encryption-at-rest by default, and readable by anything with configmap get.
 func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
@@ -1070,7 +1008,6 @@ func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:  3,
-			KmakerNodes:  1,
 			GatewayNodes: 1,
 			OpaNodes:     1,
 		},
@@ -1081,7 +1018,6 @@ func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
 		replicas int
 	}{
 		{"kernel", 3},
-		{"kmaker", 1},
 		{"gateway", 1},
 	} {
 		for i := range tc.replicas {
@@ -1118,7 +1054,7 @@ func TestKeyMaterialConfigsArePackagedAsSecrets(t *testing.T) {
 			t.Errorf("kernel StatefulSet still mounts config-%d from a ConfigMap\n--- statefulset ---\n%s", i, statefulSet)
 		}
 	}
-	for _, svc := range []string{"kmaker", "gateway"} {
+	for _, svc := range []string{"gateway"} {
 		deployment := chartFile(t, charts, fmt.Sprintf("templates/%s/deployment.yaml", svc))
 		want := fmt.Sprintf("- name: config\n        secret:\n          secretName: %s0-config", svc)
 		if !strings.Contains(deployment, want) {
@@ -1202,7 +1138,7 @@ func TestChartLabelsWorkloadsWithTheOperatorManagedByValue(t *testing.T) {
 
 // TestWriteToDiskWritesChartFilesPrivate: the rendered chart holds the GitLab
 // registry token (templates/registry-secret.yaml) and the service configs
-// carrying kernel's and kmaker's private keys (templates/<svc>/secret-N.yaml).
+// carrying kernel's and gateway's private keys (templates/<svc>/secret-N.yaml).
 // Every file was written 0644, so all of that was world-readable on the
 // operator host. It also has to tighten a file already on disk: the tree is
 // routinely regenerated in place and os.WriteFile leaves an existing file's
@@ -1222,7 +1158,6 @@ func TestWriteToDiskWritesChartFilesPrivate(t *testing.T) {
 		GitlabRegistryToken: "glpat-not-a-real-token",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 		},
 	})
 	if _, ok := charts.Files["templates/registry-secret.yaml"]; !ok {
@@ -1457,7 +1392,6 @@ func TestPersonalauthRendersOnlyWhenEnabled(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:       1,
-			KmakerNodes:       1,
 			PersonalauthNodes: 2,
 		},
 		OptionalServices: &protoOperator.OptionalServices{Personalauth: true},
@@ -1475,7 +1409,6 @@ func TestPersonalauthRendersOnlyWhenEnabled(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:       1,
-			KmakerNodes:       1,
 			PersonalauthNodes: 2,
 		},
 	})
@@ -1499,7 +1432,6 @@ func TestLlmCredentialServiceConfigsArePackagedAsSecrets(t *testing.T) {
 		LlmCredentialServices: []string{"tasks"},
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			AppServices: map[string]int32{"tasks": 1, "widgeter": 1},
 		},
 	})
@@ -1545,7 +1477,6 @@ func TestLlmCredentialTenantOwnedServiceConfigsArePackagedAsSecrets(t *testing.T
 		Tenants:               []string{"acme", "globex"},
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 			AppServices: map[string]int32{"tasks": 1},
 		},
 	}, map[string]bool{"tasks": true})
@@ -1658,7 +1589,6 @@ func TestLivenessDoesNotDependOnDependencies(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			KmakerNodes:   1,
 			EventbusNodes: 1,
 			StratumNodes:  1,
 			AppServices:   map[string]int32{"widgeter": 1},
@@ -1751,7 +1681,6 @@ func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
 		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
-			KmakerNodes:  1,
 			GatewayNodes: 1,
 		},
 	})
@@ -1788,7 +1717,6 @@ func TestNoExternalAcmeLoadBalancer(t *testing.T) {
 		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
-			KmakerNodes:  1,
 			GatewayNodes: 1,
 		},
 	})
@@ -1825,7 +1753,6 @@ func TestCertChainModeRendersNoPort80(t *testing.T) {
 		ExternalIp: "34.70.146.195",
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
-			KmakerNodes:  1,
 			GatewayNodes: 1,
 		},
 	})
@@ -1847,7 +1774,6 @@ func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
 		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
-			KmakerNodes:  1,
 			GatewayNodes: 1,
 		},
 	})
@@ -1872,7 +1798,6 @@ func TestBlobstoreRendersAMirroredStatefulSetPair(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:    1,
-			KmakerNodes:    1,
 			BlobstoreNodes: 2,
 		},
 		OptionalServices: &protoOperator.OptionalServices{Blobstore: true},
@@ -1959,7 +1884,6 @@ func TestBlobstoreRendersNothingWhenDisabled(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:    1,
-			KmakerNodes:    1,
 			BlobstoreNodes: 2,
 		},
 	})
@@ -2040,7 +1964,6 @@ func TestCoopRendersThePigeonsNamespace(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			KmakerNodes:   1,
 			EventbusNodes: 2,
 			AppServices:   map[string]int32{"coop": 1, "widgeter": 1},
 		},
@@ -2087,7 +2010,7 @@ func TestCoopRendersThePigeonsNamespace(t *testing.T) {
 	// Without the coop there is no pigeons namespace at all.
 	without := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, KmakerNodes: 1, AppServices: map[string]int32{"widgeter": 1}},
+		Topology:  &protoOperator.Topology{KernelNodes: 1, AppServices: map[string]int32{"widgeter": 1}},
 	})
 	for path := range without.Files {
 		if strings.Contains(path, "pigeons") {

@@ -25,7 +25,7 @@ func TestApplyServicesHolderDefaultsPopulatesDeployedEntries(t *testing.T) {
 	if s.GatewayConfig.HealthPollIntervalSeconds != 5 {
 		t.Fatalf("generated defaults must reach the entry: health_poll_interval_seconds = %d, want 5", s.GatewayConfig.HealthPollIntervalSeconds)
 	}
-	if s.KmakerConfig != nil {
+	if s.OpaConfig != nil {
 		t.Fatal("a service not deployed must stay absent")
 	}
 }

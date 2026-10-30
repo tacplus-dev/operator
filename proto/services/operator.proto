@@ -32,7 +32,6 @@ import "sys/x509.proto";
 import "sys/diskstore.proto";
 import "common/credentials.proto";
 import "services/oauth.proto";
-import "services/kmaker.proto";
 
 option (spec.grpc_s2s_client) = {service: "kernel.Mint"};
 option (spec.state_imports) = {source: "kernel.ConfigState"};
@@ -149,10 +148,11 @@ message Topology {
   reserved 13;
   reserved "saml_nodes";
 
-  // kmaker_nodes is the number of bootstrap certificate authority replicas.
-  // Kernel instances contact kmaker with Kubernetes projected service account
-  // tokens to obtain kernel certificates before kernel itself is available.
-  int32 kmaker_nodes = 16 [(spec.default_int) = 3];
+  // 16 held kmaker_nodes. kmaker went 2026-10-29 (#16): nothing called
+  // Kmaker.MintKernelCert (tacplus-dev/kernel#29); kernel's serving cert is
+  // node_tls, signed by the operator at generate time. Reserved, not reused.
+  reserved 16;
+  reserved "kmaker_nodes";
 
   // echo_nodes is used when optional_services.echo = true.
   // Defaults to 1 rather than 3: the sample service is stateless and exists to
@@ -297,9 +297,11 @@ message PKI {
   // Edge signing CAs.
   repeated x509.X509CertChain edge_signing_ca = 6 [(spec.assert_max_size) = 1024];
 
-  // Kmaker signing CA, signed by cluster_ca and constrained to issue only
-  // kernel bootstrap leaf certificates.
-  x509.X509CertChain kmaker_signing_ca = 7;
+  // 7 held kmaker_signing_ca, a CA private key under cluster_ca for kmaker,
+  // retired with kmaker (#16). Reserved because it reached live crypto.yaml
+  // files; generate rewrites a crypto.yaml that still carries it.
+  reserved 7;
+  reserved "kmaker_signing_ca";
 
   // 8 held blobstore_token_key, an HMAC secret blobstore signed upload tokens
   // with. There is no such secret: an upload token is raw randomness whose
@@ -397,10 +399,9 @@ message Config {
   // in each tenant's OAuthTenantConfig.
   oauth.ClusterOAuthConfig cluster_oauth = 17;
 
-  // kmaker owns cluster bootstrap certificate signing for kernel. Operator
-  // renders this into kmaker's mounted runtime config and owns the Secret that
-  // carries kmaker.Config.signing_ca.
-  kmaker.Config kmaker = 19;
+  // 19 held kmaker, the kmaker service's config, retired with kmaker (#16).
+  reserved 19;
+  reserved "kmaker";
 
   // llm_credential is a shared secret (e.g. an Anthropic API key) fanned out
   // into the generated bootstrap config of every app service named in

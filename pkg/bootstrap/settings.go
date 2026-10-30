@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"google.golang.org/protobuf/proto"
+	"gopkg.in/yaml.v3"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 )
@@ -128,6 +129,35 @@ func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
 	}
 
 	return os.WriteFile(filepath.Join(cfgDir, OperatorCryptoFile), data, 0600)
+}
+
+// retiredPKIKeys are crypto.yaml keys under pki whose fields are reserved now
+// but which held private keys in files already written. Each is listed in
+// both spellings ConfigFromBytes accepts.
+var retiredPKIKeys = []string{"kmaker_signing_ca", "kmakerSigningCa"}
+
+// cryptoHoldsRetiredKeys reports whether cfgDir's crypto.yaml still carries a
+// retired private key. LoadConfig drops unknown fields, so the key never
+// reaches cfg and nothing would rewrite the file on its own; a caller that
+// sees true saves crypto.yaml again. An unreadable file reports false:
+// LoadConfig has already reported it.
+func cryptoHoldsRetiredKeys(cfgDir string) bool {
+	data, err := os.ReadFile(filepath.Join(cfgDir, OperatorCryptoFile))
+	if err != nil {
+		return false
+	}
+	var crypto struct {
+		Pki map[string]any `yaml:"pki"`
+	}
+	if err := yaml.Unmarshal(data, &crypto); err != nil {
+		return false
+	}
+	for _, k := range retiredPKIKeys {
+		if _, ok := crypto.Pki[k]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Issuer computes the full issuer URL from cfg.Fqdn and cfg.Port.

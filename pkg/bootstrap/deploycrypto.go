@@ -15,7 +15,6 @@ import (
 	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
 	wrapperSpiffe "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/spiffe"
 	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
 	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
@@ -131,9 +130,6 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 
 	clusterCAImmKey, clusterCACert, err := ensureClusterCA(cfg, caImmKey, caCert)
 	if err != nil {
-		return err
-	}
-	if err := ensureKmakerSigningCAWithParent(cfg, clusterCAImmKey, clusterCACert); err != nil {
 		return err
 	}
 
@@ -269,50 +265,6 @@ func ensureClusterCA(cfg *protoOperator.Config, rootKey *wrapperKey.ImmutableKey
 	}
 
 	return clusterCAImmKey, clusterCACert, nil
-}
-
-func kmakerSigningCANeedsGeneration(cfg *protoOperator.Config) bool {
-	return cfg == nil ||
-		cfg.Pki == nil ||
-		cfg.Pki.KmakerSigningCa == nil ||
-		len(cfg.Pki.KmakerSigningCa.Chain) == 0 ||
-		cfg.Pki.KmakerSigningCa.Key == nil
-}
-
-func ensureKmakerSigningCA(cfg *protoOperator.Config) error {
-	if !kmakerSigningCANeedsGeneration(cfg) {
-		return nil
-	}
-	if cfg == nil || cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
-		return fmt.Errorf("pki.cluster_ca with private key is required")
-	}
-	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
-	if err != nil {
-		return fmt.Errorf("loading cluster CA key: %w", err)
-	}
-	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
-	if err != nil {
-		return fmt.Errorf("loading cluster CA cert: %w", err)
-	}
-	return ensureKmakerSigningCAWithParent(cfg, clusterCAImmKey, cc.Leaf().X509Certificate())
-}
-
-func ensureKmakerSigningCAWithParent(cfg *protoOperator.Config, clusterKey *wrapperKey.ImmutableKey, clusterCert *stdx509.Certificate) error {
-	if cfg == nil {
-		return fmt.Errorf("operator config is nil")
-	}
-	if cfg.Pki == nil {
-		cfg.Pki = &protoOperator.PKI{}
-	}
-	if !kmakerSigningCANeedsGeneration(cfg) {
-		return nil
-	}
-	chain, err := generateKmakerSigningCACertChain(clusterKey, clusterCert)
-	if err != nil {
-		return err
-	}
-	cfg.Pki.KmakerSigningCa = chain
-	return nil
 }
 
 // GenerateKernelTLS regenerates only kernel node/edge TLS leaf certificates
@@ -548,62 +500,6 @@ func generateSigningCACertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.
 	}, nil
 }
 
-func generateKmakerSigningCACertChain(caKey *wrapperKey.ImmutableKey, caCert *stdx509.Certificate) (*protoX509.X509CertChain, error) {
-	signingKey, err := wrapperKey.NewEC384Key()
-	if err != nil {
-		return nil, fmt.Errorf("generating kmaker signing CA key: %w", err)
-	}
-	signingKey.Created = time.Now().Unix()
-
-	signingImmKey, err := wrapperKey.NewImmutableKey(signingKey)
-	if err != nil {
-		return nil, fmt.Errorf("creating immutable kmaker signing CA key: %w", err)
-	}
-
-	now := time.Now()
-	notAfter := now.Add(caTTL)
-	if caCert.NotAfter.Before(notAfter) {
-		notAfter = caCert.NotAfter
-	}
-	if !notAfter.After(now) {
-		return nil, fmt.Errorf("cluster CA is expired")
-	}
-	template := &stdx509.Certificate{
-		SerialNumber:          wrapperX509.GenerateSerialNumber(),
-		Subject:               utf8CN("kmaker-kernel-signing-ca"),
-		NotBefore:             now,
-		NotAfter:              notAfter,
-		KeyUsage:              stdx509.KeyUsageCertSign | stdx509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
-	}
-
-	certDER, err := stdx509.CreateCertificate(rand.Reader, template, caCert, signingImmKey.PublicKey(), caKey.PrivateKey())
-	if err != nil {
-		return nil, fmt.Errorf("creating kmaker signing CA certificate: %w", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	certProto, err := wrapperX509.NewX509Cert(certPEM)
-	if err != nil {
-		return nil, fmt.Errorf("wrapping kmaker signing CA cert: %w", err)
-	}
-	certProto.Id = signingKey.Id
-
-	caCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
-	caCertProto, err := wrapperX509.NewX509Cert(caCertPEM)
-	if err != nil {
-		return nil, fmt.Errorf("wrapping CA cert for kmaker signing chain: %w", err)
-	}
-
-	return &protoX509.X509CertChain{
-		Chain: []*protoX509.X509Cert{certProto, caCertProto},
-		Key:   signingKey,
-	}, nil
-}
-
 // EnsureGatewayExternalTLS generates a gateway external TLS certificate signed
 // by the cluster CA if one does not already exist. The cert is stored in
 // cfg.Pki.EdgeTls[0] (the proto field designated for gateway/edge TLS).
@@ -647,70 +543,6 @@ func EnsureGatewayExternalTLS(cfg *protoOperator.Config, fqdn string) (bool, err
 	}
 
 	return true, nil
-}
-
-// EnsureKmakerServingTLS generates the serving certificate for kmaker's own
-// gRPC listener, signed by the cluster CA, if one does not already exist. The
-// cert is stored in cfg.Kmaker.Tls (kmaker.Config field 10), which
-// BuildKmakerConfig copies into the generated kmaker service config.
-// Returns true if a new cert was generated.
-//
-// Unlike the kernel/gateway certs this material is not part of cfg.Pki, so it
-// is not persisted to crypto.yaml — it is regenerated whenever the operator
-// process reloads its config, and reused for the lifetime of that cfg.
-func EnsureKmakerServingTLS(cfg *protoOperator.Config) (bool, error) {
-	if cfg.Pki == nil || cfg.Pki.ClusterCa == nil || len(cfg.Pki.ClusterCa.Chain) == 0 || cfg.Pki.ClusterCa.Key == nil {
-		return false, fmt.Errorf("pki.cluster_ca with private key is required for kmaker serving TLS")
-	}
-
-	// Idempotent: skip if a kmaker serving cert already exists.
-	if cfg.Kmaker != nil && cfg.Kmaker.Tls != nil &&
-		len(cfg.Kmaker.Tls.Chain) > 0 && cfg.Kmaker.Tls.Key != nil {
-		return false, nil
-	}
-
-	clusterCAImmKey, err := wrapperKey.NewImmutableKey(cfg.Pki.ClusterCa.Key)
-	if err != nil {
-		return false, fmt.Errorf("loading cluster CA key: %w", err)
-	}
-	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
-	if err != nil {
-		return false, fmt.Errorf("loading cluster CA cert: %w", err)
-	}
-	clusterCACert := cc.Leaf().X509Certificate()
-
-	chain, err := generateSignedCertChain(clusterCAImmKey, clusterCACert, kmakerServingDNSNames(cfg), "")
-	if err != nil {
-		return false, fmt.Errorf("generating kmaker serving TLS cert: %w", err)
-	}
-
-	if cfg.Kmaker == nil {
-		cfg.Kmaker = &protoKmaker.Config{}
-	}
-	cfg.Kmaker.Tls = chain
-
-	return true, nil
-}
-
-// kmakerServingDNSNames lists the names clients may use to reach kmaker.
-// Same shape as the kernel node certs (own name + service DNS): "kmaker" is
-// the service id a SPIFFE/gateway-style verifier uses as domain_name, and
-// "kmaker0" is the Deployment/Service name plus its in-cluster DNS forms.
-func kmakerServingDNSNames(cfg *protoOperator.Config) []string {
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
-	}
-	dnsNames := []string{
-		"kmaker",
-		"kmaker0",
-		fmt.Sprintf("kmaker0.%s.svc", ns),
-		fmt.Sprintf("kmaker0.%s.svc.cluster.local", ns),
-	}
-	if cfg.Fqdn != "" {
-		dnsNames = append(dnsNames, cfg.Fqdn)
-	}
-	return dnsNames
 }
 
 // GatewayExternalTLSPEM extracts PEM-encoded certificate chain and private key

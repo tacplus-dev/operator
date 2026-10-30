@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	stdx509 "crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,19 +8,15 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
-	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
 	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
 	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
 	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoKmaker "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kmaker"
 	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
 	protoTokenRequest "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/tokenrequest"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -288,162 +283,6 @@ func TestGenerateCryptoPreservesExistingClusterCA(t *testing.T) {
 	}
 }
 
-func TestGenerateCryptoCreatesConstrainedKmakerSigningCA(t *testing.T) {
-	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
-		t.Fatal("kmaker signing CA was not generated")
-	}
-	if got, cluster := cfg.Pki.KmakerSigningCa.Chain[0].Id, cfg.Pki.ClusterCa.Chain[0].Id; got == cluster {
-		t.Fatalf("kmaker signing CA reused broad cluster CA id %q", got)
-	}
-
-	cc, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.KmakerSigningCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cert := cc.Leaf().X509Certificate()
-	if !cert.IsCA {
-		t.Fatal("kmaker signing certificate must be a CA")
-	}
-	if cert.MaxPathLen != 0 || !cert.MaxPathLenZero {
-		t.Fatalf("kmaker signing CA path length = %d zero=%v, want constrained zero", cert.MaxPathLen, cert.MaxPathLenZero)
-	}
-
-	kmakerConfig, err := BuildKmakerConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := kmakerConfig.SigningCa.Chain[0].Id, cfg.Pki.KmakerSigningCa.Chain[0].Id; got != want {
-		t.Fatalf("kmaker config signing CA id = %q, want dedicated kmaker signing CA %q", got, want)
-	}
-	if got, broad := kmakerConfig.SigningCa.Chain[0].Id, cfg.Pki.ClusterCa.Chain[0].Id; got == broad {
-		t.Fatalf("kmaker config signing CA reused broad cluster CA id %q", got)
-	}
-}
-
-func TestKmakerSigningCAChainsToRoot(t *testing.T) {
-	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-
-	signingKey, err := wrapperKey.NewImmutableKey(cfg.Pki.KmakerSigningCa.Key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signingChain, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.KmakerSigningCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafChain, err := generateSignedCertChain(
-		signingKey,
-		signingChain.Leaf().X509Certificate(),
-		[]string{"kernel-0"},
-		"spiffe://local/dev/kernel/kernel-0",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf, err := wrapperX509.NewImmutableX509CertChain(leafChain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.RootCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cluster, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	roots := stdx509.NewCertPool()
-	roots.AddCert(root.Leaf().X509Certificate())
-	intermediates := stdx509.NewCertPool()
-	intermediates.AddCert(signingChain.Leaf().X509Certificate())
-	intermediates.AddCert(cluster.Leaf().X509Certificate())
-	if _, err := leaf.Leaf().X509Certificate().Verify(stdx509.VerifyOptions{
-		DNSName:       "kernel-0",
-		Roots:         roots,
-		Intermediates: intermediates,
-		CurrentTime:   time.Now(),
-		KeyUsages:     []stdx509.ExtKeyUsage{stdx509.ExtKeyUsageServerAuth},
-	}); err != nil {
-		t.Fatalf("kmaker leaf did not verify to root through kmaker signing CA: %v", err)
-	}
-}
-
-func TestBuildKmakerConfigRejectsBroadClusterSigningCAOverride(t *testing.T) {
-	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Kmaker = &protoKmaker.Config{SigningCa: cfg.Pki.ClusterCa}
-
-	if _, err := BuildKmakerConfig(cfg); err == nil {
-		t.Fatal("expected broad cluster CA override to be rejected")
-	}
-}
-
-func TestBuildBundleIncludesKmakerServiceConfig(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &protoOperator.Config{
-		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
-		SpiffePrefix: "local.dev",
-		Topology: &protoOperator.Topology{
-			KernelNodes: 1,
-			KmakerNodes: 1,
-		},
-	}
-	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveSettings(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveCrypto(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	servicesDir := filepath.Join(dir, "services")
-	if err := os.MkdirAll(servicesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	bundle, err := BuildBundle(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, serviceYAML := range bundle.Services {
-		if strings.Contains(serviceYAML, "private_key:") {
-			t.Fatalf("bundle service %s contains private_key:\n%s", name, serviceYAML)
-		}
-	}
-	kmakerYAML := bundle.Services["kmaker"]
-	if kmakerYAML == "" {
-		t.Fatalf("bundle services missing kmaker: %#v", bundle.Services)
-	}
-	kmakerConfig, err := protoKmaker.ConfigFromBytes([]byte(kmakerYAML))
-	if err != nil {
-		t.Fatalf("parsing bundled kmaker config: %v", err)
-	}
-	if got := kmakerConfig.GetTokenAudience(); got != "kmaker" {
-		t.Fatalf("bundled kmaker token audience = %q, want kmaker", got)
-	}
-	if kmakerConfig.GetSigningCa() == nil {
-		t.Fatal("bundled kmaker config missing signing CA")
-	}
-	values := BundleServiceValues(bundle)
-	if entry, ok := values["kmaker"].(map[string]interface{}); !ok || entry["config"] == "" {
-		t.Fatalf("bundle service values missing kmaker config: %#v", values["kmaker"])
-	}
-}
-
 // TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs verifies that
 // BundleServiceValues translates bootstrap0..N keys to kernel0..N and that all
 // enabled services carry non-empty config values — the bug that caused pods to
@@ -460,7 +299,6 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 			EventbusNodes: 1,
 			OauthNodes:    1,
 			OpaNodes:      1,
-			KmakerNodes:   1,
 		},
 	}
 	if err := GenerateCrypto(cfg, 2, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
@@ -483,6 +321,12 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 	bundle, err := BuildBundle(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	for name, serviceYAML := range bundle.Services {
+		if strings.Contains(serviceYAML, "private_key:") {
+			t.Fatalf("bundle service %s contains private_key:\n%s", name, serviceYAML)
+		}
 	}
 
 	// Verify raw bundle has bootstrap0/bootstrap1 keys.
@@ -518,7 +362,7 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 	}
 
 	// Per-service configs must be present and non-empty.
-	for _, svc := range []string{"gateway", "eventbus", "oauth", "opa", "kmaker"} {
+	for _, svc := range []string{"gateway", "eventbus", "oauth", "opa"} {
 		entry, ok := vals[svc].(map[string]interface{})
 		if !ok {
 			t.Fatalf("BundleServiceValues missing %s: keys = %v", svc, valKeys(vals))
@@ -569,21 +413,6 @@ func findDelegate(t *testing.T, delegates []*protoKernel.Delegate, name string) 
 	return nil
 }
 
-func TestEnsureKmakerSigningCABackfillsExistingClusterCrypto(t *testing.T) {
-	cfg := &protoOperator.Config{}
-	if err := GenerateCrypto(cfg, 1, 0, "console.schematic.io", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Pki.KmakerSigningCa = nil
-
-	if err := ensureKmakerSigningCA(cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Pki.KmakerSigningCa == nil || len(cfg.Pki.KmakerSigningCa.Chain) == 0 || cfg.Pki.KmakerSigningCa.Key == nil {
-		t.Fatal("kmaker signing CA was not backfilled")
-	}
-}
-
 func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	cfg := &protoOperator.Config{}
 	if err := GenerateCrypto(cfg, 2, 0, "console.schematic.io", "local.dev"); err != nil {
@@ -593,8 +422,6 @@ func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	clusterKeyID := cfg.Pki.ClusterCa.Key.Id
 	signingCertID := cfg.Pki.NodeSigningCa[0].Chain[0].Id
 	signingKeyID := cfg.Pki.NodeSigningCa[0].Key.Id
-	kmakerSigningCertID := cfg.Pki.KmakerSigningCa.Chain[0].Id
-	kmakerSigningKeyID := cfg.Pki.KmakerSigningCa.Key.Id
 	oldLeafID := cfg.Pki.NodeTls[0].Chain[0].Id
 
 	if err := GenerateKernelTLS(cfg, 2, 0, "console.schematic.io", "local.dev"); err != nil {
@@ -612,12 +439,6 @@ func TestGenerateKernelTLSPreservesClusterCAAndSigningCA(t *testing.T) {
 	}
 	if got := cfg.Pki.NodeSigningCa[0].Key.Id; got != signingKeyID {
 		t.Fatalf("node signing key id changed from %q to %q", signingKeyID, got)
-	}
-	if got := cfg.Pki.KmakerSigningCa.Chain[0].Id; got != kmakerSigningCertID {
-		t.Fatalf("kmaker signing cert id changed from %q to %q", kmakerSigningCertID, got)
-	}
-	if got := cfg.Pki.KmakerSigningCa.Key.Id; got != kmakerSigningKeyID {
-		t.Fatalf("kmaker signing key id changed from %q to %q", kmakerSigningKeyID, got)
 	}
 	if got := cfg.Pki.NodeTls[0].Chain[0].Id; got == oldLeafID {
 		t.Fatalf("kernel TLS leaf id did not change: %q", got)
@@ -1217,114 +1038,11 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 	}
 }
 
-func TestBuildKmakerConfigPopulatesServingTLS(t *testing.T) {
-	cfg := &protoOperator.Config{Namespace: "cavalier", Fqdn: "schematic.localtest.me"}
-	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-
-	kmakerConfig, err := BuildKmakerConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if kmakerConfig.Tls == nil || len(kmakerConfig.Tls.Chain) == 0 || kmakerConfig.Tls.Key == nil {
-		t.Fatal("kmaker config has no serving TLS cert")
-	}
-
-	cc, err := wrapperX509.NewImmutableX509CertChain(kmakerConfig.Tls)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cert := cc.Leaf().X509Certificate()
-	want := []string{"kmaker", "kmaker0", "kmaker0.cavalier.svc", "kmaker0.cavalier.svc.cluster.local", "schematic.localtest.me"}
-	for _, name := range want {
-		found := false
-		for _, dns := range cert.DNSNames {
-			if dns == name {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("kmaker serving cert missing SAN %q: %v", name, cert.DNSNames)
-		}
-	}
-
-	// The serving cert must chain to the cluster CA (and thus to the root).
-	roots := stdx509.NewCertPool()
-	root, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.RootCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roots.AddCert(root.Leaf().X509Certificate())
-	intermediates := stdx509.NewCertPool()
-	cluster, err := wrapperX509.NewImmutableX509CertChain(cfg.Pki.ClusterCa)
-	if err != nil {
-		t.Fatal(err)
-	}
-	intermediates.AddCert(cluster.Leaf().X509Certificate())
-	if _, err := cert.Verify(stdx509.VerifyOptions{
-		DNSName:       "kmaker",
-		Roots:         roots,
-		Intermediates: intermediates,
-		CurrentTime:   time.Now(),
-		KeyUsages:     []stdx509.ExtKeyUsage{stdx509.ExtKeyUsageServerAuth},
-	}); err != nil {
-		t.Fatalf("kmaker serving cert did not verify to root: %v", err)
-	}
-}
-
-func TestEnsureKmakerServingTLSIdempotent(t *testing.T) {
-	cfg := &protoOperator.Config{Namespace: "cavalier"}
-	if err := GenerateCrypto(cfg, 1, 0, "schematic.localtest.me", "local.dev"); err != nil {
-		t.Fatal(err)
-	}
-
-	generated, err := EnsureKmakerServingTLS(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !generated {
-		t.Fatal("first call should generate a cert")
-	}
-	firstCertID := cfg.Kmaker.Tls.Chain[0].Id
-	firstKeyID := cfg.Kmaker.Tls.Key.Id
-
-	generated, err = EnsureKmakerServingTLS(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if generated {
-		t.Fatal("second call should skip (idempotent)")
-	}
-	if got := cfg.Kmaker.Tls.Chain[0].Id; got != firstCertID {
-		t.Fatalf("cert id changed from %q to %q on idempotent run", firstCertID, got)
-	}
-	if got := cfg.Kmaker.Tls.Key.Id; got != firstKeyID {
-		t.Fatalf("key id changed from %q to %q on idempotent run", firstKeyID, got)
-	}
-
-	// BuildKmakerConfig must reuse the existing cert rather than minting a new one.
-	kmakerConfig, err := BuildKmakerConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := kmakerConfig.Tls.Chain[0].Id; got != firstCertID {
-		t.Fatalf("BuildKmakerConfig minted a new cert id %q, want reuse of %q", got, firstCertID)
-	}
-}
-
-func TestEnsureKmakerServingTLSRequiresClusterCA(t *testing.T) {
-	if _, err := EnsureKmakerServingTLS(&protoOperator.Config{}); err == nil {
-		t.Fatal("expected error when pki.cluster_ca is absent")
-	}
-}
-
-// TestServiceConfigProviderCachesPkiAndKmakerServingTLS simulates two
-// reconciles: the provider closure must reuse the cached PKI and kmaker
-// serving TLS rather than minting fresh material on every call. A fresh
-// kmaker cert each reconcile changes the chart's config checksum and rolls
-// kmaker's pods every interval.
-func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
+// TestServiceConfigProviderCachesPki simulates two reconciles: the provider
+// closure must reuse the cached PKI rather than minting fresh material on
+// every call. Fresh material each reconcile changes the chart's config
+// checksum and rolls the pods every interval.
+func TestServiceConfigProviderCachesPki(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
@@ -1332,7 +1050,6 @@ func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
-			KmakerNodes: 1,
 		},
 	}
 	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
@@ -1375,24 +1092,7 @@ func TestServiceConfigProviderCachesPkiAndKmakerServingTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// kmaker's serving cert and key must be byte-identical across reconciles.
-	firstKmaker, err := protoKmaker.ConfigFromBytes([]byte(serviceConfig("kmaker", first)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondKmaker, err := protoKmaker.ConfigFromBytes([]byte(serviceConfig("kmaker", second)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstKmaker.GetTls() == nil || len(firstKmaker.GetTls().GetChain()) == 0 || firstKmaker.GetTls().GetKey() == nil {
-		t.Fatal("first reconcile produced no kmaker serving TLS")
-	}
-	if !proto.Equal(firstKmaker.GetTls(), secondKmaker.GetTls()) {
-		t.Fatalf("kmaker serving TLS changed between reconciles:\nfirst:  %v\nsecond: %v",
-			firstKmaker.GetTls(), secondKmaker.GetTls())
-	}
-
-	// The PKI-derived kernel bootstrap must likewise be stable.
+	// The PKI-derived kernel bootstrap must be stable.
 	if got, want := serviceConfig("kernel0", second), serviceConfig("kernel0", first); got != want {
 		t.Fatal("kernel0 config changed between reconciles")
 	}

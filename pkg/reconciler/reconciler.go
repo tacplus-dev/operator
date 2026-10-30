@@ -1062,7 +1062,7 @@ func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) e
 		if err := r.client.Get(ctx, types.NamespacedName{Name: name + "-config", Namespace: ns}, cm); err == nil {
 			_ = r.client.Delete(ctx, cm)
 		}
-		// Services whose config holds private key material (gateway, kmaker)
+		// Services whose config holds private key material (kernel, gateway)
 		// package it as a Secret under the same name.
 		sec := &corev1.Secret{}
 		if err := r.client.Get(ctx, types.NamespacedName{Name: name + "-config", Namespace: ns}, sec); err == nil {

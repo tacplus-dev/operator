@@ -20,7 +20,6 @@ states: all
 depends:
   - kernel
   - oauth
-  - kmaker
   - gateway
   - eventbus
   - opa

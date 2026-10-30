@@ -43,7 +43,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # Namespaced RBAC emitted by the generated service chart
-  # (e.g. <service>-pod-reader).
+  # (e.g. <service>-pigeons).
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources:
       - roles
@@ -51,7 +51,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
   # RBAC escalation prevention: the operator can only mint the
-  # <service>-pod-reader Role above if it holds get itself, and the
+  # <service>-pigeons Role above (pods get) if it holds get itself, and the
   # harness-chaos Role (pods delete by name, D27) if it holds delete. Delete
   # adds no reach: the operator already deletes the StatefulSets that own them.
   # The reconciler also lists pods (through its cache, hence watch) to delete
