@@ -1,0 +1,76 @@
+// Package operatorv1 is the uni-config: the one document that defines a
+// deployment entirely (#17, Jody 2026-11-01).
+//
+// A deployment's pipeline assembles it in the job's memory from the
+// committed, non-secret part of its repository (operator.yaml, images.yaml,
+// services/*.yaml, tenants/*/oauth.yaml, services/opa/**) and the secrets in
+// its protected CI/CD variables, and applies it as one namespaced Secret,
+// `uni-config`, whose single key `uni-config` holds this message. The
+// operator consumes only it: no ConfigMap, no other Secret, no environment
+// variable carries a deployment's configuration or secrets.
+//
+// Versioned by package: a change that breaks a deployment's document is a new
+// package (operatorv2), never a new meaning for a field here. Spelled
+// operatorv1, not operator.v1: tacplus names the Go package after the proto
+// package, and a dotted one is not a Go identifier.
+
+syntax = "proto3";
+
+package operatorv1;
+
+import "sys/spec.proto";
+import "services/operator.proto";
+import "services/oauth.proto";
+import "services/mailbox.proto";
+
+// UniConfig is the uni-config. Its non-secret part is what a deployment
+// commits; everything a protected variable holds is under secrets, so the
+// operator can refuse secret material that arrived through the committed part.
+message UniConfig {
+  // operator is operator.yaml and images.yaml: topology, FQDN, mode, the
+  // optional services, the tenants, the image pins. It carries no secret:
+  // pki, llm_credential and gitlab_registry_token are refused here and belong
+  // under secrets.
+  operator.Config operator = 1 [(spec.assert_required) = true];
+
+  // services is each service's config, keyed by service name: the YAML of
+  // services/<name>.yaml. Each is checked against that service's Config in
+  // the registry the operator embeds, which names an unknown service or key.
+  // Keyed by name, as Topology.app_services is, so an application's own
+  // services need no field here.
+  map<string, string> services = 2 [(spec.assert_max_size) = 256];
+
+  // tenants is each tenant's IdP config, keyed by tenant name: what
+  // tenants/<name>/oauth.yaml held.
+  map<string, oauth.OAuthTenantConfig> tenants = 3 [(spec.assert_max_size) = 64];
+
+  // opa_policies is the OPA entitlements policy: each file under
+  // services/opa/, keyed by its path below that directory
+  // (e.g. "idp/claims.rego"), with its source as the value.
+  map<string, string> opa_policies = 4 [(spec.assert_max_size) = 256];
+
+  // secrets is everything the deployment's protected variables hold.
+  Secrets secrets = 5 [(spec.assert_required) = true];
+}
+
+// Secrets is the secret part of a uni-config: what crypto.yaml held, and each
+// service's own Secrets message. A service's Secrets reaches only that
+// service's pods, never kernel's combined config seed.
+message Secrets {
+  // pki is the deployment's PKI: the root and cluster CAs, the per-node TLS and
+  // signing CAs, the edge certificates (what crypto.yaml's pki held).
+  operator.PKI pki = 1 [(spec.assert_required) = true];
+
+  // llm_credential is operator.Config.llm_credential: the shared credential
+  // fanned out to operator.Config.llm_credential_services.
+  string llm_credential = 2;
+
+  // gitlab_registry_token is operator.Config.gitlab_registry_token.
+  string gitlab_registry_token = 3;
+
+  // oauth is the oauth service's secrets (the Sign in with Apple key).
+  oauth.Secrets oauth = 4;
+
+  // mailbox is the mailbox service's secrets (the crew-mail service account).
+  mailbox.Secrets mailbox = 5;
+}

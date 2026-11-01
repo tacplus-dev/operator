@@ -1,10 +1,13 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -14,7 +17,6 @@ import (
 
 	loggerchassis "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/logger"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
 )
@@ -45,7 +47,7 @@ func runOperator(cmd *cobra.Command, args []string) error {
 
 	switch cfg.GetMode() {
 	case protoOperator.OperatorMode_GENERATE_ONLY:
-		return runGenerate(cfg, log)
+		return runGenerate(dir, cfg, log)
 
 	default: // IN_CLUSTER
 		return runInCluster(dir, cfg, log)
@@ -60,12 +62,8 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("getting kubeconfig: %w", err)
 	}
 
-	// Determine the operator's own namespace for reading secrets (e.g. gitlab-registry).
-	// Standard Kubernetes pattern: inject via POD_NAMESPACE env var in the Deployment spec.
-	operatorNS := os.Getenv("POD_NAMESPACE")
-	if operatorNS == "" {
-		operatorNS = "schematic-operator"
-	}
+	// The operator's own namespace, for reading secrets (e.g. gitlab-registry).
+	operatorNS := operatorNamespace(serviceAccountNamespaceFile)
 
 	targetNS := cfg.GetNamespace()
 	if targetNS == "" {
@@ -121,6 +119,11 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
 	}
 	rec := reconciler.New(cfg, provider, checker, mgr, log, operatorNS, CurrentSeries(), CurrentMajorMinor(), tenantOwned, pinnedTenant)
+	serviceSecrets, err := LoadServiceSecrets(dir)
+	if err != nil {
+		return err
+	}
+	rec.SetServiceSecrets(serviceSecrets)
 
 	// Register as a managed runnable so the manager starts it AFTER the k8s
 	// cache is ready. This prevents the "cache is not started" error when
@@ -129,24 +132,85 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		return fmt.Errorf("registering reconciler: %w", err)
 	}
 
-	return mgr.Start(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The uni-config is the operator's only input, read once at start. A new
+	// one (the pipeline applied a changed Secret, and the kubelet refreshed the
+	// mount) restarts the operator, which renders from it; helm then changes
+	// only the objects whose content changed.
+	if uniConfigSource != "" && uniConfigSource != "-" {
+		changed := watchFile(ctx, uniConfigSource, uniConfigPollInterval)
+		go func() {
+			select {
+			case <-changed:
+				log.Info("the uni-config changed: restarting to render from it", zap.String("path", uniConfigSource))
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	return mgr.Start(ctx)
 }
 
-func runGenerate(cfg *protoOperator.Config, log *zap.Logger) error {
+// serviceAccountNamespaceFile is where Kubernetes mounts the pod's namespace
+// with its service account token (the chart's kubernetes-api-token volume).
+const serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// operatorNamespace reads the operator's own namespace from the service
+// account mount at p: the pod carries no POD_NAMESPACE variable (#17).
+// Without the mount (outside a pod) it is the chart's default.
+func operatorNamespace(p string) string {
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "schematic-operator"
+	}
+	if ns := strings.TrimSpace(string(data)); ns != "" {
+		return ns
+	}
+	return "schematic-operator"
+}
+
+// uniConfigPollInterval is how often the in-cluster operator checks its
+// mounted uni-config for a change. The kubelet refreshes a Secret mount within
+// about a minute, so polling faster gains nothing.
+const uniConfigPollInterval = 30 * time.Second
+
+// watchFile returns a channel that is closed when the content of the file at p
+// differs from what it was when the watch began. It stops with ctx. A file
+// that cannot be read is not a change: a Secret mount is replaced atomically,
+// and a read between the swap's steps must not restart the operator.
+func watchFile(ctx context.Context, p string, interval time.Duration) <-chan struct{} {
+	changed := make(chan struct{})
+	initial, _ := os.ReadFile(p)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				data, err := os.ReadFile(p)
+				if err == nil && !bytes.Equal(data, initial) {
+					close(changed)
+					return
+				}
+			}
+		}
+	}()
+	return changed
+}
+
+func runGenerate(dir string, cfg *protoOperator.Config, log *zap.Logger) error {
 	topo := cfg.GetTopology()
 	if topo == nil || topo.GatewayNodes == 0 {
 		return fmt.Errorf("topology.gateway_nodes must be set in GENERATE_ONLY mode")
 	}
 
-	tenantOwned, err := TenantOwnedServices()
+	g, err := newGenerator(dir, nil)
 	if err != nil {
-		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+		return err
 	}
-	pinnedTenant, err := PinnedTenantServices()
-	if err != nil {
-		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
-	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err

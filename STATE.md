@@ -1,9 +1,9 @@
 # State: operator
 
-Overwritten to stay current (loopers and agents). Last updated: 2026-10-30 by the looper (#16).
+Overwritten to stay current (loopers and agents). Last updated: 2026-11-01 by the looper (#17).
 
 - **Version / line:** unreleased (no tag yet, #6); tacplus floor 2.4 in `tacplus.yaml`, but its dependencies now need 2.5 (#15)
-- **Works:** `generate` renders the platform services (kernel, gateway, eventbus, oauth, opa, stratum, letsencrypt) and the app's own services from operator.yaml and crypto.yaml. kmaker is retired (#16): no kmaker workload, config or RBAC, and no `pki.kmaker_signing_ca`; generate rewrites an older crypto.yaml that still holds that key.
+- **Works:** `generate` renders the platform services (kernel, gateway, eventbus, oauth, opa, stratum, letsencrypt) and the app's own services from operator.yaml and crypto.yaml. kmaker is retired (#16): no kmaker workload, config or RBAC, and no `pki.kmaker_signing_ca`; generate rewrites an older crypto.yaml that still holds that key. The uni-config (#17, docs/uni-config.md): `operatorv1.UniConfig` defines a deployment; `uni-config assemble` builds it from a config dir and secret variables, `validate` checks it (unknown fields, missing secrets by name), `--uni-config` runs any command from it, and the operator chart mounts only the `uni-config` Secret. Service `Secrets` (oauth, mailbox) are rendered from it into `<svc>-secrets`; no pipeline-written Secrets. `NODE_MODE` is gone.
 - **Released / deployed:** nothing released from this repository yet
-- **Known gaps:** with the latest dependencies (tacplus 2.5.2), three delegate tests fail on stratum (`TestEnsureServiceDelegates*`), the same on main before #16, for #15; `spiffe_prefix` reaches no config since kmaker went (#14)
-- **Blocked on:** `just gates` with the looper's tacplus: #15 (floor 2.5) and tacplus-dev/tacplus#188 (no `go` in the compiler image)
+- **Known gaps:** with the latest dependencies (tacplus 2.5.2), three delegate tests fail on stratum (`TestEnsureServiceDelegates*`), the same on main before #16, for #15; `spiffe_prefix` reaches no config since kmaker went (#14); pods still carry config env vars until their services read typed fields: the chassis' token, audience and config path and the `Secrets` env reader (tacplus-dev/tacplus#262), stratum's seed members and role (tacplus-dev/stratum#23), blobstore's peers (tacplus-dev/blobstore#10)
+- **Blocked on:** `just gates` with the looper's tacplus: #15 (floor 2.5; `TACPLUS_MINOR=2.5 just gates` runs, with the three stratum failures); #17's last env vars: tacplus-dev/tacplus#262, tacplus-dev/stratum#23, tacplus-dev/blobstore#10

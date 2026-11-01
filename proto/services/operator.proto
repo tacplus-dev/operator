@@ -320,10 +320,10 @@ message PKI {
 //   2. operator init cluster --ca <path>  — generate cluster PKI + write operator.yaml
 //   3. operator                           — run (IN_CLUSTER) or generate charts (GENERATE_ONLY)
 //
-// When deployed to Kubernetes:
-//   operator.yaml  → ConfigMap  (schematic-operator-config)
-//   crypto.yaml    → Secret     (schematic-operator-crypto)
-// Both are mounted and merged by the operator at startup.
+// When deployed to Kubernetes, a deployment is the uni-config
+// (operatorv1.UniConfig, uniconfig.proto; #17): this Config is its operator
+// part, crypto.yaml's material is under its secrets, and the operator reads
+// only the uni-config Secret.
 message Config {
   option (spec.grpc_config) = {service_name: "operator"};
 
@@ -475,4 +475,16 @@ message Config {
   // persist nothing and have no volume, so their bootstrap never carries it.
   // Unset: no stratum bootstrap carries disk_persistence.
   diskstore.DiskPersistenceConfig stratum_disk_persistence = 26;
+
+  // local_images references the fleet's images in a registry of the
+  // deployment's own instead of the release registry, under the tag "local".
+  // A value with a host ("localhost:5001",
+  // "us-central1-docker.pkg.dev/<project>/<repo>") is that registry's prefix:
+  // <value>/schematic/<image>:local. Any other non-empty value uses the bare
+  // schematic/<image>:local, for a cluster that shares the docker daemon the
+  // images were built in. It also renders the fleet's dev values. Empty: the
+  // release registry. It was the SCHEMATIC_LOCAL_IMAGES environment variable;
+  // the uni-config carries it now (#17), and a shell running the CLI may
+  // still set that variable when this is empty.
+  string local_images = 27;
 }

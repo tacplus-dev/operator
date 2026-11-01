@@ -16,19 +16,6 @@ operator:
   # the operator holds no workload permissions outside that set.
   managedNamespaces: []
 
-  # Mode: "in-cluster" (default) or "generate-only".
-  # Overrides operator.yaml if set here.
-  mode: in-cluster
-
-  # Mirrors the SCHEMATIC_LOCAL_IMAGES env var the one-shot `apply` CLI reads
-  # from the operator's own shell. The in-cluster reconciler is a long-running
-  # pod with no such shell, so it never saw this override — it always fell
-  # back to GitLab-registry image references, even on clusters (like this
-  # project's GKE cluster) that need a registry prefix such as
-  # us-central1-docker.pkg.dev/<project>/cavalier instead. Set here so the
-  # value reaches the reconciler's own process environment too.
-  localImages: ""
-
   replicas: 1
 
   resources:
@@ -39,24 +26,10 @@ operator:
       cpu: 500m
       memory: 2Gi
 
-# operator.yaml content — topology, FQDN, mode, optional services.
-# Populate via: helm install ... --set-file config.settings=./build/operator.yaml
-config:
-  settings: ""
-  # crypto.yaml content (PKI material). Stored as a Secret.
-  # Populate via: helm install ... --set-file config.crypto=./build/crypto.yaml
-  crypto: ""
-  # Base64-encoded tar.gz of the services/ directory.
-  # Populate via: just pack  (outputs build/config-bundle.tar.gz.b64)
-  # Then: helm install ... --set-string config.bundle=$(cat build/config-bundle.tar.gz.b64)
-  bundle: ""
-  # images.yaml content: an operator Config carrying only image_digests
-  # (scripts/resolve-digests.sh or scripts/promote.sh writes it). Every image it
-  # names deploys as <repository>@<digest>, so a new build under the same tag
-  # changes the fleet's pod templates and rolls them. Leave empty only on a
-  # local cluster that shares the docker daemon (tag-only).
-  # Populate via: helm upgrade ... --set-file config.images=./images.yaml
-  images: ""
+# The operator's configuration is not a value of this chart: the operator reads
+# only the uni-config Secret, "uni-config" in operator.namespace, which the
+# deployment's pipeline assembles and applies (#17; docs/uni-config.md). Helm
+# values would store its secrets in the release record.
 
 # registryToken, when set, creates a "gitlab-registry" docker-registry Secret in the
 # schematic-operator namespace so the operator pod (and auto-upgrade) can pull from

@@ -6,13 +6,14 @@
 #   scripts/resolve-digests.sh <registry> [tag] [output]
 #
 #   registry is the repository the fleet pulls from, the same value as the
-#   operator chart's operator.localImages (e.g.
+#   operator Config's local_images (e.g.
 #   us-central1-docker.pkg.dev/<project>/seabeam). tag defaults to "local",
 #   output to "images.yaml".
 #
 # The output is an operator Config carrying only image_digests, the same shape
-# scripts/promote.sh writes. Pass it to the operator chart with
-# --set-file config.images=<output>: every image it names renders as
+# scripts/promote.sh writes. Put it in the deployment's config dir as
+# images.yaml, which `schematic-operator uni-config assemble` carries into the
+# uni-config (docs/uni-config.md): every image it names renders as
 # <repository>@sha256:..., so a build pushed under the same tag changes the pod
 # templates and the fleet rolls on its own.
 #

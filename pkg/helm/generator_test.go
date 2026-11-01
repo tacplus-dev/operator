@@ -1897,10 +1897,10 @@ func TestBlobstoreRendersNothingWhenDisabled(t *testing.T) {
 // A digest in image_digests pins that image to <repository>@<digest> in place
 // of its tag; images with no entry keep the tag they had.
 func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
-	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "localhost:5001")
 	digest := "sha256:" + strings.Repeat("ab", 32)
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
+		Namespace:   "schematic",
+		LocalImages: "localhost:5001",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
 			OpaNodes:    1,
@@ -1923,10 +1923,10 @@ func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
 // digests pinned, the second build must change the pod template so the
 // rollout happens on its own instead of by `rollout restart`.
 func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
-	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "us-central1-docker.pkg.dev/proj/seabeam")
 	kernelTemplate := func(digest string) string {
 		cfg := &protoOperator.Config{
 			Namespace:    "schematic",
+			LocalImages:  "us-central1-docker.pkg.dev/proj/seabeam",
 			Topology:     &protoOperator.Topology{KernelNodes: 1},
 			ImageDigests: map[string]string{"kernel": digest},
 		}
@@ -2026,4 +2026,36 @@ func keys(m map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// The uni-config carries the image registry (#17): local_images, not a
+// SCHEMATIC_LOCAL_IMAGES variable in the operator's environment. A variable
+// left there changes nothing.
+func TestLocalImagesComeFromConfigNotEnv(t *testing.T) {
+	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "env.example:5000")
+	values := chartFile(t, generateTestChart(t, &protoOperator.Config{
+		Namespace:   "schematic",
+		LocalImages: "registry.example/fleet",
+		Topology:    &protoOperator.Topology{KernelNodes: 1},
+	}), "values.yaml")
+	if want := "kernel:\n  image: registry.example/fleet/schematic/kernel:local\n"; !strings.Contains(values, want) {
+		t.Errorf("values.yaml missing %q\n--- values.yaml ---\n%s", want, values)
+	}
+	if strings.Contains(values, "env.example") {
+		t.Errorf("values.yaml took the image registry from the environment:\n%s", values)
+	}
+}
+
+// No workload carries NODE_MODE (#17): it had no reader since timedb and
+// graphdb went, and configuration never travels in a pod's environment.
+func TestNoWorkloadRendersNodeMode(t *testing.T) {
+	charts := generateTestChart(t, &protoOperator.Config{
+		Namespace: "schematic",
+		Topology:  &protoOperator.Topology{KernelNodes: 3, EventbusNodes: 3, OauthNodes: 3, OpaNodes: 3, StratumNodes: 3},
+	})
+	for path, data := range charts.Files {
+		if strings.Contains(string(data), "NODE_MODE") {
+			t.Errorf("%s renders NODE_MODE", path)
+		}
+	}
 }

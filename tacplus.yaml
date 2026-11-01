@@ -26,6 +26,8 @@ depends:
   - letsencrypt
   # pkg/bootstrap tests exercise the app-service config path with llmproxy.
   - llmproxy
+  # The uni-config carries mailbox.Secrets (proto/services/uniconfig.proto).
+  - mailbox
 header: |
   Copyright (c) 2026 Jody Scott
   SPDX-License-Identifier: Apache-2.0

@@ -12,11 +12,6 @@ spec:
       app: schematic-operator
   template:
     metadata:
-      annotations:
-        checksum/config-settings: {{ .Values.config.settings | sha256sum | quote }}
-        checksum/config-crypto: {{ .Values.config.crypto | sha256sum | quote }}
-        checksum/config-bundle: {{ .Values.config.bundle | sha256sum | quote }}
-        checksum/config-images: {{ .Values.config.images | sha256sum | quote }}
       labels:
         app: schematic-operator
         {{- include "schematic-operator.labels" . | nindent 8 }}
@@ -29,54 +24,26 @@ spec:
         value: arm64
         effect: NoSchedule
       {{- include "schematic-operator.imagePullSecrets" . | nindent 6 }}
-      {{- if .Values.config.bundle }}
-      initContainers:
-      - name: extract-config
-        image: busybox:latest
-        command:
-        - sh
-        - -c
-        - |
-          echo "Extracting config bundle..."
-          base64 -d /bundle/config-bundle.tar.gz.b64 | tar -xz -C /config
-          chmod -R a+rX /config
-          echo "Extracted:"
-          find /config/services /config/creds -type f 2>/dev/null | sort
-        volumeMounts:
-        - name: config-mutable
-          mountPath: /config
-        - name: config-bundle
-          mountPath: /bundle
-          readOnly: true
-      {{- end }}
       containers:
       - name: schematic-operator
         image: {{ .Values.operator.image }}
         imagePullPolicy: {{ .Values.operator.imagePullPolicy }}
+        # The uni-config (#17) is the operator's only input: the one Secret the
+        # deployment's pipeline applies. The operator expands it into /config,
+        # its working directory, at every start, and restarts when the mounted
+        # Secret changes.
         args:
         - "--dir=/config"
+        - "--uni-config=/etc/schematic/uni-config/uni-config"
         env:
-        - name: SCHEMATIC_OPERATOR_DIR
-          value: /config
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
         # The operator holds a kernel identity of its own. Same env var and mount
         # path the generated fleet chart gives every other service
-        # (pkg/helm/generator.go withKernelServiceAuth). BOOTSTRAP_CONFIG is NOT
-        # set here: the operator generates its own chassis bootstrap config at
-        # runtime from its PKI and topology and points the env var at it. The
-        # reconciler uses this identity to read kernel's tenant records
-        # (pkg/bootstrap/kernelconfigstate.go).
+        # (pkg/helm/generator.go withKernelServiceAuth), read by the chassis'
+        # kernel client; it goes when the chassis reads the path from config
+        # (tacplus-dev/tacplus#262). The reconciler uses this identity to read
+        # kernel's tenant records (pkg/bootstrap/kernelconfigstate.go).
         - name: KERNEL_K8S_TOKEN_FILE
           value: /var/run/secrets/schematic/kernel/token
-        # Mirrors the SCHEMATIC_LOCAL_IMAGES env var the one-shot `apply` CLI
-        # reads from its shell (pkg/helm/generator.go imageRefProj) so the
-        # in-cluster reconciler resolves the same image references instead of
-        # always falling back to the GitLab registry.
-        - name: SCHEMATIC_LOCAL_IMAGES
-          value: {{ .Values.operator.localImages | quote }}
         ports:
         - containerPort: 8080
           name: metrics
@@ -89,34 +56,11 @@ spec:
         - name: kernel-token
           mountPath: /var/run/secrets/schematic/kernel
           readOnly: true
-        {{- if .Values.config.bundle }}
-        - name: config-mutable
+        - name: uni-config
+          mountPath: /etc/schematic/uni-config
+          readOnly: true
+        - name: config
           mountPath: /config
-        {{- else }}
-        - name: config
-          mountPath: /config/operator.yaml
-          subPath: operator.yaml
-          readOnly: true
-        - name: crypto
-          mountPath: /config/crypto.yaml
-          subPath: crypto.yaml
-          readOnly: true
-        {{- end }}
-        {{- if .Values.config.bundle }}
-        # operator.yaml and crypto.yaml overlaid on top of the extracted bundle
-        - name: config
-          mountPath: /config/operator.yaml
-          subPath: operator.yaml
-        - name: crypto
-          mountPath: /config/crypto.yaml
-          subPath: crypto.yaml
-        {{- end }}
-        {{- if .Values.config.images }}
-        - name: config
-          mountPath: /config/images.yaml
-          subPath: images.yaml
-          readOnly: true
-        {{- end }}
       volumes:
       - name: kubernetes-api-token
         projected:
@@ -143,16 +87,13 @@ spec:
               path: token
               audience: schematic-kernel
               expirationSeconds: 3600
+      # Applied by the deployment's pipeline, never by this chart: it holds every
+      # secret of the deployment, which must not travel in helm values.
+      - name: uni-config
+        secret:
+          secretName: uni-config
+          items:
+          - key: uni-config
+            path: uni-config
       - name: config
-        configMap:
-          name: schematic-operator-config
-      - name: crypto
-        secret:
-          secretName: schematic-operator-crypto
-      {{- if .Values.config.bundle }}
-      - name: config-mutable
         emptyDir: {}
-      - name: config-bundle
-        secret:
-          secretName: schematic-operator-bundle
-      {{- end }}

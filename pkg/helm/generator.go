@@ -20,7 +20,9 @@ package helm
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,6 +32,7 @@ import (
 	"text/template"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperatorV1 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operatorv1"
 )
 
 // ManagedByLabel is the label key every generated chart resource carries, and
@@ -99,6 +102,16 @@ type Generator struct {
 	// Config.tenants. May be nil, which means no service is pinned — the
 	// fleet's state today.
 	pinnedTenant map[string]string
+	// secrets is the uni-config's secrets: each service's own Secrets message,
+	// rendered into that service's Secret (serviceSpec.SecretEnvVars). May be
+	// nil, which renders every such Secret with its keys empty.
+	secrets *protoOperatorV1.Secrets
+}
+
+// SetSecrets gives the generator the uni-config's secrets (#17), whose
+// service Secrets messages it renders into each service's own Secret.
+func (g *Generator) SetSecrets(s *protoOperatorV1.Secrets) {
+	g.secrets = s
 }
 
 // New returns a new Generator.
@@ -213,12 +226,6 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	// this library: which harness, if any, a fleet runs is the deployment's
 	// choice (Jody, 2026-10-23: operator is a library; it does not know the
 	// upstream services a fleet will carry).
-	manifest, err := pipelineSecretsConfigMap(services)
-	if err != nil {
-		return nil, fmt.Errorf("generating the pipeline secrets manifest: %w", err)
-	}
-	charts.Files["templates/pipeline-secrets.yaml"] = manifest
-
 	return charts, nil
 }
 
@@ -406,24 +413,24 @@ type namedPort struct {
 	Port int32
 }
 
-// secretEnvVar is one field delivered to a pod as an environment variable read
-// from a Kubernetes Secret, instead of through kernel's combined config seed.
-// See serviceSpec.SecretEnvVars.
+// secretEnvVar is one field of a service's Secrets message, delivered to that
+// service's pods from a Kubernetes Secret, instead of through kernel's
+// combined config seed. See serviceSpec.SecretEnvVars.
 type secretEnvVar struct {
 	// EnvName is the variable the service reads. It is the name tacplus's
 	// generated <Msg>FromEnvVar looks for — PROTO_<PROTO PATH>_<MESSAGE>_<FIELD>
 	// upper-snaked — so it must be taken from the generated helper, not spelled
-	// by hand here.
-	EnvName string `json:"env"`
+	// by hand here. An env var only until the generated Secrets reader takes a
+	// file (tacplus-dev/tacplus#262).
+	EnvName string
 	// Key is the entry inside the Secret. One Secret per service holds every one
 	// of its secret fields.
-	Key string `json:"key"`
-	// GitLabVariable is the GitLab CI/CD variable the deployment pipeline writes
-	// into Key (D25: GitLab variable -> pipeline -> k8s Secret). The operator
-	// never holds the value: it is not in crypto.yaml, helm values or the chart,
-	// and the chart only references the Secret. The pipeline learns this mapping
-	// from the manifest pipelineSecretsConfigMap publishes.
-	GitLabVariable string `json:"gitlabVariable"`
+	Key string
+	// Value is the field's value, from the uni-config's secrets (#17). It is
+	// rendered into the service's Secret and nowhere else: not helm values, not
+	// kernel's seed. Empty renders the key empty, which the service reads as
+	// "not configured".
+	Value string
 }
 
 type serviceSpec struct {
@@ -465,9 +472,6 @@ type serviceSpec struct {
 	// failing.
 	HazelcastPeerApps []string
 	ListenPort        int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
-	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
-	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
-	NodeModes []string
 	// ExtraEnvVars, if non-empty, is appended to the env block in the Deployment.
 	// Each entry should be a fully-formed YAML env var block (name + value lines).
 	ExtraEnvVars string
@@ -546,11 +550,11 @@ type serviceSpec struct {
 	// rather than a ConfigMap. The seed copy exists either way.
 	//
 	// A field declared here lives on its own message (oauth.Secrets, not
-	// oauth.Config), so the seed has nowhere to put it, and the value moves
-	// GitLab CI/CD variable -> pipeline-written k8s Secret -> pod env and nowhere
-	// else (D25). The chart references the Secret and never renders it. EnvName is
-	// the name tacplus's generated <Msg>FromEnvVar reads, so it is derived from
-	// the proto package and message, never invented here.
+	// oauth.Config), so the seed has nowhere to put it. Its value comes from the
+	// uni-config's secrets (#17): the chart renders it into that service's own
+	// Secret, read by that service's pods and nowhere else. EnvName is the name
+	// tacplus's generated <Msg>FromEnvVar reads, so it is derived from the proto
+	// package and message, never invented here.
 	SecretEnvVars []secretEnvVar
 	// PerReplicaConfig, if true, gives each replica its own values.yaml config key
 	// (kernel0, kernel1, …) instead of sharing one key named for the service.
@@ -991,11 +995,6 @@ func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	}
 }
 
-// timedbNodeModes / graphdbNodeModes lived here. Both went with the
-// timedb/graphdb boneyard on 2026-08-25 (BIG GOAL 3, first move #1). The generic
-// serviceSpec.NodeModes plumbing they fed is left in place but now has no caller
-// — noted rather than removed, since it is not this change's business.
-
 func (g *Generator) imageRef(cfg *protoOperator.Config, svc string) string {
 	return g.imageRefProj(cfg, svc, svc)
 }
@@ -1005,13 +1004,13 @@ func (g *Generator) imageRef(cfg *protoOperator.Config, svc string) string {
 // replaces the tag: <repository>@<digest>.
 func (g *Generator) imageRefProj(cfg *protoOperator.Config, proj, svc string) string {
 	var repo, tag string
-	// Local-images mode (SCHEMATIC_LOCAL_IMAGES): reference locally-built images
+	// Local-images mode (Config.local_images): reference locally-built images
 	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
 	// docker-desktop clusters where k8s shares the docker daemon, so
 	// IfNotPresent resolves the local tag without a registry.
-	if v := os.Getenv("SCHEMATIC_LOCAL_IMAGES"); v != "" {
+	if v := cfg.GetLocalImages(); v != "" {
 		// A value containing a host (slash/colon) is a registry prefix, e.g.
-		// SCHEMATIC_LOCAL_IMAGES=localhost:5001 -> localhost:5001/schematic/<proj>:local.
+		// local_images: localhost:5001 -> localhost:5001/schematic/<proj>:local.
 		// Any other non-empty value uses the bare local tag (shared image store).
 		if strings.ContainsAny(v, "/:") {
 			repo = fmt.Sprintf("%s/schematic/%s", v, proj)
@@ -1135,9 +1134,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// Sign in with Apple's .p8 key: oauth.Secrets.apple_signin_key_p8, which
 		// tacplus's generated SecretsFromEnvVar reads from this variable.
 		SecretEnvVars: []secretEnvVar{{
-			EnvName:        "PROTO_SERVICES_OAUTH_SECRETS_APPLE_SIGNIN_KEY_P8",
-			Key:            "apple_signin_key_p8",
-			GitLabVariable: "APPLE_SIGNIN_KEY_P8",
+			EnvName: "PROTO_SERVICES_OAUTH_SECRETS_APPLE_SIGNIN_KEY_P8",
+			Key:     "apple_signin_key_p8",
+			Value:   g.secrets.GetOauth().GetAppleSigninKeyP8(),
 		}}}))
 
 	// Echo sample service — disabled by default. Stateless, no S2S deps, so it
@@ -1165,9 +1164,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			// mailbox.Secrets.gmail_service_account_json, which tacplus's generated
 			// SecretsFromEnvVar reads from this variable.
 			SecretEnvVars: []secretEnvVar{{
-				EnvName:        "PROTO_SERVICES_MAILBOX_SECRETS_GMAIL_SERVICE_ACCOUNT_JSON",
-				Key:            "gmail_service_account_json",
-				GitLabVariable: "CREW_MAIL_SA_KEY_JSON",
+				EnvName: "PROTO_SERVICES_MAILBOX_SECRETS_GMAIL_SERVICE_ACCOUNT_JSON",
+				Key:     "gmail_service_account_json",
+				Value:   g.secrets.GetMailbox().GetGmailServiceAccountJson(),
 			}}}))
 	}
 
@@ -1492,7 +1491,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	if err := valuesTmpl.Execute(&buf, map[string]any{
 		"Namespace":         ns,
 		"Services":          svcs,
-		"Dev":               cfg.Dev || os.Getenv("SCHEMATIC_LOCAL_IMAGES") != "",
+		"Dev":               cfg.Dev || cfg.GetLocalImages() != "",
 		"PerReplicaConfigs": perReplica,
 	}); err != nil {
 		return fmt.Errorf("rendering values.yaml: %w", err)
@@ -1924,7 +1923,7 @@ spec:
 // service. Named for the service, not the pod: a set of pods delivered a field
 // this way has to agree on it, and a per-ordinal Secret could differ.
 func secretEnvSecretName(svc serviceSpec) string {
-	return svc.Name + "-pipeline-secrets"
+	return svc.Name + "-secrets"
 }
 
 // secretEnvLines renders the container env entries that read that Secret.
@@ -1941,56 +1940,38 @@ func secretEnvLines(svc serviceSpec) string {
 	return buf.String()
 }
 
-// pipelineSecretsConfigMapName is the ConfigMap the deployment pipeline reads to
-// learn which Secrets to write.
-const pipelineSecretsConfigMapName = "schematic-pipeline-secrets"
-
-// pipelineSecret is one entry of that manifest: a Secret the pipeline writes,
-// the GitLab variable behind each of its keys, and the workloads to restart
-// when its content changes (env from a secretKeyRef is read once, at container
-// start).
-type pipelineSecret struct {
-	Name      string         `json:"name"`
-	Workloads []string       `json:"workloads"`
-	Entries   []secretEnvVar `json:"entries"`
-}
-
-// pipelineSecretsConfigMap renders the manifest of every SecretEnvVars Secret
-// the chart references, so the pipeline iterates over it instead of hardcoding
-// a list per secret. It is always rendered, empty when no enabled service
-// declares one, so a missing ConfigMap means an older operator, not "nothing
-// to write".
-func pipelineSecretsConfigMap(svcs []serviceSpec) ([]byte, error) {
-	secrets := []pipelineSecret{}
-	for _, svc := range svcs {
-		if len(svc.SecretEnvVars) == 0 {
-			continue
-		}
-		workloads := []string{}
-		if svc.IsStatefulSet {
-			workloads = []string{"statefulset/" + svc.Name}
-		} else {
-			for i := range int(svc.Replicas) {
-				workloads = append(workloads, fmt.Sprintf("deployment/%s%d", svc.Name, i))
-			}
-		}
-		secrets = append(secrets, pipelineSecret{Name: secretEnvSecretName(svc), Workloads: workloads, Entries: svc.SecretEnvVars})
-	}
-	manifest, err := json.MarshalIndent(secrets, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return []byte(fmt.Sprintf(`apiVersion: v1
-kind: ConfigMap
+// secretEnvSecret renders the Secret secretEnvLines reads, from the values the
+// uni-config's secrets gave the service.
+func secretEnvSecret(svc serviceSpec) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf(`apiVersion: v1
+kind: Secret
 metadata:
   name: %s
   namespace: {{ .Values.global.namespace }}
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
+type: Opaque
 data:
-  secrets.json: |
-%s
-`, pipelineSecretsConfigMapName, indentLines(string(manifest), "    "))), nil
+`, secretEnvSecretName(svc)))
+	for _, e := range svc.SecretEnvVars {
+		buf.WriteString(fmt.Sprintf("  %s: %q\n", e.Key, base64.StdEncoding.EncodeToString([]byte(e.Value))))
+	}
+	return buf.Bytes()
+}
+
+// secretEnvChecksumLine renders the pod-template annotation that rolls the
+// service's pods when its secrets change: env from a secretKeyRef is read
+// once, at container start. Empty for a service that reads none.
+func secretEnvChecksumLine(svc serviceSpec) string {
+	if len(svc.SecretEnvVars) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for _, e := range svc.SecretEnvVars {
+		fmt.Fprintf(h, "%d:%s%d:%s", len(e.Key), e.Key, len(e.Value), e.Value)
+	}
+	return fmt.Sprintf("        checksum/secrets: %q\n", hex.EncodeToString(h.Sum(nil)))
 }
 
 // configVolumeSource renders the volume source for a service's config volume:
@@ -2130,6 +2111,9 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 	// a duplicate resource helm refuses to apply.
 	if svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = serviceAccountYAML(svc.ServiceAccountName)
+	}
+	if len(svc.SecretEnvVars) > 0 {
+		charts.Files[fmt.Sprintf("templates/%s/secrets.yaml", svc.Name)] = secretEnvSecret(svc)
 	}
 	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
 		// ClusterRole/ClusterRoleBinding are cluster-scoped, so their names must be
@@ -2442,6 +2426,7 @@ spec:
 			ssBuf.WriteString(fmt.Sprintf(`        checksum/config-%d: {{ %s | sha256sum | quote }}
 `, i, valuesRef(configValueKey(svc, i), "config")))
 		}
+		ssBuf.WriteString(secretEnvChecksumLine(svc))
 		ssBuf.WriteString(`    spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 `)
@@ -2613,6 +2598,7 @@ spec:
 				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ %s | sha256sum | quote }}
 `, valuesRef(svc.Name, "serviceConfig")))
 			}
+			deployBuf.WriteString(secretEnvChecksumLine(svc))
 			deployBuf.WriteString(fmt.Sprintf(`    spec:
       {{- include "schematic.imagePullSecrets" . | nindent 6 }}
 %s
@@ -2649,15 +2635,6 @@ spec:
 				deployBuf.WriteString(svc.ExtraEnvVars)
 			}
 			deployBuf.WriteString(secretEnvLines(svc))
-			if len(svc.NodeModes) > 0 {
-				nodeMode := "alpha"
-				if i < len(svc.NodeModes) {
-					nodeMode = svc.NodeModes[i]
-				}
-				deployBuf.WriteString(fmt.Sprintf(`        - name: NODE_MODE
-          value: %s
-`, nodeMode))
-			}
 			deployBuf.WriteString(fmt.Sprintf(`        ports:
         - containerPort: %d
           name: grpc

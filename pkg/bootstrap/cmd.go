@@ -23,6 +23,13 @@ Modes:
                   gateway replicas are auto-set to the number of schedulable nodes.
   generate-only   Generate Helm charts to output_dir and exit. Does not talk to k8s.
 
+A deployment is defined by one document, the uni-config (docs/uni-config.md):
+in a cluster the operator reads only the uni-config Secret (--uni-config).
+
+Uni-config:
+  schematic-operator uni-config assemble    Assemble a config dir and secret variables into a uni-config
+  schematic-operator validate <file|->      Validate a uni-config before it is applied
+
 Bootstrap workflow:
   schematic-operator init ca                Initialize root CA → crypto.yaml
   schematic-operator init cluster           Initialize cluster PKI + operator.yaml

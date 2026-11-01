@@ -52,6 +52,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperatorV1 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operatorv1"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
 )
@@ -138,6 +139,12 @@ func New(cfg *protoOperator.Config, configProvider ServiceConfigProvider, checke
 		series:         series,
 		versionLock:    versionLock,
 	}
+}
+
+// SetServiceSecrets gives the generator the uni-config's service secrets
+// (#17), which it renders into each service's own Secret.
+func (r *Reconciler) SetServiceSecrets(s *protoOperatorV1.Secrets) {
+	r.generator.SetSecrets(s)
 }
 
 // Start implements manager.Runnable so the reconciler can be registered with

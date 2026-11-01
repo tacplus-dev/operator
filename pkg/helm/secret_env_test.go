@@ -1,23 +1,26 @@
 package helm
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	protoMailbox "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/mailbox"
 	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperatorV1 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operatorv1"
 )
 
-// serviceSpec.SecretEnvVars is the generic per-pod secret delivery mechanism
-// (D25): a field that must not travel in kernel's combined seed is written by
-// the deployment pipeline from a GitLab CI/CD variable into one Secret per
-// service, and projected as a secretKeyRef env var. The chart references that
-// Secret and never renders it; it renders a manifest the pipeline iterates.
+// serviceSpec.SecretEnvVars delivers a service's own Secrets message to its
+// pods only, never through kernel's combined seed. Its values come from the
+// uni-config's secrets (#17): the operator renders one Secret per service from
+// them, and nothing else writes it. The pods still read it as env until the
+// generated Secrets reader takes a file (tacplus-dev/tacplus#262).
 
-func secretEnvTestSpec(statefulSet bool) serviceSpec {
+func secretEnvTestSpec(statefulSet bool, value string) serviceSpec {
 	return serviceSpec{
 		Name: "widget", Replicas: 2, Image: "widget:test",
 		HasGRPC: true, ListenPort: 8443,
@@ -26,22 +29,21 @@ func secretEnvTestSpec(statefulSet bool) serviceSpec {
 		Storage:            "1Gi",
 		ServiceAccountName: "widget",
 		SecretEnvVars: []secretEnvVar{{
-			EnvName:        "PROTO_SERVICES_WIDGET_SECRETS_API_KEY",
-			Key:            "api-key",
-			GitLabVariable: "WIDGET_API_KEY",
+			EnvName: "PROTO_SERVICES_WIDGET_SECRETS_API_KEY",
+			Key:     "api-key",
+			Value:   value,
 		}},
 	}
 }
 
-// Both workload paths must project the pipeline-written Secret, and neither may
-// render it: helm must not own an object the pipeline writes, or every reconcile
-// would overwrite the real value.
-func TestSecretEnvVarsAreProjectedInBothWorkloadPathsAndNeverRendered(t *testing.T) {
+// Both workload paths read the Secret, and the chart renders it with the value
+// the uni-config holds.
+func TestServiceSecretsAreRenderedFromTheUniConfig(t *testing.T) {
 	for name, statefulSet := range map[string]bool{"statefulset": true, "deployment": false} {
 		t.Run(name, func(t *testing.T) {
 			g := New("test", "1.2", nil, nil, nil)
 			charts := &Charts{Files: map[string][]byte{}}
-			if err := g.addService(charts, &protoOperator.Config{Namespace: "schematic"}, secretEnvTestSpec(statefulSet)); err != nil {
+			if err := g.addService(charts, &protoOperator.Config{Namespace: "schematic"}, secretEnvTestSpec(statefulSet, "s3cret")); err != nil {
 				t.Fatalf("addService: %v", err)
 			}
 			workload := "templates/widget/deployment.yaml"
@@ -52,111 +54,117 @@ func TestSecretEnvVarsAreProjectedInBothWorkloadPathsAndNeverRendered(t *testing
 			for _, want := range []string{
 				"name: PROTO_SERVICES_WIDGET_SECRETS_API_KEY",
 				"secretKeyRef",
-				"name: widget-pipeline-secrets",
+				"name: widget-secrets",
 				"key: api-key",
 			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("%s does not read the value from the Secret (%q missing):\n%s", workload, want, body)
 				}
 			}
-			for path, data := range charts.Files {
-				if path != workload && strings.Contains(string(data), "widget-pipeline-secrets") {
-					t.Errorf("%s mentions the pipeline-written Secret; only the workload may reference it:\n%s", path, data)
+			secret := chartFile(t, charts, "templates/widget/secrets.yaml")
+			for _, want := range []string{
+				"kind: Secret",
+				"name: widget-secrets",
+				"api-key: \"" + base64.StdEncoding.EncodeToString([]byte("s3cret")) + "\"",
+			} {
+				if !strings.Contains(secret, want) {
+					t.Errorf("templates/widget/secrets.yaml lacks %q:\n%s", want, secret)
 				}
 			}
 		})
 	}
 }
 
-// The manifest names the workloads to restart after a write: one StatefulSet,
-// or one Deployment per replica.
-func TestPipelineSecretsManifestNamesTheConsumingWorkloads(t *testing.T) {
-	for name, tc := range map[string]struct {
-		statefulSet bool
-		want        []string
-	}{
-		"statefulset": {true, []string{"statefulset/widget"}},
-		"deployment":  {false, []string{"deployment/widget0", "deployment/widget1"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := decodePipelineSecrets(t, mustPipelineSecretsConfigMap(t, []serviceSpec{secretEnvTestSpec(tc.statefulSet), {Name: "plain", Replicas: 1}}))
-			if len(got) != 1 {
-				t.Fatalf("manifest has %d Secrets, want 1 (a service with no SecretEnvVars gets none): %+v", len(got), got)
-			}
-			if got[0].Name != "widget-pipeline-secrets" || strings.Join(got[0].Workloads, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("manifest entry = %+v, want Secret widget-pipeline-secrets restarting %v", got[0], tc.want)
-			}
-			if e := got[0].Entries; len(e) != 1 || e[0].Key != "api-key" || e[0].GitLabVariable != "WIDGET_API_KEY" {
-				t.Errorf("manifest entries = %+v, want key api-key from WIDGET_API_KEY", e)
-			}
-		})
+// End to end through helm, from the uni-config's Secrets message: oauth's and
+// mailbox's Secrets reach their own Secret and their own workloads, and no
+// pipeline-written Secret or manifest of them is left.
+func TestServiceSecretsComeFromTheUniConfigSecrets(t *testing.T) {
+	cfg := &protoOperator.Config{
+		Namespace:        "schematic",
+		Topology:         &protoOperator.Topology{KernelNodes: 1, OauthNodes: 2, MailboxNodes: 1},
+		OptionalServices: &protoOperator.OptionalServices{Mailbox: true, Messaging: true},
 	}
-	if got := decodePipelineSecrets(t, mustPipelineSecretsConfigMap(t, []serviceSpec{{Name: "plain", Replicas: 1}})); got == nil || len(got) != 0 {
-		t.Errorf("a fleet with no declarer must still publish an empty list, got %#v", got)
+	g := New("test", "1.2", nil, nil, nil)
+	g.SetSecrets(&protoOperatorV1.Secrets{
+		Oauth:   &protoOauth.Secrets{AppleSigninKeyP8: "apple-key"},
+		Mailbox: &protoMailbox.Secrets{GmailServiceAccountJson: `{"client_email":"crew@example.com"}`},
+	})
+	charts, err := g.Generate(cfg, 1, false)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	manifests := renderedManifests(t, charts)
+
+	for name, want := range map[string]map[string]string{
+		"oauth-secrets":   {"apple_signin_key_p8": "apple-key"},
+		"mailbox-secrets": {"gmail_service_account_json": `{"client_email":"crew@example.com"}`},
+	} {
+		var s corev1.Secret
+		decodeManifest(t, manifests, "Secret/"+name, &s)
+		for k, v := range want {
+			if got := string(s.Data[k]); got != v {
+				t.Errorf("Secret %s key %s = %q, want %q", name, k, got, v)
+			}
+		}
+	}
+	for key, doc := range manifests {
+		if strings.Contains(doc, "pipeline-secrets") {
+			t.Errorf("%s still names a pipeline-written Secret or its manifest:\n%s", key, doc)
+		}
+	}
+	for path, data := range charts.Files {
+		if path == "values.yaml" && (strings.Contains(string(data), "apple-key") || strings.Contains(string(data), "crew@example.com")) {
+			t.Error("values.yaml carries a secret value; secret values never travel in helm values")
+		}
 	}
 }
 
-// End to end through helm: the fleet's real declarers (oauth, the one this
-// library knows) appear in the rendered manifest with their GitLab variables,
-// every workload it names is one the chart renders and that workload reads the
-// Secret, and no Secret object of that name is rendered.
-func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
+// A changed secret rolls the pods that read it, and only those: the Secret's
+// content is a checksum on that service's pod template.
+func TestServiceSecretChangeRollsOnlyItsService(t *testing.T) {
+	render := func(key string) map[string]string {
+		g := New("test", "1.2", nil, nil, nil)
+		g.SetSecrets(&protoOperatorV1.Secrets{Oauth: &protoOauth.Secrets{AppleSigninKeyP8: key}})
+		charts, err := g.Generate(&protoOperator.Config{
+			Namespace: "schematic",
+			Topology:  &protoOperator.Topology{KernelNodes: 1, OauthNodes: 1, OpaNodes: 1},
+		}, 1, false)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		return renderedManifests(t, charts)
+	}
+	first, second := render("key-one"), render("key-two")
+
+	podAnnotations := func(manifests map[string]string, key string) map[string]string {
+		var d appsv1.Deployment
+		decodeManifest(t, manifests, key, &d)
+		return d.Spec.Template.Annotations
+	}
+	if a, b := podAnnotations(first, "Deployment/oauth0"), podAnnotations(second, "Deployment/oauth0"); a["checksum/secrets"] == "" || a["checksum/secrets"] == b["checksum/secrets"] {
+		t.Errorf("oauth0's pod template did not change with its secret: %v vs %v", a, b)
+	}
+	if a, b := podAnnotations(first, "Deployment/opa0"), podAnnotations(second, "Deployment/opa0"); len(a) != len(b) || a["checksum/secrets"] != b["checksum/secrets"] {
+		t.Errorf("opa0's pod template changed with oauth's secret: %v vs %v", a, b)
+	}
+	for k := range podAnnotations(first, "Deployment/opa0") {
+		if k == "checksum/secrets" {
+			t.Error("opa0 reads no secret but carries a secrets checksum")
+		}
+	}
+}
+
+// No service secrets in the uni-config still renders each declarer's Secret,
+// its keys present and empty, which the services read as "not configured".
+func TestServiceSecretsAbsentRenderEmptyKeys(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes: 1,
-			OauthNodes:  2,
-		},
+		Topology:  &protoOperator.Topology{KernelNodes: 1, OauthNodes: 1},
 	})
-	manifests := renderedManifests(t, charts)
-
-	var cm corev1.ConfigMap
-	decodeManifest(t, manifests, "ConfigMap/"+pipelineSecretsConfigMapName, &cm)
-	got := map[string]pipelineSecret{}
-	var secrets []pipelineSecret
-	if err := json.Unmarshal([]byte(cm.Data["secrets.json"]), &secrets); err != nil {
-		t.Fatalf("secrets.json is not JSON: %v\n%s", err, cm.Data["secrets.json"])
-	}
-	for _, s := range secrets {
-		got[s.Name] = s
-	}
-
-	want := map[string]struct{ key, variable string }{
-		"oauth-pipeline-secrets": {"apple_signin_key_p8", "APPLE_SIGNIN_KEY_P8"},
-	}
-	if len(got) != len(want) {
-		t.Errorf("manifest Secrets = %v, want exactly %v", secrets, want)
-	}
-	for name, w := range want {
-		s, ok := got[name]
-		if !ok {
-			t.Errorf("manifest has no %s: %+v", name, secrets)
-			continue
-		}
-		if len(s.Entries) != 1 || s.Entries[0].Key != w.key || s.Entries[0].GitLabVariable != w.variable {
-			t.Errorf("%s entries = %+v, want key %s from %s", name, s.Entries, w.key, w.variable)
-		}
-		if _, rendered := manifests["Secret/"+name]; rendered {
-			t.Errorf("the chart renders Secret %s; the pipeline owns it", name)
-		}
-		if len(s.Workloads) == 0 {
-			t.Errorf("%s names no workload to restart", name)
-		}
-		for _, wl := range s.Workloads {
-			kind, wlName, _ := strings.Cut(wl, "/")
-			key := map[string]string{"deployment": "Deployment/", "statefulset": "StatefulSet/"}[kind] + wlName
-			doc, ok := manifests[key]
-			if !ok {
-				t.Errorf("%s names %s, which the chart does not render", name, wl)
-				continue
-			}
-			if !strings.Contains(doc, "name: "+name) {
-				t.Errorf("%s names %s, which does not read the Secret:\n%s", name, wl, doc)
-			}
-		}
-	}
-	if strings.Contains(chartFile(t, charts, "values.yaml"), "appleSigninKeyP8") {
-		t.Error("values.yaml still carries a secret field; secret values must never travel in helm values")
+	var s corev1.Secret
+	decodeManifest(t, renderedManifests(t, charts), "Secret/oauth-secrets", &s)
+	if v, ok := s.Data["apple_signin_key_p8"]; !ok || len(v) != 0 {
+		t.Errorf("oauth-secrets apple_signin_key_p8 = %q (present %v), want present and empty", v, ok)
 	}
 }
 
@@ -165,16 +173,18 @@ func TestPipelineSecretsManifestCoversEveryDeclarer(t *testing.T) {
 // Go helper rather than trusting the literal in enabledServices.
 func TestSecretEnvVarNamesAreTheGeneratedOnes(t *testing.T) {
 	generated := map[string]map[string]string{
-		"oauth": protoOauth.SecretsToEnvVar(&protoOauth.Secrets{}),
+		"oauth":   protoOauth.SecretsToEnvVar(&protoOauth.Secrets{}),
+		"mailbox": protoMailbox.SecretsToEnvVar(&protoMailbox.Secrets{}),
 	}
 	g := New("test", "1.2", nil, nil, nil)
 	cfg := &protoOperator.Config{
-		Topology: &protoOperator.Topology{OauthNodes: 1},
+		Topology:         &protoOperator.Topology{OauthNodes: 1, MailboxNodes: 1},
+		OptionalServices: &protoOperator.OptionalServices{Mailbox: true, Messaging: true},
 	}
-	declared := 0
+	declared := map[string]bool{}
 	for _, svc := range g.enabledServices(cfg, effectiveTopology(cfg, 1)) {
 		for _, e := range svc.SecretEnvVars {
-			declared++
+			declared[svc.Name] = true
 			names, ok := generated[svc.Name]
 			if !ok {
 				t.Errorf("%s declares %s but this test has no generated helper for it; add one", svc.Name, e.EnvName)
@@ -185,38 +195,9 @@ func TestSecretEnvVarNamesAreTheGeneratedOnes(t *testing.T) {
 			}
 		}
 	}
-	if declared == 0 {
-		t.Fatal("no service declares a SecretEnvVars entry")
+	for svc := range generated {
+		if !declared[svc] {
+			t.Errorf("%s declares no SecretEnvVars entry", svc)
+		}
 	}
-}
-
-func mustPipelineSecretsConfigMap(t *testing.T, svcs []serviceSpec) []byte {
-	t.Helper()
-	out, err := pipelineSecretsConfigMap(svcs)
-	if err != nil {
-		t.Fatalf("pipelineSecretsConfigMap: %v", err)
-	}
-	return out
-}
-
-// decodePipelineSecrets renders a lone ConfigMap template through helm and
-// returns its parsed manifest.
-func decodePipelineSecrets(t *testing.T, tmpl []byte) []pipelineSecret {
-	t.Helper()
-	g := New("test", "1.2", nil, nil, nil)
-	charts := &Charts{Files: map[string][]byte{"templates/pipeline-secrets.yaml": tmpl}}
-	if err := g.addChartYAML(charts, &protoOperator.Config{Namespace: "schematic"}); err != nil {
-		t.Fatalf("addChartYAML: %v", err)
-	}
-	if err := g.addHelpers(charts); err != nil {
-		t.Fatalf("addHelpers: %v", err)
-	}
-	charts.Files["values.yaml"] = []byte("global:\n  namespace: schematic\n")
-	var cm corev1.ConfigMap
-	decodeManifest(t, renderedManifests(t, charts), "ConfigMap/"+pipelineSecretsConfigMapName, &cm)
-	var out []pipelineSecret
-	if err := json.Unmarshal([]byte(cm.Data["secrets.json"]), &out); err != nil {
-		t.Fatalf("secrets.json is not JSON: %v\n%s", err, cm.Data["secrets.json"])
-	}
-	return out
 }

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"helm.sh/helm/v3/pkg/action"
@@ -17,7 +18,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 )
 
 // --- generate ---
@@ -60,6 +60,8 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	shellLocalImages(cfg)
+
 	if generateGateways > 0 {
 		if cfg.Topology == nil {
 			cfg.Topology = &protoOperator.Topology{}
@@ -89,15 +91,10 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 		outDir = "charts"
 	}
 
-	tenantOwned, err := TenantOwnedServices()
+	g, err := newGenerator(dir, nil)
 	if err != nil {
-		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+		return err
 	}
-	pinnedTenant, err := PinnedTenantServices()
-	if err != nil {
-		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
-	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err
@@ -144,6 +141,8 @@ func init() {
 func runApply(cmd *cobra.Command, args []string) error {
 	var cfg *protoOperator.Config
 	var svcValues map[string]interface{}
+	// dir stays empty for a bundle, which carries no service secrets.
+	var dir string
 
 	if applyBundleFile != "" {
 		b, err := LoadBundle(applyBundleFile)
@@ -156,7 +155,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		}
 		svcValues = BundleServiceValues(b)
 	} else {
-		dir := resolveConfigDir()
+		dir = resolveConfigDir()
 		var err error
 		cfg, err = LoadConfig(dir)
 		if err != nil {
@@ -179,6 +178,8 @@ func runApply(cmd *cobra.Command, args []string) error {
 		svcValues = ServiceConfigValues(dc)
 	}
 
+	shellLocalImages(cfg)
+
 	if applyGateways > 0 {
 		if cfg.Topology == nil {
 			cfg.Topology = &protoOperator.Topology{}
@@ -191,15 +192,10 @@ func runApply(cmd *cobra.Command, args []string) error {
 		ns = "schematic"
 	}
 
-	tenantOwned, err := TenantOwnedServices()
+	g, err := newGenerator(dir, nil)
 	if err != nil {
-		return fmt.Errorf("reading tenant-owned services from registry: %w", err)
+		return err
 	}
-	pinnedTenant, err := PinnedTenantServices()
-	if err != nil {
-		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
-	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
 	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err
@@ -410,6 +406,16 @@ func runSetMode(cmd *cobra.Command, args []string) error {
 }
 
 // --- helpers ---
+
+// shellLocalImages lets the shell running the generate or apply CLI set the
+// image registry with SCHEMATIC_LOCAL_IMAGES, as before local_images existed,
+// when the config does not set it. The in-cluster operator never reads it: its
+// pod carries no configuration env (#17).
+func shellLocalImages(cfg *protoOperator.Config) {
+	if cfg.GetLocalImages() == "" {
+		cfg.LocalImages = os.Getenv("SCHEMATIC_LOCAL_IMAGES")
+	}
+}
 
 func resolveConfigDirAuto() string {
 	return ResolveConfigDirSmart()
