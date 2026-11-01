@@ -7,6 +7,7 @@ The operator renders a deployment: its platform services and each tenant's servi
 Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked by tacplus#188).
 
 ## Next
+- Chaos agent deployed with every fleet by default, opt out in fleet.yaml (#18) (Jody, 2026-11-01)
 - The uni-config defines a deployment entirely: the pipeline assembles it from config plus GitLab secrets, the operator consumes only it, no per-pod env vars (#17) (Jody, 2026-11-01)
 - Stop rendering kmaker; remove the extra signing CA private key (#16)
 - Nothing unblocked yet; everything waits on #1.
