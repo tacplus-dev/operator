@@ -341,3 +341,43 @@ topology:
 		t.Fatalf("docmanager delegate tenant_namespaces = %v, want [/tenants/acme /tenants/beta]", namespaces)
 	}
 }
+
+// TestEnsureServiceDelegatesKeepsTenantOwnedPlatformServiceShared: registry.json
+// marks stratum tenant_owned since stratum#2, but the helm generator still
+// renders it as one shared StatefulSet (per-tenant Stratum is operator#2). The
+// delegate has to match the pod that runs: one shared stratum delegate whose
+// matcher is the "stratum" service account, not one per tenant matching
+// stratum-<tenant> accounts no pod runs as.
+func TestEnsureServiceDelegatesKeepsTenantOwnedPlatformServiceShared(t *testing.T) {
+	withRegistry(t, registryMarking([]string{"stratum", "docmanager"}, []string{"tasks"}))
+	dir := t.TempDir()
+	kernelPath := setupKernelYAML(t, dir, nil)
+	cfg := tenantTestConfig()
+
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var stratum []SourceDelegate
+	docs := 0
+	for _, d := range loadDelegates(t, kernelPath) {
+		switch d.Name {
+		case "stratum":
+			stratum = append(stratum, d)
+		case "docmanager":
+			docs++
+		}
+	}
+	if len(stratum) != 1 {
+		t.Fatalf("stratum delegates = %d, want 1 shared: %+v", len(stratum), stratum)
+	}
+	if stratum[0].TenantNamespace != "" {
+		t.Errorf("stratum delegate tenant_namespace = %q, want empty (shared)", stratum[0].TenantNamespace)
+	}
+	if ksa := stratum[0].KubernetesServiceAccounts; len(ksa) != 1 || ksa[0].KubernetesServiceAccount != "stratum" {
+		t.Errorf("stratum delegate KSAs = %+v, want the single \"stratum\"", ksa)
+	}
+	if docs != 2 {
+		t.Errorf("docmanager delegates = %d, want 2: a tenant-owned app service still fans out", docs)
+	}
+}

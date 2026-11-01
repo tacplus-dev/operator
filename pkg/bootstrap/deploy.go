@@ -20,6 +20,7 @@ import (
 	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
 	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
 	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
+	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
 	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
 )
 
@@ -107,6 +108,16 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	}
 	if err := ApplyServicesHolderDefaults(kernelConfig.Configs, DeployedKernelAuthServices(cfg)); err != nil {
 		return nil, err
+	}
+	// stratum's seed_members has no default and is assert_required (stratum#2):
+	// it is the members the chart renders. A fleet that renders no stratum has
+	// no members to name, so its holder entry stays absent rather than invalid.
+	if sc := kernelConfig.Configs.StratumConfig; sc != nil {
+		if seeds := helm.StratumSeedMembers(t.StratumNodes, t.GetStratumSearchNodes()); len(seeds) > 0 {
+			sc.SeedMembers = seeds
+		} else {
+			kernelConfig.Configs.StratumConfig = nil
+		}
 	}
 	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
 	spiffeLocationPath := kernelConfig.GetLocationPath()

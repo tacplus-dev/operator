@@ -132,9 +132,9 @@ func tenantFromNamespace(ns string) string {
 // operator deploys for cfg, in the order DeployedKernelAuthServices lists the
 // services and Config.tenants lists the tenants.
 //
-// Whether a service is tenant-owned comes from the registry.json annotation
-// alone — there is deliberately no operator-side allowlist that could disagree
-// with it.
+// Whether an app service is tenant-owned comes from the registry.json
+// annotation alone — there is deliberately no operator-side allowlist that
+// could disagree with it. Platform services are always shared (below).
 func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, error) {
 	tenantOwned, err := tenantOwnedServices()
 	if err != nil {
@@ -144,9 +144,17 @@ func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, err
 	if err != nil {
 		return nil, err
 	}
+	// The helm generator deploys only the app's own services per tenant; every
+	// platform service is rendered once, shared, whatever registry.json says
+	// (stratum is tenant_owned since stratum#2, but per-tenant Stratum is
+	// operator#2). The delegates have to match the pods that run.
+	perTenant := map[string]bool{}
+	for _, svc := range AppServiceNames(cfg) {
+		perTenant[svc] = tenantOwned[svc]
+	}
 	var out []ServiceInstance
 	for _, svc := range DeployedKernelAuthServices(cfg) {
-		out = append(out, serviceInstances(cfg, svc, tenantOwned, pinnedTenant)...)
+		out = append(out, serviceInstances(cfg, svc, perTenant, pinnedTenant)...)
 	}
 	return out, nil
 }

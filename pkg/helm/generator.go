@@ -327,8 +327,25 @@ func stratumSeedMembersEnv(writers, searchers int32) string {
 }
 
 func stratumSeedEnv(name string, writers, searchers int32, port int) string {
-	if writers <= 0 {
+	members := stratumSeedList(writers, searchers, port)
+	if len(members) == 0 {
 		return ""
+	}
+	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
+}
+
+// StratumSeedMembers is stratum's Config.seed_members for the members the chart
+// renders: the same event-store seed list as STRATUM_SEED_MEMBERS. Since
+// stratum#2 the typed field is the one stratum requires (assert_required);
+// the operator writes it into kernel's services holder. Empty when no stratum
+// writer is rendered.
+func StratumSeedMembers(writers, searchers int32) []string {
+	return stratumSeedList(writers, searchers, stratumHazelcastPort)
+}
+
+func stratumSeedList(writers, searchers int32, port int) []string {
+	if writers <= 0 {
+		return nil
 	}
 	var members []string
 	// <pod>.<headless service>:<hazelcast port>. A StatefulSet-shaped
@@ -343,7 +360,7 @@ func stratumSeedEnv(name string, writers, searchers int32, port int) string {
 	for i := int32(0); i < searchers; i++ {
 		members = append(members, fmt.Sprintf("%s-%d.%s:%d", stratumSearchName, i, stratumSearchName, port))
 	}
-	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
+	return members
 }
 
 // blobstore's two in-cluster ports, which are `Config.http_listener`'s and
