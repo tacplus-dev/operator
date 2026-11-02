@@ -7,8 +7,8 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
 
-	loggerchassis "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/logger"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
+	"github.com/tacplus-dev/operator/pkg/reconciler"
+	loggerchassis "github.com/tacplus-dev/operator/tacplus/chassis/logger"
 )
 
 var recoverReleaseNamespace string

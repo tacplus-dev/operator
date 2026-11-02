@@ -78,8 +78,8 @@ message TLSConfig {
 message Topology {
   int32 kernel_nodes     = 1  [(spec.default_int) = 3];
 
-  // 2 held sentinel_nodes. Sentinel went to the boneyard 2026-10-12 (sonar
-  // mvp-plan "Amendment 2026-10-12"; it returns later as part of the Admiral)
+  // 2 held sentinel_nodes. Sentinel went to the boneyard 2026-10-12 (it
+  // returns later as part of the Admiral)
   // — out of the fleet, proto deleted — so the topology cannot ask for replicas
   // of it. Same treatment as timedb/graphdb below: reserved, not silently
   // reused.

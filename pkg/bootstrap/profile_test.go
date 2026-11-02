@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"testing"
 
-	"gitlab.com/seabeam/schematic/platform/services/operator/model/grants"
+	"github.com/tacplus-dev/operator/tacplus/grants"
 )
 
 // allServiceGrants used to reflect over TokenEntitlements looking for

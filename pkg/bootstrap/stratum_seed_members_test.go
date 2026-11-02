@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 )
 
 // stratum's Config.seed_members is assert_required since stratum#2: a member

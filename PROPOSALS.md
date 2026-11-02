@@ -15,5 +15,18 @@ the looper then marks it `promoted` or `declined` here with the date.
   `helm.StratumSeedMembers` becomes per tenant. The old shape #2 removes is still rendered meanwhile:
   `STRATUM_MEMBER_ROLE`, `STRATUM_WS_SEED_MEMBERS`, the writers' volume and `disk_persistence`, which the stratum#2 image
   no longer reads.
+- **Retire the auto-upgrade checker, or make it follow release lines** (2026-11-02, #8): `pkg/upgrade` now polls
+  `ghcr.io/tacplus-dev/<service>`, but it still selects SeaBeam's tag scheme (`vMAJOR.MINOR.PROTO_PATCH-BRANCH.LOCAL_PATCH`,
+  `selectLatest`), which no tacplus-dev release uses (#6: `vMAJOR.MINOR.PATCH`, line tag `MAJOR.MINOR`). Its registry
+  credentials still come from the `gitlab-registry` secret, which holds none for ghcr.io (public images need none). Fleets
+  pin by release line and image digest (tacplus-dev/tacplus#180), so the poller may simply go. Its `series` field is unused
+  since the images lost the `-<series>` suffix.
+- **Retire or retarget the GitLab pull secret** (2026-11-02, #8): `gitlab_registry_token` (operator.proto field 14), the
+  chart's `registryToken`, and the rendered `gitlab-registry` Secret give pull credentials for `registry.gitlab.com`.
+  The operator no longer renders any image from there. This is a contract change (reserve field 14, rename the
+  imagePullSecret), so it is not done here.
+- **Publish the operator binaries with each release, or drop `upgrade`** (2026-11-02, #8): `schematic-operator upgrade`
+  now downloads `schematic-operator-<os>-<arch>` from the GitHub release of tacplus-dev/operator. #6 publishes only the
+  image, so the command finds nothing until a release attaches those assets.
 
 ## Promoted / declined

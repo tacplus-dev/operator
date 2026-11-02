@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoServicesConfig "github.com/tacplus-dev/operator/tacplus/types/generated/services_config"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // A deployed service's holder entry is made present and gets its generated

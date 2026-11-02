@@ -1,10 +1,7 @@
 package bootstrap
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,15 +9,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
-const (
-	configProjectID = "seabeam%2Fcontrolplane%2Fschematic%2Fconfig-templates"
-	configAPIBase   = "https://gitlab.com/api/v4"
-)
-
-// ConfigTemplate is the single-file format used in the schematic/config repo.
+// ConfigTemplate is the single-file format `export config` writes and
+// `init config` applies.
 // Each named template (e.g. dev1.yaml) captures operator settings and OPA
 // policy source in one file that the operator can expand into a config dir
 // or pack from a config dir.
@@ -37,57 +30,33 @@ type ConfigTemplate struct {
 
 // --- init config ---
 
-var initConfigTag string
-
 var initConfigCmd = &cobra.Command{
-	Use:   "config <name>",
-	Short: "Apply a named config template from the schematic/config repo",
-	Long: `Download and apply a named configuration template from the schematic/config repo.
+	Use:   "config <file>",
+	Short: "Apply a config template file to the config dir",
+	Long: `Apply a configuration template file, as 'export config' writes one.
 
-The template is a single YAML file (<name>.yaml) containing:
+The template is a single YAML file containing:
   operator:  settings merged into operator.yaml (template fills missing keys)
   opa:       rego files written to services/opa/ (overwrites generated files)
 
 Run after 'schematic-operator init-opa' to apply the custom OPA policy.
 
 Examples:
-  schematic-operator init config dev1
-  schematic-operator init config dev1 --tag v1.0.0-main.3`,
+  schematic-operator init config dev1.yaml`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInitConfig,
 }
 
-func init() {
-	initConfigCmd.Flags().StringVar(&initConfigTag, "tag", "", "template version tag (default: latest release)")
-}
-
 func runInitConfig(cmd *cobra.Command, args []string) error {
-	name := args[0]
+	path := args[0]
 	dir := resolveConfigDir()
 
-	token := gitlabToken()
-	if token == "" {
-		return fmt.Errorf("no GitLab token found — set GITLAB_TOKEN or add a ~/.netrc entry for gitlab.com")
-	}
-
-	tag := initConfigTag
-	if tag == "" {
-		releases, err := fetchConfigReleases(token)
-		if err != nil {
-			return fmt.Errorf("fetching config releases: %w", err)
-		}
-		if len(releases) == 0 {
-			return fmt.Errorf("no releases found in schematic/config repo — tag and release the repo first")
-		}
-		tag = releases[0]
-	}
-
-	fmt.Printf("Config template: %s @ %s\n", name, tag)
-
-	tmpl, err := downloadConfigTemplate(name, tag, token)
+	tmpl, err := readConfigTemplate(path)
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("Config template: %s\n", path)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
@@ -96,72 +65,16 @@ func runInitConfig(cmd *cobra.Command, args []string) error {
 	return applyConfigTemplate(tmpl, dir)
 }
 
-// fetchConfigReleases returns release tag names from the config repo, newest first.
-func fetchConfigReleases(token string) ([]string, error) {
-	url := fmt.Sprintf("%s/projects/%s/releases?per_page=10", configAPIBase, configProjectID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var items []struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
-		return nil, err
-	}
-
-	tags := make([]string, len(items))
-	for i, item := range items {
-		tags[i] = item.TagName
-	}
-	return tags, nil
-}
-
-// downloadConfigTemplate fetches <name>.yaml from the config repo at the given tag.
-func downloadConfigTemplate(name, tag, token string) (*ConfigTemplate, error) {
-	// URL-encode the file path for the GitLab raw file API.
-	filePath := name + ".yaml"
-	url := fmt.Sprintf("%s/projects/%s/repository/files/%s/raw?ref=%s",
-		configAPIBase, configProjectID, filePath, tag)
-
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("downloading config template: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("downloading config template: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	data, err := io.ReadAll(resp.Body)
+// readConfigTemplate reads and parses the template file at path.
+func readConfigTemplate(path string) (*ConfigTemplate, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config template: %w", err)
 	}
 
 	var tmpl ConfigTemplate
 	if err := yaml.Unmarshal(data, &tmpl); err != nil {
-		return nil, fmt.Errorf("parsing config template %s.yaml: %w", name, err)
+		return nil, fmt.Errorf("parsing config template %s: %w", path, err)
 	}
 	return &tmpl, nil
 }
@@ -234,7 +147,7 @@ var exportConfigCmd = &cobra.Command{
 	Use:   "config <name>",
 	Short: "Pack config dir into a named template file",
 	Long: `Pack the current config directory's operator settings and OPA policy
-into a single template YAML file suitable for the schematic/config repo.
+into a single template YAML file, which 'init config' applies.
 
 Captures:
   operator.yaml settings  → template operator: section (PKI and secrets stripped)

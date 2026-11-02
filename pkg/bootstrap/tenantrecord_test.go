@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	protoTenantConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/tenant_config"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
+	protoTenantConfig "github.com/tacplus-dev/operator/tacplus/types/generated/tenant_config"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOauth "github.com/tacplus-dev/operator/tacplus/types/services/oauth"
 )
 
 // betaOauth is the IdP the approved record for beta carries.

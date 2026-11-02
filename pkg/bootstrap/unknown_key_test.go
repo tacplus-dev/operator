@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // A key in services/<name>.yaml that the service's Config does not declare is

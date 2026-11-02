@@ -31,9 +31,23 @@ func TestSelectLatestAllowsUnboundedProtoPatch(t *testing.T) {
 	}
 }
 
-func TestOperatorRepoUsesDeployableServiceNamespace(t *testing.T) {
-	want := "seabeam/schematic/platform/services/operator/schematic-operator"
-	if got := operatorRepo(); got != want {
-		t.Fatalf("operatorRepo() = %q, want %q", got, want)
+// Each service's image is its release's, ghcr.io/tacplus-dev/<service>, the
+// operator's own included (tacplus-dev/operator#6).
+func TestReposAreTacplusDevOnGhcr(t *testing.T) {
+	if registryHost != "ghcr.io" {
+		t.Errorf("registryHost = %q, want ghcr.io", registryHost)
+	}
+	if got, want := operatorRepo(), "tacplus-dev/operator"; got != want {
+		t.Errorf("operatorRepo() = %q, want %q", got, want)
+	}
+	if got, want := serviceRepo(ServiceRef{Proj: "kernel", Svc: "kernel"}), "tacplus-dev/kernel"; got != want {
+		t.Errorf("serviceRepo(kernel) = %q, want %q", got, want)
+	}
+}
+
+func TestRegistryTokenURLIsGhcr(t *testing.T) {
+	want := "https://ghcr.io/token?service=ghcr.io&scope=repository:tacplus-dev/kernel:pull"
+	if got := registryTokenURL("tacplus-dev/kernel"); got != want {
+		t.Errorf("registryTokenURL() = %q, want %q", got, want)
 	}
 }

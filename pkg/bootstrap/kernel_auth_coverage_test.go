@@ -4,8 +4,8 @@ import (
 	"sort"
 	"testing"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // everyPlatformServiceConfig turns on every optional platform service, so

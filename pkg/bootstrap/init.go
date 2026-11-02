@@ -12,11 +12,11 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	loggerchassis "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/logger"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/reconciler"
+	"github.com/tacplus-dev/operator/pkg/upgrade"
+	loggerchassis "github.com/tacplus-dev/operator/tacplus/chassis/logger"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // --- run (default) ---

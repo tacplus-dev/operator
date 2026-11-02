@@ -6,7 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/helm"
 )
 
 func testNode(pool string, ready, unschedulable bool) corev1.Node {

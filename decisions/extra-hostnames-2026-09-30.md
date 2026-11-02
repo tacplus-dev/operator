@@ -25,7 +25,7 @@ Nothing else reads it. `fqdn` remains the single primary name.
 The kernel seed's `issuer` is `Issuer(cfg)` (pkg/bootstrap/settings.go), built
 from `cfg.Fqdn` and `cfg.Port` only; the seed's `fqdn` is `cfg.Fqdn`
 (pkg/bootstrap/example.go). Neither reads `extra_hostnames`, so on pilot the
-issuer stays `https://console.seabeam.net` whatever extra names are listed.
+issuer stays `https://console.example.net` whatever extra names are listed.
 `TestExtraHostnamesReachGatewayAndLetsencrypt` asserts the issuer alongside the
 rendered lists. Tokens therefore always carry the fqdn issuer, even when a
 client reached the cluster through an extra name.

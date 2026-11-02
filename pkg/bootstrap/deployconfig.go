@@ -8,11 +8,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
-	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
+	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
+	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
+	protoX509 "github.com/tacplus-dev/operator/tacplus/types/sys/x509"
 )
 
 var (

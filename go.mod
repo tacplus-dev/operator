@@ -1,4 +1,4 @@
-module gitlab.com/seabeam/schematic/platform/services/operator
+module github.com/tacplus-dev/operator
 
 go 1.26.0
 

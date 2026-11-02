@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	wrapperKey "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/key"
-	wrapperSpiffe "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/spiffe"
-	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoKey "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/key"
-	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
+	wrapperKey "github.com/tacplus-dev/operator/tacplus/chassis/key"
+	wrapperSpiffe "github.com/tacplus-dev/operator/tacplus/chassis/spiffe"
+	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
+	protoKey "github.com/tacplus-dev/operator/tacplus/types/sys/key"
+	protoX509 "github.com/tacplus-dev/operator/tacplus/types/sys/x509"
 )
 
 const (

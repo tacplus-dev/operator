@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	grpcconfig_pb "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
+	grpcconfig_pb "github.com/tacplus-dev/operator/tacplus/types/sys/grpcconfig"
 )
 
 // Before the operator's kernel identity is up there is no ConfigState to read:

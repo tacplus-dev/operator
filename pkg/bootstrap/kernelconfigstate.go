@@ -8,10 +8,10 @@ import (
 
 	"go.uber.org/zap"
 
-	sm "gitlab.com/seabeam/schematic/platform/services/operator/model/s2sm"
-	"gitlab.com/seabeam/schematic/platform/services/operator/model/s2sm/state/services/config_state"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	grpcconfig_pb "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
+	sm "github.com/tacplus-dev/operator/tacplus/s2sm"
+	"github.com/tacplus-dev/operator/tacplus/s2sm/state/services/config_state"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	grpcconfig_pb "github.com/tacplus-dev/operator/tacplus/types/sys/grpcconfig"
 )
 
 // kernelConfigState is the operator's read of kernel's tenant records: the

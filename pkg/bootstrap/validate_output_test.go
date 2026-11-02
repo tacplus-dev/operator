@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // generatedOutputFixture writes a config dir with every service in the topology
@@ -19,7 +19,7 @@ func generatedOutputFixture(t *testing.T) string {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		OptionalServices: &protoOperator.OptionalServices{
 			Oauth: true,

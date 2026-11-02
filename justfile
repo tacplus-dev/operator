@@ -6,12 +6,12 @@ default: local-binary container
 
 local-binary: generate validate-generated-output
     mkdir -p target
-    go build -trimpath -ldflags="-s -w -X gitlab.com/seabeam/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o target/schematic-operator ./cmd/cavalier-operator
+    go build -trimpath -ldflags="-s -w -X github.com/tacplus-dev/operator/pkg/bootstrap.Version=v1.2.0" -o target/schematic-operator ./cmd/cavalier-operator
 
 container: generate validate-generated-output
     mkdir -p bin
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X gitlab.com/seabeam/schematic/platform/operator/pkg/bootstrap.Version=v1.2.0" -o bin/operator ./cmd/cavalier-operator
-    docker buildx build --platform linux/arm64 -t registry.gitlab.com/seabeam/schematic/platform/operator/schematic-operator-1-1:latest --load .
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X github.com/tacplus-dev/operator/pkg/bootstrap.Version=v1.2.0" -o bin/operator ./cmd/cavalier-operator
+    docker buildx build --platform linux/arm64 -t ghcr.io/tacplus-dev/operator:latest --load .
     rm -f bin/operator
 
 # Generated-output gate. Every artifact `schematic-operator generate` emits is a
@@ -19,7 +19,7 @@ container: generate validate-generated-output
 # bytes still satisfy those protos' spec.assert_* constraints, so a field that
 # became assert_required upstream fails here instead of crash-looping a pod.
 # Runs as part of `local-binary` and `container`, after `generate` has
-# refreshed model/ — the gate has to see the current generated code.
+# refreshed tacplus/ — the gate has to see the current generated code.
 validate-generated-output:
   go test ./pkg/bootstrap/ -run 'TestGeneratedOutputSatisfiesConsumerProtos|TestGeneratedKernelConfigCarriesEveryRequiredField|TestValidateDeployConfigsNamesTheMissingField|TestEveryDeployArtifactIsClassified' -count=1
 
@@ -27,6 +27,9 @@ validate-generated-output:
 # plus gofmt and vet. `generate` runs first so every check sees freshly
 # generated code; `go test ./...` includes the validate-generated-output tests.
 gates: generate
+  # tacplus-dev works without its upstream (#8): no reference to it outside the provenance
+  # and the dated records (the brackets keep this line from matching itself).
+  upstream="$(git grep -n -I -i -E 'sea[b]eam|sona[r]|scott[y]' -- . ':!PROVENANCE.md' ':!decisions' ':!ROADMAP.md' ':!HISTORY.md' ':!STATE.md' ':!PROPOSALS.md' ':!QUESTIONS.md' || true)"; test -z "$upstream" || { echo "upstream references:" >&2; echo "$upstream" >&2; exit 1; }
   test -z "$(gofmt -l $(git ls-files '*.go'))"
   go vet ./...
   go build ./...
@@ -38,9 +41,9 @@ generate:
   # tacplus.yaml (its floor, depends, states: all) says what to generate from;
   # the other services' contracts come through depends, not local proto trees.
   {{TACPLUS}} build --tag latest
-  # pkg/bootstrap embeds the registry so the binary is self-contained; model/ is
+  # pkg/bootstrap embeds the registry so the binary is self-contained; tacplus/ is
   # gitignored and absent in-cluster, and Go embed cannot reach a parent dir.
-  cp model/registry.json pkg/bootstrap/registry.json
+  cp tacplus/registry.json pkg/bootstrap/registry.json
   go mod tidy
 
 # Bundle a config directory's services/ tree into the base64 tar.gz that this

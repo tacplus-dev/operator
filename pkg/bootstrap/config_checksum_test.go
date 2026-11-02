@@ -16,8 +16,8 @@ import (
 	"helm.sh/helm/v3/pkg/releaseutil"
 	k8syaml "sigs.k8s.io/yaml"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // TestSeedChangeRollsKernelPods pins the link between kernel's rendered config
@@ -37,7 +37,7 @@ func TestSeedChangeRollsKernelPods(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
@@ -188,7 +188,7 @@ func TestOauthProviderChangeRollsKernelPods(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,
@@ -215,13 +215,13 @@ func TestOauthProviderChangeRollsKernelPods(t *testing.T) {
     enable: true
     issuer: https://accounts.google.com
     client_id: google-client
-    allowed_redirect_uri_prefixes: [https://console.seabeam.cloud/]
+    allowed_redirect_uri_prefixes: [https://console.example.com/]
 `
 	const microsoft = `  - name: microsoft
     enable: true
     issuer: https://login.microsoftonline.com/common/v2.0
     client_id: microsoft-client
-    allowed_redirect_uri_prefixes: [https://console.seabeam.cloud/]
+    allowed_redirect_uri_prefixes: [https://console.example.com/]
 `
 	writeOauth := func(providers string) {
 		if err := os.WriteFile(filepath.Join(servicesDir, "oauth.yaml"), []byte("providers:\n"+providers), 0644); err != nil {

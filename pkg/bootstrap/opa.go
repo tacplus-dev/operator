@@ -8,9 +8,9 @@ import (
 	"strings"
 	"unicode"
 
-	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
-	protoFilesystem "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/filesystem"
-	protoOpa "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/opalib"
+	protoOauth "github.com/tacplus-dev/operator/tacplus/types/services/oauth"
+	protoFilesystem "github.com/tacplus-dev/operator/tacplus/types/sys/filesystem"
+	protoOpa "github.com/tacplus-dev/operator/tacplus/types/sys/opalib"
 )
 
 // Minimum accepted by the generated OPA policy validators.
@@ -376,9 +376,9 @@ default eval := {"token_entitlements": {}}
 # services/opa/ of its own. It names no application package: the operator is
 # built against one app's catalog, and a fallback that granted that app's
 # packages (it once granted testapp's ECHO_ANY/TASKS_ANY/QUERY_ANY, none of which
-# exist in sonar's catalog) hands out symbols that expand to nothing elsewhere.
-# An application ships its own services/opa/main.rego with its user grants
-# (sonar/backend/bootstrap/services/opa/main.rego). Without one, only admin gets
+# exist in the application's catalog) hands out symbols that expand to nothing
+# elsewhere. An application ships its own services/opa/main.rego with its user
+# grants, in its config dir's services/opa/. Without one, only admin gets
 # grants, and that is kernel's administrative surface. Every caller still gets
 # their namespace: only the grants depend on the role.
 

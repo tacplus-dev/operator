@@ -33,10 +33,10 @@ import (
 )
 
 const (
-	registryHost   = "registry.gitlab.com"
-	registryBase   = "seabeam/schematic/platform/services"
-	operatorBase   = registryBase + "/operator"
-	gitlabTokenURL = "https://gitlab.com/jwt/auth"
+	// registryHost serves each service's released image,
+	// ghcr.io/tacplus-dev/<service> (tacplus-dev/tacplus#180).
+	registryHost = "ghcr.io"
+	registryBase = "tacplus-dev"
 
 	PollInterval    = 60 * time.Second
 	DevPollInterval = 10 * time.Second
@@ -44,11 +44,10 @@ const (
 
 // ServiceRef identifies a service image in the registry.
 type ServiceRef struct {
-	// Proj is the GitLab registry project name (under services/).
-	// e.g. "kernel", "gateway".
+	// Proj is the service's repository, whose release publishes the image
+	// ghcr.io/tacplus-dev/<Proj>. e.g. "kernel", "gateway".
 	Proj string
-	// Svc is the image name within the project.
-	// e.g. "kernel", "gateway".
+	// Svc is the service name. e.g. "kernel", "gateway".
 	Svc string
 }
 
@@ -230,7 +229,7 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 
 	// Resolve each service.
 	for _, svc := range c.services {
-		repo := fmt.Sprintf("%s/%s/%s-%s", registryBase, svc.Proj, svc.Svc, c.series)
+		repo := serviceRepo(svc)
 		v, err := c.resolveRepo(ctx, repo, creds)
 		if err != nil {
 			c.log.Warn("auto-upgrade: failed to resolve service",
@@ -257,8 +256,15 @@ func (c *Checker) resolveAll(ctx context.Context, creds registryCreds) (map[stri
 	return result, nil
 }
 
+// serviceRepo is the registry repository of svc's released image.
+func serviceRepo(svc ServiceRef) string {
+	return registryBase + "/" + svc.Proj
+}
+
+// operatorRepo is the registry repository of the operator's own image
+// (tacplus-dev/operator#6).
 func operatorRepo() string {
-	return fmt.Sprintf("%s/schematic-operator", operatorBase)
+	return serviceRepo(ServiceRef{Proj: "operator", Svc: "operator"})
 }
 
 // resolveRepo queries a registry repo and returns the best version
@@ -329,9 +335,13 @@ func (c *Checker) registryCreds(ctx context.Context) (registryCreds, error) {
 	return registryCreds{username: parts[0], password: parts[1]}, nil
 }
 
+// registryTokenURL is where registryHost hands out a pull token for repo.
+func registryTokenURL(repo string) string {
+	return fmt.Sprintf("https://%s/token?service=%s&scope=repository:%s:pull", registryHost, registryHost, repo)
+}
+
 func (c *Checker) registryToken(ctx context.Context, repo string, creds registryCreds) (string, error) {
-	url := fmt.Sprintf("%s?service=container_registry&scope=repository:%s:pull", gitlabTokenURL, repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, registryTokenURL(repo), nil)
 	if err != nil {
 		return "", err
 	}

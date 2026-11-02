@@ -15,10 +15,10 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	protoTenantConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/tenant_config"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoTenantConfig "github.com/tacplus-dev/operator/tacplus/types/generated/tenant_config"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOauth "github.com/tacplus-dev/operator/tacplus/types/services/oauth"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // TenantRequestsDir holds tenant requests awaiting approval, one

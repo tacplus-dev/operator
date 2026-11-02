@@ -7,7 +7,7 @@
 #
 #   registry is the repository the fleet pulls from, the same value as the
 #   operator chart's operator.localImages (e.g.
-#   us-central1-docker.pkg.dev/<project>/seabeam). tag defaults to "local",
+#   us-central1-docker.pkg.dev/<project>/<repository>). tag defaults to "local",
 #   output to "images.yaml".
 #
 # The output is an operator Config carrying only image_digests, the same shape

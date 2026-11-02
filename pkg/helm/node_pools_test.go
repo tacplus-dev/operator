@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	k8syaml "sigs.k8s.io/yaml"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // nodePoolsTestConfig is a fleet with a multi-replica StatefulSet (kernel), a

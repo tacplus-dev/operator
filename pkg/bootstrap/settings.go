@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 const (

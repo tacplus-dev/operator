@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"gitlab.com/seabeam/schematic/platform/services/operator/model/grants"
-	protoFilesystem "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/filesystem"
+	"github.com/tacplus-dev/operator/tacplus/grants"
+	protoFilesystem "github.com/tacplus-dev/operator/tacplus/types/sys/filesystem"
 )
 
 func TestLoadOPAPolicyIsStable(t *testing.T) {

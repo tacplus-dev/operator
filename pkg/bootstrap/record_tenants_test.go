@@ -8,9 +8,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoTenantConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/tenant_config"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoTenantConfig "github.com/tacplus-dev/operator/tacplus/types/generated/tenant_config"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // recordTenantsTestDir is a deployable config dir with one tenant, acme, whose
@@ -21,7 +21,7 @@ func recordTenantsTestDir(t *testing.T) string {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Tenants:      []string{"acme"},
 		Topology: &protoOperator.Topology{

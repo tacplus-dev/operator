@@ -29,7 +29,7 @@ import (
 	"strings"
 	"text/template"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // ManagedByLabel is the label key every generated chart resource carries, and
@@ -59,10 +59,10 @@ const (
 // per-replica Deployments' pods share no other label (each is app: <svc><i>),
 // and a PodDisruptionBudget has to select all of a service's replicas.
 const (
-	NodePoolLabel   = "schematic.seabeam.io/pool"
+	NodePoolLabel   = "tacplus.dev/pool"
 	CorePool        = "core"
 	TenantPool      = "tenant"
-	ServicePodLabel = "schematic.seabeam.io/service"
+	ServicePodLabel = "tacplus.dev/service"
 )
 
 // Charts is the in-memory representation of a generated Helm chart.
@@ -72,9 +72,8 @@ type Charts struct {
 }
 
 // TagResolver resolves the image tag for a service registry image.
-// The proj is the GitLab registry project name and svc is the image name within
-// that project. They are equal for every platform service; the split exists for
-// repos that publish an image under a different name than the repo.
+// The proj is the service's repository (its image is ghcr.io/tacplus-dev/<proj>)
+// and svc is the service name. They are equal for every platform service.
 // Returns a full image tag string, e.g. "v1.2.12-main.3" or "latest".
 type TagResolver interface {
 	ServiceTag(proj, svc string) string
@@ -1017,13 +1016,13 @@ func (g *Generator) imageRef(cfg *protoOperator.Config, svc string) string {
 	return g.imageRefProj(cfg, svc, svc)
 }
 
-// imageRefProj builds an image reference where the GitLab registry project name
-// differs from the service name. A digest in cfg.image_digests for proj
-// replaces the tag: <repository>@<digest>.
+// imageRefProj builds an image reference for the image proj's release
+// publishes, ghcr.io/tacplus-dev/<proj> (tacplus-dev/tacplus#180). A digest in
+// cfg.image_digests for proj replaces the tag: <repository>@<digest>.
 func (g *Generator) imageRefProj(cfg *protoOperator.Config, proj, svc string) string {
 	var repo, tag string
 	// Local-images mode (SCHEMATIC_LOCAL_IMAGES): reference locally-built images
-	// (schematic/<proj>:local) instead of the GitLab registry. Used for local
+	// (schematic/<proj>:local) instead of the released images. Used for local
 	// docker-desktop clusters where k8s shares the docker daemon, so
 	// IfNotPresent resolves the local tag without a registry.
 	if v := os.Getenv("SCHEMATIC_LOCAL_IMAGES"); v != "" {
@@ -1037,7 +1036,7 @@ func (g *Generator) imageRefProj(cfg *protoOperator.Config, proj, svc string) st
 		}
 		tag = "local"
 	} else {
-		repo = fmt.Sprintf("registry.gitlab.com/seabeam/schematic/platform/services/%s/%s-%s", proj, svc, g.series)
+		repo = "ghcr.io/tacplus-dev/" + proj
 		tag = g.resolveTag(proj, svc)
 	}
 	if digest := cfg.GetImageDigests()[proj]; digest != "" {

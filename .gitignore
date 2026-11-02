@@ -1,4 +1,4 @@
-model/
+tacplus/
 
 # macOS
 .DS_Store
@@ -46,5 +46,5 @@ schematic-operator.bak-host
 target/
 bin/
 
-# Copied from model/ by `just generate` (26MB, regenerated artifact)
+# Copied from tacplus/ by `just generate` (26MB, regenerated artifact)
 pkg/bootstrap/registry.json

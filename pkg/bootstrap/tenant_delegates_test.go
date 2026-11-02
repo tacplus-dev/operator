@@ -7,7 +7,7 @@ import (
 	"sort"
 	"testing"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // withRegistry swaps the embedded tacplus registry for a fixture and restores

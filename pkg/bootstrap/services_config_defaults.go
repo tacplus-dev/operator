@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
+	protoServicesConfig "github.com/tacplus-dev/operator/tacplus/types/generated/services_config"
 )
 
 // Kernel re-seeds every service's ConfigState root from its services holder on

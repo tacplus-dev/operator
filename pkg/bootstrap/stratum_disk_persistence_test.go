@@ -9,9 +9,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
-	protoGrpcConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
+	protoDiskstore "github.com/tacplus-dev/operator/tacplus/types/sys/diskstore"
+	protoGrpcConfig "github.com/tacplus-dev/operator/tacplus/types/sys/grpcconfig"
 )
 
 // stratumArchiveTestConfig is a fleet with three writers and one search member,
@@ -20,7 +20,7 @@ func stratumArchiveTestConfig(t *testing.T) *protoOperator.Config {
 	t.Helper()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:        1,

@@ -9,14 +9,14 @@ import (
 	"syscall"
 	"testing"
 
-	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
-	protoTokenRequest "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/tokenrequest"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
+	"github.com/tacplus-dev/operator/pkg/reconciler"
+	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
+	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoLetsencrypt "github.com/tacplus-dev/operator/tacplus/types/services/letsencrypt"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
+	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
+	protoTokenRequest "github.com/tacplus-dev/operator/tacplus/types/sys/tokenrequest"
 )
 
 func TestApplyServiceDefaultsSetsRequiredGrpcFields(t *testing.T) {
@@ -291,7 +291,7 @@ func TestBundleServiceValuesCarriesNonEmptyKernelAndServiceConfigs(t *testing.T)
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   2,
@@ -742,7 +742,7 @@ func TestLetsencryptModeWiresGatewayPort80(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "cavalier",
-		Fqdn:         "console.seabeam.net",
+		Fqdn:         "console.example.net",
 		SpiffePrefix: "local.dev",
 		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
@@ -805,7 +805,7 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:      "cavalier",
-		Fqdn:           "console.seabeam.net",
+		Fqdn:           "console.example.net",
 		ExtraHostnames: []string{"console.example.org"},
 		Port:           443,
 		SpiffePrefix:   "local.dev",
@@ -837,7 +837,7 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"console.seabeam.net", "console.example.org"}
+	want := []string{"console.example.net", "console.example.org"}
 
 	kernelCfg, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
 	if err != nil {
@@ -846,8 +846,8 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 	if got := kernelCfg.GetConfigs().GetGatewayConfig().GetExternalHostnames(); !slices.Equal(got, want) {
 		t.Errorf("gateway external_hostnames = %v, want %v", got, want)
 	}
-	if got := kernelCfg.GetIssuer(); got != "https://console.seabeam.net" {
-		t.Errorf("kernel issuer = %q, want https://console.seabeam.net", got)
+	if got := kernelCfg.GetIssuer(); got != "https://console.example.net" {
+		t.Errorf("kernel issuer = %q, want https://console.example.net", got)
 	}
 
 	leCfg, err := protoLetsencrypt.ConfigFromBytes(dc.LetsencryptServiceConfig)
@@ -970,7 +970,7 @@ func TestBuildConfigOutputWritesAppServiceConfigsAndPrunesRetiredOnes(t *testing
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
@@ -1046,7 +1046,7 @@ func TestServiceConfigProviderCachesPki(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology: &protoOperator.Topology{
 			KernelNodes: 1,

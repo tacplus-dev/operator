@@ -7,8 +7,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	protoOauth "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/oauth"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOauth "github.com/tacplus-dev/operator/tacplus/types/services/oauth"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // serviceSpec.SecretEnvVars is the generic per-pod secret delivery mechanism

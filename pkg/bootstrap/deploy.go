@@ -11,17 +11,17 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
-	protoServicesConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/generated/services_config"
-	protoEventbus "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/eventbus"
-	protoGateway "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/gateway"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoLetsencrypt "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/letsencrypt"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	protoDiskstore "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/diskstore"
-	protoHost "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/host"
-	protoX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/x509"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/reconciler"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/reconciler"
+	protoServicesConfig "github.com/tacplus-dev/operator/tacplus/types/generated/services_config"
+	protoEventbus "github.com/tacplus-dev/operator/tacplus/types/services/eventbus"
+	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoLetsencrypt "github.com/tacplus-dev/operator/tacplus/types/services/letsencrypt"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
+	protoDiskstore "github.com/tacplus-dev/operator/tacplus/types/sys/diskstore"
+	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
+	protoX509 "github.com/tacplus-dev/operator/tacplus/types/sys/x509"
 )
 
 // DeployConfigs holds all generated per-service configurations.

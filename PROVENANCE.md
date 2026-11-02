@@ -21,3 +21,14 @@ deployment repo builds its own operator from, against that fleet's merged tree. 
 module so a deployment repo can import it and supply the fleet model; move fleet-specific rendering (the
 test-harness CronJobs, hand-written service special cases) out of the library to the fleet layer. The
 hand-written per-service defaults table is already gone (the generated ServicesDefaults recurses).
+
+2026-11-02 (#8), working without SeaBeam: the Go module is `github.com/tacplus-dev/operator` (was
+`gitlab.com/seabeam/schematic/platform/services/operator`). `pkg` is dropped from tacplus.yaml, since a hyphenated org
+cannot be a pkg segment, so tacplus derives it from go.mod. The generated tree is therefore `tacplus/`, not `model/`.
+Service images are `ghcr.io/tacplus-dev/<service>` (were `registry.gitlab.com/seabeam/.../<svc>-<series>`), for the
+chart and the auto-upgrade checker alike. Node and pod labels are `tacplus.dev/pool` and `tacplus.dev/service` (were
+`schematic.seabeam.io/...`). `upgrade` reads the GitHub releases of tacplus-dev/operator (was SeaBeam's GitLab package
+project). `init config` applies a local template file (was SeaBeam's private config-templates project). Removed:
+`.gitlab-ci.yml` (SeaBeam's pipeline, compiler image and proto clone) and the `registry:` block of
+`proto/dependencies.yaml` (SeaBeam's GitLab project id and interface names). The proto is this repository's own;
+its dependencies come through `depends` from their tacplus-dev homes.

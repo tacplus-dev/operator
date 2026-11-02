@@ -14,10 +14,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	upgradeProjectID   = "81967216"
-	upgradePackageName = "schematic-operator"
-	upgradeAPIBase     = "https://gitlab.com/api/v4"
+// The operator's releases are its tacplus-dev home's: the GitHub releases of
+// tacplus-dev/operator, each binary an asset named by platformBinary. A var so
+// tests can serve the API.
+var (
+	upgradeAPIBase      = "https://api.github.com/repos/tacplus-dev/operator"
+	upgradeDownloadBase = "https://github.com/tacplus-dev/operator/releases/download"
 )
 
 // Version is the current binary version, set at build time via -ldflags.
@@ -43,13 +45,9 @@ Version selection:
   --version 1.2     Latest patch for major.minor 1.2
   --version 1.2.3   Exact release v1.2.3
 
-Authentication is read from (in order):
-  1. GITLAB_TOKEN or PRIVATE_TOKEN environment variable
-  2. ~/.netrc entry for gitlab.com:
-
-       machine gitlab.com
-       login <username>
-       password <your-pat>`,
+Releases come from https://github.com/tacplus-dev/operator/releases. The
+repository is public, so no token is needed; GITHUB_TOKEN or GH_TOKEN, when
+set, is sent to raise the GitHub API rate limit.`,
 	RunE: runUpgrade,
 }
 
@@ -59,10 +57,7 @@ func init() {
 }
 
 func runUpgrade(_ *cobra.Command, _ []string) error {
-	token := gitlabToken()
-	if token == "" {
-		return fmt.Errorf("no GitLab token found — set GITLAB_TOKEN or add a ~/.netrc entry for gitlab.com")
-	}
+	token := githubToken()
 
 	binName, err := platformBinary()
 	if err != nil {
@@ -87,8 +82,7 @@ func runUpgrade(_ *cobra.Command, _ []string) error {
 
 	fmt.Printf("Installing schematic-operator %s (%s)...\n", tag, binName)
 
-	url := fmt.Sprintf("%s/projects/%s/packages/generic/%s/%s/%s",
-		upgradeAPIBase, upgradeProjectID, upgradePackageName, tag, binName)
+	url := releaseAssetURL(tag, binName)
 
 	current, err := os.Executable()
 	if err != nil {
@@ -272,14 +266,20 @@ func parseMajorMinor(tag string) []int {
 	return []int{major, minor}
 }
 
+// releaseAssetURL is where the release tagged tag serves the asset bin.
+func releaseAssetURL(tag, bin string) string {
+	return fmt.Sprintf("%s/%s/%s", upgradeDownloadBase, tag, bin)
+}
+
 // fetchReleases returns all release tag names sorted newest-first.
 func fetchReleases(token string) ([]string, error) {
-	url := fmt.Sprintf("%s/projects/%s/releases?per_page=100", upgradeAPIBase, upgradeProjectID)
+	url := upgradeAPIBase + "/releases?per_page=100"
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	setGitHubAuth(req, token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -313,7 +313,7 @@ func downloadReplace(url, token, dest string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	setGitHubAuth(req, token)
 
 	fmt.Printf("Downloading from %s\n", url)
 	resp, err := http.DefaultClient.Do(req)
@@ -393,40 +393,18 @@ func platformBinary() (string, error) {
 	}
 }
 
-// gitlabToken returns a GitLab PAT from env or ~/.netrc.
-func gitlabToken() string {
-	if t := os.Getenv("GITLAB_TOKEN"); t != "" {
+// githubToken returns a GitHub token from the environment, or "" (the
+// releases are public; a token only raises the API rate limit).
+func githubToken() string {
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
 		return t
 	}
-	if t := os.Getenv("PRIVATE_TOKEN"); t != "" {
-		return t
-	}
-	return netrcPassword("gitlab.com")
+	return os.Getenv("GH_TOKEN")
 }
 
-// netrcPassword parses ~/.netrc and returns the password for the given machine.
-func netrcPassword(machine string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// setGitHubAuth sends token, when there is one, as a bearer token.
+func setGitHubAuth(req *http.Request, token string) {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".netrc"))
-	if err != nil {
-		return ""
-	}
-	// Tokenise by whitespace — handles both single-line and multi-line netrc.
-	toks := strings.Fields(string(data))
-	for i := 0; i+1 < len(toks); i++ {
-		if toks[i] == "machine" && toks[i+1] == machine {
-			for j := i + 2; j+1 < len(toks); j++ {
-				if toks[j] == "machine" {
-					break // next machine stanza
-				}
-				if toks[j] == "password" {
-					return toks[j+1]
-				}
-			}
-		}
-	}
-	return ""
 }

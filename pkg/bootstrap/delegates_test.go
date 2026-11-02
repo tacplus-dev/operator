@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // setupKernelYAML creates a minimal kernel.yaml with TLS stubs and optional
@@ -589,7 +589,7 @@ func TestEnsureServiceDelegatesSkipsPersonalauthWhenDisabled(t *testing.T) {
 }
 
 // TestEnsureServiceDelegatesRemovesUnjustifiedAuthorizedService reproduces the
-// drift Jody found live: work, scotty and mailbox each carried a 'stratum'
+// drift Jody found live: three app services each carried a 'stratum'
 // entry in authorized_services left over from an older registry shape, long
 // after nothing in their spec justified it. The old code only ever appended
 // missing entries, so a delegate kept every capability it had ever been

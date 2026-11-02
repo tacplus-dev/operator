@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // llm_credential is a real API key. It used to land in operator.yaml, which the
@@ -71,7 +71,7 @@ func readFileString(t *testing.T, path string) string {
 // A stale operator.yaml written before llm_credential_services moved to
 // crypto.yaml still carries the field. proto.Merge appends repeated fields, so
 // loading it alongside a post-migration crypto.yaml used to yield
-// ["scotty", "scotty"]. LoadConfig must dedupe.
+// ["agent", "agent"]. LoadConfig must dedupe.
 func TestLoadConfigDedupesOverlappingLlmCredentialServices(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -81,21 +81,21 @@ func TestLoadConfigDedupesOverlappingLlmCredentialServices(t *testing.T) {
 	}{
 		{
 			name:     "fully overlapping",
-			settings: "fqdn: cluster.example.com\nllm_credential_services:\n  - scotty\n",
-			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - scotty\n",
-			want:     []string{"scotty"},
+			settings: "fqdn: cluster.example.com\nllm_credential_services:\n  - agent\n",
+			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - agent\n",
+			want:     []string{"agent"},
 		},
 		{
 			name:     "partially overlapping",
-			settings: "fqdn: cluster.example.com\nllm_credential_services:\n  - scotty\n  - tasks\n",
-			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - scotty\n  - query\n",
-			want:     []string{"scotty", "tasks", "query"},
+			settings: "fqdn: cluster.example.com\nllm_credential_services:\n  - agent\n  - tasks\n",
+			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - agent\n  - query\n",
+			want:     []string{"agent", "tasks", "query"},
 		},
 		{
 			name:     "steady state: only crypto.yaml populates it",
 			settings: "fqdn: cluster.example.com\n",
-			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - scotty\n  - tasks\n",
-			want:     []string{"scotty", "tasks"},
+			crypto:   "llm_credential: sk-ant-secret-value\nllm_credential_services:\n  - agent\n  - tasks\n",
+			want:     []string{"agent", "tasks"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

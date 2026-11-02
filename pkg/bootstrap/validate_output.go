@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoGrpcConfig "gitlab.com/seabeam/schematic/platform/services/operator/model/types/sys/grpcconfig"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoGrpcConfig "github.com/tacplus-dev/operator/tacplus/types/sys/grpcconfig"
 )
 
 // Every artifact BuildDeployConfigs emits is a serialized proto message that

@@ -12,7 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	k8syaml "sigs.k8s.io/yaml"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
@@ -1675,7 +1675,7 @@ func probeHelperBody(t *testing.T, helpers, name string) string {
 func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
-		Fqdn:       "console.seabeam.net",
+		Fqdn:       "console.example.net",
 		Port:       443,
 		ExternalIp: "34.70.146.195",
 		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
@@ -1711,7 +1711,7 @@ func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
 func TestNoExternalAcmeLoadBalancer(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
-		Fqdn:       "console.seabeam.net",
+		Fqdn:       "console.example.net",
 		Port:       443,
 		ExternalIp: "34.70.146.195",
 		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
@@ -1748,7 +1748,7 @@ func TestNoExternalAcmeLoadBalancer(t *testing.T) {
 func TestCertChainModeRendersNoPort80(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
-		Fqdn:       "console.seabeam.net",
+		Fqdn:       "console.example.net",
 		Port:       443,
 		ExternalIp: "34.70.146.195",
 		Topology: &protoOperator.Topology{
@@ -1923,7 +1923,7 @@ func TestImageDigestReplacesTagForPinnedImageOnly(t *testing.T) {
 // digests pinned, the second build must change the pod template so the
 // rollout happens on its own instead of by `rollout restart`.
 func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
-	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "us-central1-docker.pkg.dev/proj/seabeam")
+	t.Setenv("SCHEMATIC_LOCAL_IMAGES", "us-central1-docker.pkg.dev/proj/fleet")
 	kernelTemplate := func(digest string) string {
 		cfg := &protoOperator.Config{
 			Namespace:    "schematic",
@@ -1938,7 +1938,7 @@ func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
 				image = c.Image
 			}
 		}
-		if want := "us-central1-docker.pkg.dev/proj/seabeam/schematic/kernel@" + digest; image != want {
+		if want := "us-central1-docker.pkg.dev/proj/fleet/schematic/kernel@" + digest; image != want {
 			t.Fatalf("kernel image = %q, want %q", image, want)
 		}
 		out, err := k8syaml.Marshal(st.Spec.Template)

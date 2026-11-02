@@ -15,10 +15,10 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	helmloader "helm.sh/helm/v3/pkg/chart/loader"
 
-	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // kmakerRetiredFixture is a config dir as `init cluster` leaves it with the
@@ -28,7 +28,7 @@ func kmakerRetiredFixture(t *testing.T) (string, *protoOperator.Config) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: "local.dev",
 		Topology:     &protoOperator.Topology{GatewayNodes: 1},
 	}

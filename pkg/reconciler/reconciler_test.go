@@ -33,9 +33,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/helm"
-	"gitlab.com/seabeam/schematic/platform/services/operator/pkg/upgrade"
+	"github.com/tacplus-dev/operator/pkg/helm"
+	"github.com/tacplus-dev/operator/pkg/upgrade"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 func TestRemoveKernelHotfixDrift(t *testing.T) {

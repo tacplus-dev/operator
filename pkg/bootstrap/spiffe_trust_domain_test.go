@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	wrapperX509 "gitlab.com/seabeam/schematic/platform/services/operator/model/chassis/x509"
-	protoKernel "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/kernel"
-	protoOperator "gitlab.com/seabeam/schematic/platform/services/operator/model/types/services/operator"
+	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
+	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
 // writeTrustDomainFixture writes a config dir whose operator.yaml carries
@@ -19,7 +19,7 @@ func writeTrustDomainFixture(t *testing.T, spiffePrefix, kernelYAML string) stri
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:    "schematic",
-		Fqdn:         "console.seabeam.cloud",
+		Fqdn:         "console.example.com",
 		SpiffePrefix: spiffePrefix,
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
