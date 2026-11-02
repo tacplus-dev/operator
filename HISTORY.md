@@ -9,3 +9,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-02 looper issue Work without SeaBeam: no gitlab.com/seabeam module paths, sources or registries (#8, 060a346)
 - 2026-11-02 looper issue Patch vulnerable golang.org/x/*, grpc, klauspost/compress, spdystream and otel (40 advisories) (#9)
 - 2026-11-02 looper issue justfile has no gates recipe: add just gates (#11)
+- 2026-11-02 looper issue helm v3.17.3 and its docker/containerd deps carry 24 advisories; fixing needs a helm/k8s/controller-runtime upgrade (#10, dacd018)
