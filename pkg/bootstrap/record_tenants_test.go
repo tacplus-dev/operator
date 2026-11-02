@@ -157,7 +157,7 @@ func TestRecordTenantsIsSorted(t *testing.T) {
 	state := &protoKernel.ConfigState{Tenants: []*protoKernel.Tenant{
 		{Name: "zeta", Status: active}, {Name: "alpha", Status: active}, {Name: "mid", Status: active},
 	}}
-	got, err := recordTenants(cfg, state)
+	got, _, err := recordTenants(cfg, state)
 	if err != nil {
 		t.Fatal(err)
 	}

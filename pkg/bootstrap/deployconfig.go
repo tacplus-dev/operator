@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
@@ -41,11 +42,7 @@ const (
 // short "letsencrypt0.<ns>" form only passes that assertion for namespaces
 // whose name happens to end in letters.
 func letsencryptAcmeHost(cfg *protoOperator.Config) string {
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
-	}
-	return fmt.Sprintf("letsencrypt0.%s.svc.cluster.local", ns)
+	return deployment.ServiceHost("letsencrypt0", deployment.PlatformNamespace(cfg))
 }
 
 func defaultLoggerFields() map[string]any {

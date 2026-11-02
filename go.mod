@@ -1,6 +1,6 @@
 module github.com/tacplus-dev/operator
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/dsnet/compress v0.0.1
@@ -9,6 +9,7 @@ require (
 	github.com/jinzhu/copier v0.4.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.2
+	github.com/tacplus-dev/deploymentproxy v0.2.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/text v0.43.0
 	google.golang.org/grpc v1.83.2

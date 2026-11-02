@@ -1,9 +1,21 @@
 # State: operator
 
-Overwritten to stay current (loopers and agents). Last updated: 2026-11-02 by the looper (#13).
+Overwritten to stay current (loopers and agents). Last updated: 2026-11-02 by the looper (#3).
 
-- **Version / line:** unreleased (no tag yet, #6); tacplus floor 2.5 in `tacplus.yaml` (#15)
+- **Version / line:** unreleased (no tag yet, #6); tacplus floor 2.5 in `tacplus.yaml` (#15); Go 1.27.3 (deploymentproxy v0.2.0 requires it, #3)
 - **Works:** `generate` renders the platform services (kernel, gateway, eventbus, oauth, opa, stratum, letsencrypt) and the app's own services from operator.yaml and crypto.yaml. kmaker is retired (#16): no kmaker workload, config or RBAC, and no `pki.kmaker_signing_ca`; generate rewrites an older crypto.yaml that still holds that key. The fleet has one SPIFFE trust domain (#14): operator.yaml `spiffe_prefix`, else kernel.yaml `spiffe_trust_domain`, else `local.dev`, in kernel, every service config and kernel's SAN; the two set and differing is refused. Nothing depends on SeaBeam (#8): the module is `github.com/tacplus-dev/operator` (generated code in `tacplus/`), images come from `ghcr.io/tacplus-dev/<service>`, and `just gates` refuses any SeaBeam reference outside PROVENANCE.md and the dated records.
+- **Several deployments per cluster (#3):** operator.yaml `deployment` (at most 16 of `[a-z0-9-]`, a letter first) puts the
+  platform in `tac-<deployment>` and each tenant's tenant-owned services (and the coop's pigeons) in
+  `tac-<deployment>-<tid>`; `tenant_ids` gives each tenant its tid, rendered into kernel's `Config.tenants`, and a tenant kernel
+  records brings its own. In cluster the operator asks deploymentproxy (v0.2.0) for each tenant namespace with a
+  `TenantNamespace` object, waits for Ready, and deletes the object of a tenant that is gone. Every endpoint it writes is
+  `<svc>.<namespace>.svc.cluster.local` (kernel's certificate carries those names); delegates match the namespace each
+  instance runs in. NetworkPolicies admit, in `tac-<deployment>`, only its own pods and its tenant namespaces (the gateway's
+  edge ports and the health port excepted), and in a tenant namespace its platform. The chart has no cluster-scoped object
+  (`generate` fails on one): kernel's TokenReview right is the cluster pipeline's `system:auth-delegator` binding. Without
+  `deployment` the one-namespace layout (`namespace`) is rendered as before, less the TokenReview ClusterRole; the coop needs
+  a deployment. The SPIFFE trust domain stays the fleet's (`spiffe_prefix`): the roadmap decision's addendum of 2026-10-29
+  superseded deriving it from the deployment name.
 - **Released / deployed:** nothing released from this repository yet
 - **Known gaps:** Stratum is rendered as before, one shared cluster (writers and search members), though stratum#2 marks it tenant_owned: per-tenant Stratum, without roles, volumes or env seeds, is #2. Until then its delegate stays shared and kernel seeds its `seed_members` with the rendered pods (#15)
 - **Blocked on:** nothing. `just gates` generates and passes on the 2.5 floor (#13); tacplus-dev/tacplus#188 no longer stops it

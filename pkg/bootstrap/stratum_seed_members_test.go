@@ -42,10 +42,10 @@ func TestKernelBootstrapCarriesStratumSeedMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"stratum-0.stratum:5001",
-		"stratum-1.stratum:5001",
-		"stratum-2.stratum:5001",
-		"stratum-search-0.stratum-search:5001",
+		"stratum-0.stratum.schematic.svc.cluster.local:5001",
+		"stratum-1.stratum.schematic.svc.cluster.local:5001",
+		"stratum-2.stratum.schematic.svc.cluster.local:5001",
+		"stratum-search-0.stratum-search.schematic.svc.cluster.local:5001",
 	}
 	if got := kernelCfg.GetConfigs().GetStratumConfig().GetSeedMembers(); !reflect.DeepEqual(got, want) {
 		t.Errorf("stratum seed_members = %q, want %q", got, want)

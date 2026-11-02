@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	protoHazelcast "github.com/tacplus-dev/operator/tacplus/types/common/hazelcast"
 	protoEntitlements "github.com/tacplus-dev/operator/tacplus/types/generated/entitlements"
 	protoServices "github.com/tacplus-dev/operator/tacplus/types/generated/services"
@@ -310,14 +311,14 @@ func InitOPA(cfgDir string) error {
 
 // BuildKernelConfigProto reads the config directory and assembles the kernel Config proto.
 func BuildKernelConfigProto(cfgDir string) (*protoKernel.Config, error) {
-	return buildKernelConfigProto(cfgDir, nil)
+	return buildKernelConfigProto(cfgDir, nil, nil)
 }
 
 // buildKernelConfigProto is BuildKernelConfigProto with, in memory, the
 // delegates approve-tenant would write to kernel.yaml for each of
 // recordTenants: tenants kernel's records hold that operator.yaml does not
-// list. kernel.yaml itself is not written.
-func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel.Config, error) {
+// list, with recordTids giving their tids. kernel.yaml itself is not written.
+func buildKernelConfigProto(cfgDir string, recordTenants []string, recordTids map[string]string) (*protoKernel.Config, error) {
 	servicesDir := filepath.Join(cfgDir, "services")
 
 	// 1. Load kernel.yaml
@@ -330,7 +331,9 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel
 	if err != nil {
 		opCfg = nil
 	}
-	kubernetesNamespace := operatorKubernetesNamespace(opCfg)
+	// The config the delegates' matchers are named from: operator.yaml's, plus
+	// the record tenants and their tids when there are any.
+	matcherCfg := opCfg
 	trustDomain, err := spiffeTrustDomain(opCfg, kernelCfg)
 	if err != nil {
 		return nil, err
@@ -342,6 +345,13 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel
 		}
 		withTenants := proto.Clone(opCfg).(*protoOperator.Config)
 		withTenants.Tenants = append(withTenants.Tenants, recordTenants...)
+		for tenant, tid := range recordTids {
+			if withTenants.TenantIds == nil {
+				withTenants.TenantIds = map[string]string{}
+			}
+			withTenants.TenantIds[tenant] = tid
+		}
+		matcherCfg = withTenants
 		for _, tenant := range recordTenants {
 			if err := addTenantDelegates(kernelCfg, withTenants, tenant); err != nil {
 				return nil, fmt.Errorf("tenant %q: %w", tenant, err)
@@ -385,7 +395,7 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel
 		}
 		if isKernelAuthenticatedService(sd.Name) {
 			inst := ServiceInstance{Service: sd.Name, Tenant: tenantFromNamespace(sd.TenantNamespace)}
-			appendKubernetesServiceAccountMatcher(delegate, kubernetesNamespace, delegateServiceAccountName(inst))
+			appendKubernetesServiceAccountMatcher(delegate, instanceKubernetesNamespace(matcherCfg, inst), delegateServiceAccountName(matcherCfg, inst))
 		}
 		delegates = append(delegates, delegate)
 	}
@@ -591,10 +601,7 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string) (*protoKernel
 }
 
 func operatorKubernetesNamespace(cfg *protoOperator.Config) string {
-	if ns := cfg.GetNamespace(); ns != "" {
-		return ns
-	}
-	return "schematic"
+	return deployment.PlatformNamespace(cfg)
 }
 
 func appendKubernetesServiceAccountMatcher(delegate *protoKernel.Delegate, namespace, serviceAccount string) {
@@ -719,8 +726,8 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 			// matcher was never revisited. Without this resync, every platform
 			// delegate stays pinned to whatever namespace (or the "schematic"
 			// fallback) was in effect the first time its matcher was written.
-			wantNamespace := operatorKubernetesNamespace(cfg)
-			wantServiceAccount := delegateServiceAccountName(inst)
+			wantNamespace := instanceKubernetesNamespace(cfg, inst)
+			wantServiceAccount := delegateServiceAccountName(cfg, inst)
 			hasKSA := false
 			for i, k := range kernelCfg.Delegates[idx].KubernetesServiceAccounts {
 				if k.KubernetesServiceAccount != wantServiceAccount {
@@ -771,8 +778,8 @@ func newServiceDelegate(cfg *protoOperator.Config, inst ServiceInstance, require
 		TenantNamespace:    inst.TenantNamespace(),
 		AuthorizedServices: required,
 		KubernetesServiceAccounts: []SourceKubernetesServiceAccount{{
-			KubernetesNamespace:      operatorKubernetesNamespace(cfg),
-			KubernetesServiceAccount: delegateServiceAccountName(inst),
+			KubernetesNamespace:      instanceKubernetesNamespace(cfg, inst),
+			KubernetesServiceAccount: delegateServiceAccountName(cfg, inst),
 		}},
 		AuthBrokerKinds: authBrokerKindsFor(inst.Service),
 	}

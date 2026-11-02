@@ -1,3 +1,5 @@
+{{- /* A deployment's operator holds no cluster-wide rights; see operator.deployment. */ -}}
+{{- if not .Values.operator.deployment -}}
 # Only grants that are genuinely cluster-scoped live here. Everything the
 # operator does against the namespaces it manages — deployments, statefulsets,
 # services, serviceaccounts, configmaps, secrets, PVCs, namespaced RBAC, leases,
@@ -44,3 +46,4 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses"]
     verbs: ["get", "list", "watch"]
+{{- end }}

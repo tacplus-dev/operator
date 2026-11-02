@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gopkg.in/yaml.v3"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	"github.com/tacplus-dev/operator/pkg/reconciler"
 	protoServicesConfig "github.com/tacplus-dev/operator/tacplus/types/generated/services_config"
@@ -62,16 +63,21 @@ type DeployConfigs struct {
 // BuildDeployConfigs loads config from cfgDir, generates crypto if needed, builds all
 // per-service configs, and returns them in a DeployConfigs struct.
 func BuildDeployConfigs(cfgDir string) (*DeployConfigs, error) {
-	return buildDeployConfigs(cfgDir, nil, nil)
+	return buildDeployConfigs(cfgDir, nil, nil, nil)
 }
 
 // buildDeployConfigs is BuildDeployConfigs with kernel's delegates extended by
-// recordTenants (see buildKernelConfigProto).
-func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTenants []string) (*DeployConfigs, error) {
+// recordTenants, whose tids recordTids gives (see buildKernelConfigProto).
+func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTenants []string, recordTids map[string]string) (*DeployConfigs, error) {
 	cfg, err := LoadConfig(cfgDir)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
+	if err := deployment.Validate(cfg); err != nil {
+		return nil, err
+	}
+	// Where the platform runs; every endpoint below names it in full.
+	ns := deployment.PlatformNamespace(cfg)
 	if pkiOverride != nil {
 		pki, ok := proto.Clone(pkiOverride).(*protoOperator.PKI)
 		if !ok {
@@ -94,7 +100,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 
 	nodeCount := int(t.KernelNodes)
 
-	kernelConfig, err := buildKernelConfigProto(cfgDir, recordTenants)
+	kernelConfig, err := buildKernelConfigProto(cfgDir, recordTenants, recordTids)
 	if err != nil {
 		return nil, fmt.Errorf("building kernel config: %w", err)
 	}
@@ -113,7 +119,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	// it is the members the chart renders. A fleet that renders no stratum has
 	// no members to name, so its holder entry stays absent rather than invalid.
 	if sc := kernelConfig.Configs.StratumConfig; sc != nil {
-		if seeds := helm.StratumSeedMembers(t.StratumNodes, t.GetStratumSearchNodes()); len(seeds) > 0 {
+		if seeds := helm.StratumSeedMembers(ns, t.StratumNodes, t.GetStratumSearchNodes()); len(seeds) > 0 {
 			sc.SeedMembers = seeds
 		} else {
 			kernelConfig.Configs.StratumConfig = nil
@@ -174,6 +180,12 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		kernelConfig.RootCredPairs = cfg.RootCredPairs
 	}
 
+	// operator.yaml's tenants with their tids, so kernel keeps as each
+	// tenant's id the one its namespace was rendered with (kernel#3).
+	if err := addBootstrapTenants(kernelConfig, cfg); err != nil {
+		return nil, err
+	}
+
 	// Assemble kernel trusted CAs: root + cluster + signing CAs.
 	// Kernel needs these for S2S TLS verification (e.g. kernel → OPA).
 	if cfg.Pki.RootCa != nil {
@@ -211,9 +223,11 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		}
 	}
 
+	// Full service names: a service in a tenant namespace resolves a short name
+	// in its own namespace, not in the platform's (#3).
 	kernelEndpoints := make([]*protoHost.Host, nodeCount)
 	for i := range nodeCount {
-		kernelEndpoints[i] = &protoHost.Host{Host: fmt.Sprintf("kernel-%d.kernel", i), Port: int32(protoKernel.DefaultListenerPort)}
+		kernelEndpoints[i] = &protoHost.Host{Host: deployment.ServiceHost(fmt.Sprintf("kernel-%d.kernel", i), ns), Port: int32(protoKernel.DefaultListenerPort)}
 	}
 
 	buildSvc := func(name string, extra func(map[string]any)) ([]byte, error) {
@@ -528,7 +542,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	// Per-node kernel bootstrap configs.
 	members := make([]*protoHost.Host, nodeCount)
 	for i := range nodeCount {
-		members[i] = &protoHost.Host{Host: fmt.Sprintf("kernel-%d.kernel", i), Port: int32(protoKernel.DefaultHazelcastListenerPort)}
+		members[i] = &protoHost.Host{Host: deployment.ServiceHost(fmt.Sprintf("kernel-%d.kernel", i), ns), Port: int32(protoKernel.DefaultHazelcastListenerPort)}
 	}
 
 	var bootstrapYAMLs [][]byte
@@ -589,6 +603,31 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	}
 
 	return dc, nil
+}
+
+// addBootstrapTenants lists in kernel's Config.tenants every tenant of cfg
+// that tenant_ids gives a tid, other than the reserved ones (kernel has
+// those). A tenant kernel.yaml already lists keeps its entry; the same name
+// with another tid is refused, since a tid is immutable.
+func addBootstrapTenants(kernelConfig *protoKernel.Config, cfg *protoOperator.Config) error {
+	listed := make(map[string]string, len(kernelConfig.GetTenants()))
+	for _, t := range kernelConfig.GetTenants() {
+		listed[t.GetName()] = t.GetTid()
+	}
+	for _, name := range cfg.GetTenants() {
+		tid, ok := cfg.GetTenantIds()[name]
+		if !ok || name == deployment.PeopleTenant || name == deployment.RestoreTenant {
+			continue
+		}
+		if have, ok := listed[name]; ok {
+			if have != "" && have != tid {
+				return fmt.Errorf("tenant %q: kernel.yaml lists tid %s, operator.yaml %s", name, have, tid)
+			}
+			continue
+		}
+		kernelConfig.Tenants = append(kernelConfig.Tenants, &protoKernel.BootstrapTenant{Name: name, Tid: tid})
+	}
+	return nil
 }
 
 func isReadOnlyConfigWriteError(err error) bool {
@@ -695,15 +734,23 @@ func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigS
 			return nil, nil
 		}
 		var tenants []string
+		var tids map[string]string
+		var complete bool
 		var refused error
 		if records != nil {
 			cfg, err := LoadConfig(cfgDir)
 			if err != nil {
 				return nil, err
 			}
-			tenants, refused = recordTenants(cfg, records())
+			state := records()
+			tenants, tids, refused = recordTenants(cfg, state)
+			// Only a read of kernel's records may delete a tenant's namespace:
+			// before the first one, the tenants they hold are simply missing.
+			// Kernel always records its reserved people tenant, so a state with
+			// no tenant is not a read yet.
+			complete = len(state.GetTenants()) > 0
 		}
-		dc, err := buildDeployConfigs(cfgDir, pkiCache, tenants)
+		dc, err := buildDeployConfigs(cfgDir, pkiCache, tenants, tids)
 		if err != nil {
 			return nil, err
 		}
@@ -715,9 +762,11 @@ func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigS
 			pkiCache = pki
 		}
 		return &reconciler.ServiceConfigs{
-			Values:         ServiceConfigValues(dc),
-			Tenants:        tenants,
-			RefusedTenants: refused,
+			Values:          ServiceConfigValues(dc),
+			Tenants:         tenants,
+			TenantIds:       tids,
+			TenantsComplete: complete,
+			RefusedTenants:  refused,
 		}, nil
 	}
 }

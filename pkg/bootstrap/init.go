@@ -7,11 +7,15 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	dpv1 "github.com/tacplus-dev/deploymentproxy/api/v1"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	"github.com/tacplus-dev/operator/pkg/reconciler"
 	"github.com/tacplus-dev/operator/pkg/upgrade"
@@ -67,16 +71,26 @@ func runInCluster(dir string, cfg *protoOperator.Config, log *zap.Logger) error 
 		operatorNS = "schematic-operator"
 	}
 
-	targetNS := cfg.GetNamespace()
-	if targetNS == "" {
-		targetNS = reconciler.DefaultNamespace
+	// tac-<deployment> in deployment mode, where the operator itself runs too.
+	targetNS := deployment.PlatformNamespace(cfg)
+
+	// The manager's client reads and writes deploymentproxy's TenantNamespace
+	// objects beside the built-in types.
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("registering kubernetes types: %w", err)
+	}
+	if err := dpv1.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("registering deploymentproxy types: %w", err)
 	}
 
 	// Confine the cache to the namespaces the operator actually manages. Without
 	// this the informers LIST/WATCH secrets, deployments, statefulsets, services
 	// and configmaps cluster-wide, which the namespaced Role in the chart does not
-	// grant. Cluster-scoped types (nodes) still use the cluster-wide informer.
+	// grant. Cluster-scoped types (nodes) still use the cluster-wide informer; a
+	// deployment's operator reads none.
 	mgr, err := manager.New(restCfg, manager.Options{
+		Scheme:                  scheme,
 		LeaderElection:          true,
 		LeaderElectionID:        "schematic-operator-leader",
 		LeaderElectionNamespace: targetNS,

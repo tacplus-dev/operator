@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
@@ -186,10 +187,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		cfg.Topology.GatewayNodes = int32(applyGateways)
 	}
 
-	ns := cfg.GetNamespace()
-	if ns == "" {
-		ns = "schematic"
-	}
+	ns := deployment.PlatformNamespace(cfg)
 
 	tenantOwned, err := TenantOwnedServices()
 	if err != nil {
@@ -268,7 +266,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	switch {
 	case histErr == helmdriver.ErrReleaseNotFound:
-		relName, err := cliHelmInstall(actionCfg, ch, ns, svcValues)
+		relName, err := cliHelmInstall(actionCfg, ch, ns, cfg.GetDeployment() == "", svcValues)
 		if err != nil {
 			return err
 		}
@@ -333,11 +331,13 @@ func (g *cliGetter) ToRESTConfig() (*rest.Config, error) {
 	return rest.CopyConfig(g.cfg), nil
 }
 
-func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, vals map[string]interface{}) (string, error) {
+// createNamespace is false for a deployment: the top pipeline creates
+// tac-<deployment>, and the deployment may create no namespace (#3).
+func cliHelmInstall(cfg *action.Configuration, ch *helmchart.Chart, ns string, createNamespace bool, vals map[string]interface{}) (string, error) {
 	install := action.NewInstall(cfg)
 	install.ReleaseName = "schematic"
 	install.Namespace = ns
-	install.CreateNamespace = true
+	install.CreateNamespace = createNamespace
 	install.Wait = false
 
 	if vals == nil {

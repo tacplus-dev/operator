@@ -9,9 +9,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	wrapperKey "github.com/tacplus-dev/operator/tacplus/chassis/key"
 	wrapperSpiffe "github.com/tacplus-dev/operator/tacplus/chassis/spiffe"
 	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
@@ -155,6 +157,10 @@ func GenerateCrypto(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn, s
 		// like every other service, so the cert must carry the bare service name
 		// or the gateway can't proxy /kernel.* RPCs.
 		dnsNames := []string{nodeName, noHyphen, stsName, "kernel"}
+		// The full names every endpoint the operator writes dials (#3), and
+		// the full service name beside the bare one above.
+		ns := deployment.PlatformNamespace(cfg)
+		dnsNames = append(dnsNames, deployment.ServiceHost(stsName, ns), deployment.ServiceHost("kernel", ns))
 		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
 			dnsNames = append(dnsNames, fqdn)
 		}
@@ -300,6 +306,10 @@ func GenerateKernelTLS(cfg *protoOperator.Config, coreCount, edgeCount int, fqdn
 		noHyphen := fmt.Sprintf("kernel%d", i)
 		stsName := fmt.Sprintf("%s.kernel", nodeName)
 		dnsNames := []string{nodeName, noHyphen, stsName, "kernel"}
+		// The full names every endpoint the operator writes dials (#3), and
+		// the full service name beside the bare one above.
+		ns := deployment.PlatformNamespace(cfg)
+		dnsNames = append(dnsNames, deployment.ServiceHost(stsName, ns), deployment.ServiceHost("kernel", ns))
 		if fqdn != "" && fqdn != nodeName && fqdn != noHyphen {
 			dnsNames = append(dnsNames, fqdn)
 		}
@@ -347,6 +357,16 @@ func KernelTLSNeedsRegeneration(cfg *protoOperator.Config, coreCount, edgeCount 
 	if certChainsNeedSpiffeURI(cfg.Pki.NodeTls, coreCount, kernelSpiffeURI) {
 		return true
 	}
+	// A cert minted before its full service name was in it, or for another
+	// namespace, is reissued: clients dial kernel by that name (#3).
+	if edgeCount == 0 {
+		ns := deployment.PlatformNamespace(cfg)
+		for i := range coreCount {
+			if !certChainHasDNSName(cfg.Pki.NodeTls[i], deployment.ServiceHost(fmt.Sprintf("kernel-%d.kernel", i), ns)) {
+				return true
+			}
+		}
+	}
 	return certChainsNeedSpiffeURI(cfg.Pki.EdgeTls, edgeCount, kernelSpiffeURI)
 }
 
@@ -363,6 +383,17 @@ func certChainsNeedSpiffeURI(chains []*protoX509.X509CertChain, wantCount int, k
 		}
 	}
 	return false
+}
+
+func certChainHasDNSName(chain *protoX509.X509CertChain, name string) bool {
+	if chain == nil || len(chain.Chain) == 0 {
+		return false
+	}
+	cc, err := wrapperX509.NewImmutableX509CertChain(chain)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(cc.Leaf().X509Certificate().DNSNames, name)
 }
 
 func certChainHasURI(chain *protoX509.X509CertChain, uri string) bool {

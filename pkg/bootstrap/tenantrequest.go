@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	protoTenantConfig "github.com/tacplus-dev/operator/tacplus/types/generated/tenant_config"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOauth "github.com/tacplus-dev/operator/tacplus/types/services/oauth"
@@ -248,19 +249,22 @@ func ApproveTenantRecords(cfgDir string, state *protoKernel.ConfigState) ([]stri
 }
 
 // recordTenants returns, sorted, the tenants kernel's ConfigState records as
-// ACTIVE that cfg does not list, other than kernel's reserved people tenant.
-// These are the tenants Accounts.PromoteAccount makes at runtime; the operator
-// deploys them as it deploys operator.yaml's own, without writing anything for
-// them to the config dir. Sorted because the chart renders tenants in list
-// order and state's order is kernel's map order: unsorted, every pass would
-// render a new chart. A tenant validateNewTenant refuses is left out, and the
-// refusals are returned together without stopping the others.
-func recordTenants(cfg *protoOperator.Config, state *protoKernel.ConfigState) ([]string, error) {
+// ACTIVE that cfg does not list, other than kernel's reserved people tenant,
+// and their tids by name. These are the tenants Accounts.PromoteAccount makes
+// at runtime; the operator deploys them as it deploys operator.yaml's own,
+// without writing anything for them to the config dir. Sorted because the
+// chart renders tenants in list order and state's order is kernel's map order:
+// unsorted, every pass would render a new chart. A tenant validateNewTenant
+// refuses is left out, and so is one with no tid when cfg names a deployment
+// (its namespace is named by the tid); the refusals are returned together
+// without stopping the others.
+func recordTenants(cfg *protoOperator.Config, state *protoKernel.ConfigState) ([]string, map[string]string, error) {
 	listed := make(map[string]bool, len(cfg.GetTenants()))
 	for _, t := range cfg.GetTenants() {
 		listed[t] = true
 	}
 	var tenants []string
+	tids := map[string]string{}
 	var errs []error
 	for _, t := range state.GetTenants() {
 		tenant := t.GetName()
@@ -271,10 +275,20 @@ func recordTenants(cfg *protoOperator.Config, state *protoKernel.ConfigState) ([
 			errs = append(errs, fmt.Errorf("tenant %q: %w", tenant, err))
 			continue
 		}
+		if tid := t.GetTid(); tid != "" {
+			if err := deployment.ValidateTid(tid); err != nil {
+				errs = append(errs, fmt.Errorf("tenant %q: %w", tenant, err))
+				continue
+			}
+			tids[tenant] = tid
+		} else if cfg.GetDeployment() != "" {
+			errs = append(errs, fmt.Errorf("tenant %q: kernel's record has no tid, which its namespace is named by", tenant))
+			continue
+		}
 		tenants = append(tenants, tenant)
 	}
 	slices.Sort(tenants)
-	return tenants, errors.Join(errs...)
+	return tenants, tids, errors.Join(errs...)
 }
 
 // withTenantDelegates returns kernel.yaml with tenant's delegates added

@@ -1,3 +1,5 @@
+{{- /* The pipelines grant a deployment's operator its rights; see operator.deployment. */ -}}
+{{- if not .Values.operator.deployment -}}
 # Namespaced grants: everything the operator does against the namespaces it
 # manages. One Role + RoleBinding per namespace in
 # {operator.namespace} ∪ {operator.managedNamespaces}.
@@ -86,4 +88,5 @@ subjects:
   - kind: ServiceAccount
     name: schematic-operator
     namespace: {{ $.Values.operator.namespace }}
+{{- end }}
 {{- end }}

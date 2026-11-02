@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
@@ -82,7 +83,13 @@ var alwaysOnKernelAuthServices = []string{
 
 // operatorServiceAccountName is the Kubernetes ServiceAccount the operator pod
 // runs as, from the operator's own chart (helm/templates/serviceaccount.yaml).
-const operatorServiceAccountName = "schematic-operator"
+// In a deployment it is deploymentOperatorServiceAccountName: deploymentproxy's
+// Role, and the admin RoleBinding it puts in each tenant namespace, name
+// exactly that account (#3).
+const (
+	operatorServiceAccountName           = "schematic-operator"
+	deploymentOperatorServiceAccountName = "operator"
+)
 
 // ServiceInstance is one deployed instance of a kernel-authenticated service.
 //
@@ -183,12 +190,26 @@ func serviceInstances(cfg *protoOperator.Config, svc string, tenantOwned map[str
 // authenticates as si. For every service the operator deploys this is the
 // instance's own name, because the generated chart names the ServiceAccount
 // after the workload. The operator is the exception: its own chart is
-// hand-written and names its ServiceAccount "schematic-operator".
-func delegateServiceAccountName(si ServiceInstance) string {
+// hand-written and names its ServiceAccount "schematic-operator", or
+// "operator" in a deployment.
+func delegateServiceAccountName(cfg *protoOperator.Config, si ServiceInstance) string {
 	if si.Service == "operator" {
+		if cfg.GetDeployment() != "" {
+			return deploymentOperatorServiceAccountName
+		}
 		return operatorServiceAccountName
 	}
 	return si.InstanceName()
+}
+
+// instanceKubernetesNamespace is the Kubernetes namespace si runs in, which
+// its delegate's service-account matcher names: a tenant instance's tenant
+// namespace in a deployment, the platform namespace otherwise.
+func instanceKubernetesNamespace(cfg *protoOperator.Config, si ServiceInstance) string {
+	if si.Tenant != "" {
+		return deployment.TenantNamespaceOf(cfg, si.Tenant)
+	}
+	return deployment.PlatformNamespace(cfg)
 }
 
 // DeployedKernelAuthServices returns the sorted list of kernel-authenticated

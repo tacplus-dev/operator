@@ -1,3 +1,5 @@
+{{- /* The top pipeline creates a deployment's namespace; see operator.deployment. */ -}}
+{{- if not .Values.operator.deployment -}}
 # operator.namespace plus every managed namespace, so the per-namespace Role in
 # templates/role.yaml has a namespace to land in at install time.
 {{- $namespaces := concat (list .Values.operator.namespace) (.Values.operator.managedNamespaces | default list) | uniq }}
@@ -9,4 +11,5 @@ metadata:
   name: {{ $ns }}
   labels:
     {{- include "schematic-operator.labels" $ | nindent 4 }}
+{{- end }}
 {{- end }}

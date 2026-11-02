@@ -13,7 +13,7 @@ import (
 func BuildConfigOutput(cfgDir string) error {
 	configsDir := filepath.Join(cfgDir, "configs")
 
-	dc, err := buildDeployConfigs(cfgDir, nil, nil)
+	dc, err := buildDeployConfigs(cfgDir, nil, nil, nil)
 	if err != nil {
 		return err
 	}

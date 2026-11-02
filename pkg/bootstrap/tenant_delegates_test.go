@@ -199,7 +199,7 @@ func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 		if d.TenantNamespace != "" {
 			t.Errorf("shared delegate %q has tenant_namespace %q, want empty", d.Name, d.TenantNamespace)
 		}
-		wantKSA := delegateServiceAccountName(ServiceInstance{Service: d.Name})
+		wantKSA := delegateServiceAccountName(cfg, ServiceInstance{Service: d.Name})
 		if len(d.KubernetesServiceAccounts) != 1 || d.KubernetesServiceAccounts[0].KubernetesServiceAccount != wantKSA {
 			t.Errorf("shared delegate %q KSAs = %+v, want the single %q", d.Name, d.KubernetesServiceAccounts, wantKSA)
 		}

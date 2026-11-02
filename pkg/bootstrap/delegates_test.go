@@ -122,7 +122,7 @@ func TestEnsureServiceDelegatesCreatesPerService(t *testing.T) {
 		// The service account is the delegate's own name for every service the
 		// operator deploys; the operator itself runs as "schematic-operator",
 		// the name its hand-written chart gives its ServiceAccount.
-		wantKSA := delegateServiceAccountName(ServiceInstance{Service: d.Name, Tenant: tenantFromNamespace(d.TenantNamespace)})
+		wantKSA := delegateServiceAccountName(nil, ServiceInstance{Service: d.Name, Tenant: tenantFromNamespace(d.TenantNamespace)})
 		if d.KubernetesServiceAccounts[0].KubernetesServiceAccount != wantKSA {
 			t.Fatalf("delegate %q KSA = %q, want %q", d.Name,
 				d.KubernetesServiceAccounts[0].KubernetesServiceAccount, wantKSA)

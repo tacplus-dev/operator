@@ -10,6 +10,17 @@ operator:
   # Kubernetes namespace for the operator and all schematic services.
   namespace: schematic
 
+  # The deployment this operator runs, when several share the cluster
+  # (decisions/deployments-per-cluster-2026-10-26.md). Must match `deployment:`
+  # in operator.yaml. When set, the operator runs in tac-<deployment> (and
+  # operator.namespace and operator.managedNamespaces are ignored) as the
+  # ServiceAccount `operator`, which deploymentproxy's Role and its tenant
+  # namespaces' RoleBindings bind by name. The chart then renders no Namespace,
+  # ClusterRole, ClusterRoleBinding, Role or RoleBinding: the top pipeline
+  # creates tac-<deployment>, and the cluster pipeline grants `operator` admin
+  # there and applies deploymentproxy's Role.
+  deployment: ""
+
   # Namespaces the operator deploys the schematic fleet into, when that is not
   # operator.namespace. Must match `namespace:` in operator.yaml. A namespaced
   # Role + RoleBinding is emitted for operator.namespace plus each entry here;

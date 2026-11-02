@@ -51,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	"github.com/tacplus-dev/operator/pkg/upgrade"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
@@ -76,8 +77,8 @@ const (
 )
 
 // DefaultNamespace is the namespace the fleet is deployed into when
-// operator.yaml does not set one.
-const DefaultNamespace = "schematic"
+// operator.yaml sets neither a deployment nor a namespace.
+const DefaultNamespace = deployment.LegacyNamespace
 
 // ServiceConfigs is one reconcile's worth of generated configuration.
 type ServiceConfigs struct {
@@ -92,6 +93,15 @@ type ServiceConfigs struct {
 	// approve-tenant would refuse them too (say, a name that makes an invalid
 	// Kubernetes object name); nil when none were.
 	RefusedTenants error
+	// TenantIds is the tid by tenant name of the record tenants in Tenants,
+	// from kernel's records.
+	TenantIds map[string]string
+	// TenantsComplete reports that kernel's records were read this pass, so
+	// Tenants holds every record tenant. Until it is set the reconciler
+	// deletes no tenant namespace: a tenant missing from Tenants may be one
+	// whose record has not been read yet, and deleting its namespace would
+	// delete its data.
+	TenantsComplete bool
 }
 
 // ServiceConfigProvider returns the generated configuration on each reconcile.
@@ -112,6 +122,12 @@ type Reconciler struct {
 	operatorNS     string
 	series         string // image series from operator binary, e.g. "1-2"
 	versionLock    string // MAJOR.MINOR from operator binary, e.g. "1.2"
+
+	// tenantNamespaceTimeout and tenantNamespacePoll bound the wait for
+	// deploymentproxy's tenant namespaces; zero means
+	// TenantNamespaceReadyTimeout and tenantNamespacePollInterval.
+	tenantNamespaceTimeout time.Duration
+	tenantNamespacePoll    time.Duration
 }
 
 // New creates a Reconciler. Call Run to start the reconciliation loop.
@@ -151,7 +167,13 @@ func (r *Reconciler) Start(ctx context.Context) error {
 // Run starts the reconciliation loop. It blocks until ctx is cancelled.
 // The checker resolves image tags and polls for upgrades.
 func (r *Reconciler) Run(ctx context.Context) error {
-	r.log.Info("reconciler started", zap.String("namespace", r.cfg.GetNamespace()))
+	r.log.Info("reconciler started", zap.String("namespace", r.namespace()))
+	if d := r.cfg.GetDeployment(); d != "" {
+		r.log.Info("deployment mode: the operator holds no cluster-wide rights, so it lists no nodes; gateways follow topology.gateway_nodes and node pools are off",
+			zap.String("deployment", d),
+			zap.Int32("gateway_nodes", r.cfg.GetTopology().GetGatewayNodes()),
+		)
+	}
 
 	// A fleet deployed by digest (image_digests) is versioned by the pipeline
 	// that writes images.yaml, not by registry tags: its images render as
@@ -213,14 +235,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	}
 }
 
+// namespace is where the fleet's platform services and its Helm release live:
+// tac-<deployment>, or without a deployment operator.yaml's namespace.
 func (r *Reconciler) namespace() string {
-	if ns := r.cfg.GetNamespace(); ns != "" {
-		return ns
-	}
-	return DefaultNamespace
+	return deployment.PlatformNamespace(r.cfg)
 }
 
-// selfUpgrade checks whether the operator's own Deployment is running the
 // selfUpgrade checks whether the operator's own Deployment is running the
 // desired version. If not, it patches the container image and returns true
 // so the caller can skip the service reconcile — k8s will restart the operator
@@ -275,15 +295,23 @@ func (r *Reconciler) selfUpgrade(ctx context.Context) (bool, error) {
 }
 
 func (r *Reconciler) reconcile(ctx context.Context) error {
-	nodeCount, nodePools, err := r.schedulableNodeCount(ctx)
-	if err != nil {
-		return fmt.Errorf("counting nodes: %w", err)
+	// A deployment's operator may not list nodes, which are cluster-scoped:
+	// a count of 0 leaves topology.gateway_nodes as configured.
+	var nodeCount int
+	var nodePools bool
+	if r.cfg.GetDeployment() == "" {
+		var err error
+		nodeCount, nodePools, err = r.schedulableNodeCount(ctx)
+		if err != nil {
+			return fmt.Errorf("counting nodes: %w", err)
+		}
 	}
 	r.log.Info("reconciling", zap.Int("schedulable_nodes", nodeCount), zap.Bool("node_pools", nodePools))
 
 	var sc *ServiceConfigs
 	var svcValues map[string]interface{}
 	if r.configProvider != nil {
+		var err error
 		sc, err = r.configProvider()
 		if err != nil {
 			return fmt.Errorf("building service configs: %w", err)
@@ -297,9 +325,17 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 		r.log.Info("built service configs", zap.Int("services", len(svcValues)))
 	}
 
-	charts, err := r.generator.Generate(chartConfig(r.cfg, sc), nodeCount, nodePools)
+	chartCfg := chartConfig(r.cfg, sc)
+	charts, err := r.generator.Generate(chartCfg, nodeCount, nodePools)
 	if err != nil {
 		return fmt.Errorf("generating charts: %w", err)
+	}
+
+	// The chart installs into the tenant namespaces, so they must exist first.
+	// Without a provider operator.yaml lists every tenant there is.
+	prune := r.configProvider == nil || (sc != nil && sc.TenantsComplete)
+	if err := r.syncTenantNamespaces(ctx, chartCfg, prune); err != nil {
+		return fmt.Errorf("syncing tenant namespaces: %w", err)
 	}
 
 	if err := r.apply(ctx, charts, svcValues); err != nil {
@@ -320,13 +356,24 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 }
 
 // chartConfig is cfg with the tenants sc carries from kernel's records
-// appended, so the chart renders their tenant-owned instances.
+// appended, and their tids added to tenant_ids, so the chart renders their
+// tenant-owned instances. cfg itself is not changed.
 func chartConfig(cfg *protoOperator.Config, sc *ServiceConfigs) *protoOperator.Config {
-	if sc == nil || len(sc.Tenants) == 0 {
+	if sc == nil || (len(sc.Tenants) == 0 && len(sc.TenantIds) == 0) {
 		return cfg
 	}
 	withTenants := proto.Clone(cfg).(*protoOperator.Config)
 	withTenants.Tenants = append(withTenants.Tenants, sc.Tenants...)
+	if len(sc.TenantIds) > 0 {
+		tids := make(map[string]string, len(withTenants.TenantIds)+len(sc.TenantIds))
+		for tenant, tid := range withTenants.TenantIds {
+			tids[tenant] = tid
+		}
+		for tenant, tid := range sc.TenantIds {
+			tids[tenant] = tid
+		}
+		withTenants.TenantIds = tids
+	}
 	return withTenants
 }
 
@@ -617,7 +664,9 @@ func (r *Reconciler) helmInstall(cfg *action.Configuration, ch *helmchart.Chart,
 	install := action.NewInstall(cfg)
 	install.ReleaseName = releaseName
 	install.Namespace = ns
-	install.CreateNamespace = true
+	// A deployment's namespace is the top pipeline's to create, and its
+	// operator may not create namespaces.
+	install.CreateNamespace = r.cfg.GetDeployment() == ""
 	install.Wait = false
 
 	rel, err := install.Run(ch, vals)
@@ -1030,10 +1079,7 @@ func filterHotfixVolumes(volumes []corev1.Volume) ([]corev1.Volume, bool) {
 func (r *Reconciler) pruneStaleDeployments(ctx context.Context, nodeCount int) error {
 	expected := r.generator.ExpectedDeploymentNames(r.cfg, nodeCount)
 
-	ns := r.cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
-	}
+	ns := r.namespace()
 
 	var deployList appsv1.DeploymentList
 	if err := r.client.List(ctx, &deployList, &client.ListOptions{

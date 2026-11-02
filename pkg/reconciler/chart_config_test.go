@@ -69,3 +69,24 @@ func TestChartConfigWithoutRecordTenants(t *testing.T) {
 		}
 	}
 }
+
+// TestChartConfigMergesRecordTenantIds: the record tenants' tids join
+// operator.yaml's in the chart's config, and the reconciler's map is not
+// changed.
+func TestChartConfigMergesRecordTenantIds(t *testing.T) {
+	cfg := &protoOperator.Config{
+		Deployment: "prod",
+		Tenants:    []string{"acme"},
+		TenantIds:  map[string]string{"acme": "a1b2c3d4"},
+	}
+	sc := &ServiceConfigs{Tenants: []string{"globex"}, TenantIds: map[string]string{"globex": "g1h2i3j4"}}
+
+	got := chartConfig(cfg, sc)
+
+	if want := map[string]string{"acme": "a1b2c3d4", "globex": "g1h2i3j4"}; !reflect.DeepEqual(got.GetTenantIds(), want) {
+		t.Errorf("chart config tenant_ids = %v, want %v", got.GetTenantIds(), want)
+	}
+	if want := map[string]string{"acme": "a1b2c3d4"}; !reflect.DeepEqual(cfg.TenantIds, want) {
+		t.Errorf("chartConfig changed the reconciler's tenant_ids to %v, want %v", cfg.TenantIds, want)
+	}
+}

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: schematic-operator
-  namespace: {{ .Values.operator.namespace }}
+  namespace: {{ include "schematic-operator.namespace" . }}
   labels:
     {{- include "schematic-operator.labels" . | nindent 4 }}
 spec:
@@ -21,7 +21,12 @@ spec:
         app: schematic-operator
         {{- include "schematic-operator.labels" . | nindent 8 }}
     spec:
+      {{- /* As schematic-operator.serviceAccountName names it. */}}
+      {{- if .Values.operator.deployment }}
+      serviceAccountName: operator
+      {{- else }}
       serviceAccountName: schematic-operator
+      {{- end }}
       automountServiceAccountToken: false
       tolerations:
       - key: kubernetes.io/arch

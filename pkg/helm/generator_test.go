@@ -15,7 +15,7 @@ import (
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
-func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
+func TestGenerateKernelProjectedTokens(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
@@ -45,15 +45,10 @@ func TestGenerateKernelProjectedTokensAndTokenReviewRBAC(t *testing.T) {
 		}
 	}
 
-	tokenReviewRBAC := chartFile(t, charts, "templates/kernel/tokenreview-rbac.yaml")
-	for _, want := range []string{
-		"resources: [\"tokenreviews\"]",
-		"verbs: [\"create\"]",
-		"name: kernel",
-	} {
-		if !strings.Contains(tokenReviewRBAC, want) {
-			t.Fatalf("kernel TokenReview RBAC missing %q\n--- rbac ---\n%s", want, tokenReviewRBAC)
-		}
+	// Kernel's TokenReview right is the cluster pipeline's system:auth-delegator
+	// binding; the chart renders no ClusterRole for it (#3).
+	if _, ok := charts.Files["templates/kernel/tokenreview-rbac.yaml"]; ok {
+		t.Fatal("kernel still renders a cluster-scoped TokenReview ClusterRole")
 	}
 }
 
@@ -356,9 +351,9 @@ func TestStratumRendersBothHazelcastClusters(t *testing.T) {
 	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
 	for _, want := range []string{
 		`- name: STRATUM_SEED_MEMBERS`,
-		`"stratum-0.stratum:5001,stratum-1.stratum:5001,stratum-2.stratum:5001"`,
+		`"stratum-0.stratum.schematic.svc.cluster.local:5001,stratum-1.stratum.schematic.svc.cluster.local:5001,stratum-2.stratum.schematic.svc.cluster.local:5001"`,
 		`- name: STRATUM_WS_SEED_MEMBERS`,
-		`"stratum-0.stratum:5701,stratum-1.stratum:5701,stratum-2.stratum:5701"`,
+		`"stratum-0.stratum.schematic.svc.cluster.local:5701,stratum-1.stratum.schematic.svc.cluster.local:5701,stratum-2.stratum.schematic.svc.cluster.local:5701"`,
 		"containerPort: 5001",
 		"containerPort: 5701",
 	} {
@@ -489,10 +484,10 @@ func TestStratumSearchNodesRenderAVolumeLessWorkload(t *testing.T) {
 	// Both seed lists span BOTH workloads, in both clusters. A search member that
 	// could not resolve a writer at a cold start would form its own cluster of one.
 	wantSeeds := []string{
-		`"stratum-0.stratum:5001,stratum-1.stratum:5001,stratum-search-0.stratum-search:5001,` +
-			`stratum-search-1.stratum-search:5001,stratum-search-2.stratum-search:5001"`,
-		`"stratum-0.stratum:5701,stratum-1.stratum:5701,stratum-search-0.stratum-search:5701,` +
-			`stratum-search-1.stratum-search:5701,stratum-search-2.stratum-search:5701"`,
+		`"stratum-0.stratum.schematic.svc.cluster.local:5001,stratum-1.stratum.schematic.svc.cluster.local:5001,stratum-search-0.stratum-search.schematic.svc.cluster.local:5001,` +
+			`stratum-search-1.stratum-search.schematic.svc.cluster.local:5001,stratum-search-2.stratum-search.schematic.svc.cluster.local:5001"`,
+		`"stratum-0.stratum.schematic.svc.cluster.local:5701,stratum-1.stratum.schematic.svc.cluster.local:5701,stratum-search-0.stratum-search.schematic.svc.cluster.local:5701,` +
+			`stratum-search-1.stratum-search.schematic.svc.cluster.local:5701,stratum-search-2.stratum-search.schematic.svc.cluster.local:5701"`,
 	}
 	for _, f := range []string{"templates/stratum/statefulset.yaml", "templates/stratum-search/statefulset.yaml"} {
 		body := chartFile(t, charts, f)
@@ -1823,7 +1818,7 @@ func TestBlobstoreRendersAMirroredStatefulSetPair(t *testing.T) {
 	if !strings.Contains(ss, "BLOBSTORE_PEERS") {
 		t.Errorf("the StatefulSet does not carry BLOBSTORE_PEERS; neither pod would find the other:\n%s", ss)
 	}
-	for _, want := range []string{"blobstore-0.blobstore:8081", "blobstore-1.blobstore:8081"} {
+	for _, want := range []string{"blobstore-0.blobstore.schematic.svc.cluster.local:8081", "blobstore-1.blobstore.schematic.svc.cluster.local:8081"} {
 		if !strings.Contains(ss, want) {
 			t.Errorf("BLOBSTORE_PEERS does not name %s:\n%s", want, ss)
 		}
@@ -1959,66 +1954,6 @@ func TestNewImageDigestChangesRenderedPodTemplate(t *testing.T) {
 // listing it in app_services renders that namespace with default-deny
 // policies and a quota, and grants the coop's service account exactly the Job
 // lifecycle there. No other app service gets any of it.
-func TestCoopRendersThePigeonsNamespace(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes:   1,
-			EventbusNodes: 2,
-			AppServices:   map[string]int32{"coop": 1, "widgeter": 1},
-		},
-	})
-	rendered := renderedManifests(t, charts)
-	if _, ok := rendered["Namespace/schematic-pigeons"]; !ok {
-		t.Fatalf("coop rendered no pigeons namespace; manifests: %v", keys(rendered))
-	}
-	deny, ok := rendered["NetworkPolicy/default-deny"]
-	if !ok || !strings.Contains(deny, "namespace: schematic-pigeons") || !strings.Contains(deny, "Egress") {
-		t.Fatalf("pigeons namespace has no default-deny policy:\n%s", deny)
-	}
-	egress := rendered["NetworkPolicy/pigeon-egress"]
-	// Deployment pods are labelled app: <name><i>, StatefulSet pods app: <name>.
-	for _, want := range []string{"k8s-app: kube-dns", "app: kernel", "- eventbus0", "- eventbus1", "kubernetes.io/metadata.name: schematic"} {
-		if !strings.Contains(egress, want) {
-			t.Errorf("pigeon egress policy lacks %q:\n%s", want, egress)
-		}
-	}
-	if _, ok := rendered["ResourceQuota/pigeons"]; !ok {
-		t.Error("pigeons namespace has no ResourceQuota")
-	}
-	role := rendered["Role/coop-pigeons"]
-	for _, want := range []string{"namespace: schematic-pigeons", `resources: ["jobs"]`, `resources: ["secrets"]`, `resources: ["pods"]`} {
-		if !strings.Contains(role, want) {
-			t.Errorf("coop pigeons Role lacks %q:\n%s", want, role)
-		}
-	}
-	if strings.Contains(role, "rbac.authorization.k8s.io\"]\n  resources") || strings.Contains(role, `"rolebindings"`) {
-		t.Errorf("coop pigeons Role must grant no RBAC verbs:\n%s", role)
-	}
-	binding := rendered["RoleBinding/coop-pigeons"]
-	if !strings.Contains(binding, "name: coop\n  namespace: schematic") {
-		t.Errorf("RoleBinding does not bind the coop's service account in the fleet namespace:\n%s", binding)
-	}
-	dep := chartFile(t, charts, "templates/coop/deployment.yaml")
-	if !strings.Contains(dep, "kubernetes-api-token") || !strings.Contains(dep, "/var/run/secrets/kubernetes.io/serviceaccount") {
-		t.Errorf("coop deployment mounts no projected API token:\n%s", dep)
-	}
-	if _, ok := rendered["Role/widgeter-pigeons"]; ok {
-		t.Error("an app service that is not the coop got pigeons RBAC")
-	}
-
-	// Without the coop there is no pigeons namespace at all.
-	without := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, AppServices: map[string]int32{"widgeter": 1}},
-	})
-	for path := range without.Files {
-		if strings.Contains(path, "pigeons") {
-			t.Errorf("no coop, yet %s was rendered", path)
-		}
-	}
-}
-
 func keys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

@@ -475,4 +475,27 @@ message Config {
   // persist nothing and have no volume, so their bootstrap never carries it.
   // Unset: no stratum bootstrap carries disk_persistence.
   diskstore.DiskPersistenceConfig stratum_disk_persistence = 26;
+
+  // deployment names this deployment when several share one Kubernetes
+  // cluster (decisions/deployments-per-cluster-2026-10-26.md, #3): at most 16
+  // characters of [a-z0-9-], starting with a letter and ending with a letter or
+  // digit (it ends a namespace name). Set, it decides every namespace:
+  //   - tac-<deployment>: the platform services and the operator itself;
+  //   - tac-<deployment>-<tid>: one per tenant (tenant_ids), holding that
+  //     tenant's tenant-owned services and its pigeons. The operator asks
+  //     deploymentproxy for it with a TenantNamespace object; it creates no
+  //     namespace and renders nothing cluster-scoped.
+  // namespace must then be unset (or its default, or tac-<deployment>).
+  //
+  // Unset: the one-namespace layout of before (namespace), kept until the
+  // deployments that use it have moved (fleet-seatrials#4).
+  string deployment = 27 [(spec.assert_max_size) = 16];
+
+  // tenant_ids gives each tenant in tenants its tid (kernel#3): exactly 8 of
+  // [0-9a-z], immutable and never reused, and not all digits (that range is
+  // the platform's: people is 00000001, restore 00000002). Keyed by tenant name.
+  // Required for every tenant when deployment is set: the tid names the
+  // tenant's namespace, and the operator renders it into kernel's
+  // Config.tenants so kernel keeps it as the tenant's id.
+  map<string, string> tenant_ids = 28 [(spec.assert_max_size) = 64];
 }

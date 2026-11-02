@@ -28,5 +28,26 @@ the looper then marks it `promoted` or `declined` here with the date.
 - **Publish the operator binaries with each release, or drop `upgrade`** (2026-11-02, #8): `schematic-operator upgrade`
   now downloads `schematic-operator-<os>-<arch>` from the GitHub release of tacplus-dev/operator. #6 publishes only the
   image, so the command finds nothing until a release attaches those assets.
+- **Retire the one-namespace layout once seatrials has moved** (2026-11-02, #3): without `deployment`, generate still renders
+  the fleet into `namespace` (default `schematic`), tenant instances included, with no isolation policies and the operator's
+  own chart's ClusterRole. Once fleet-seatrials#4 has moved seatrials to `tac-seatrials`, `deployment` can become required,
+  `namespace` reserved, and the legacy branches (`deployment.PlatformNamespace`'s fallback, the operator chart's
+  non-deployment templates) go.
+- **Prune stale workloads in tenant namespaces** (2026-11-02, #3): the reconciler prunes Deployments the chart no longer
+  renders only in the platform namespace. A tenant namespace is deleted with its tenant, but a tenant-owned service dropped
+  from `app_services` while the tenant lives leaves its Deployment there until helm's own release diff removes it; check
+  that it does, and prune there as well if not.
+- **Pull secret in tenant namespaces** (2026-11-02, #3): `gitlab-registry` is rendered only in the platform namespace,
+  while tenant pods also name it as their imagePullSecret. Harmless for the public ghcr.io images; it goes with the
+  GitLab pull secret proposal above.
+- **Node pools and the gateway count in a deployment** (2026-11-02, #3): a deployment may not list the cluster's nodes, so
+  its reconciler counts none: `topology.gateway_nodes` must be set (generate refuses 0), and pool placement and the
+  PodDisruptionBudgets that come with it are off. Either the cluster pipeline publishes the pool facts into the deployment
+  namespace (a ConfigMap), or pools become operator.yaml settings.
+- **Watch tenant namespaces too** (2026-11-02, #3): the reconciler's cache and `replaceStuckOldRevisionPods` cover only the
+  platform namespace; a tenant instance stuck on an old revision in its tenant namespace is not replaced.
+- **values.yaml has no `serviceConfig` placeholder** (2026-11-02, #3): a chart with letsencrypt rendered with no values
+  override fails in helm (`sha256sum` of a nil `.Values.letsencrypt.serviceConfig`), unlike every `config` key, which has
+  an empty placeholder. The reconciler always passes it, so only dry runs and tests meet it; add the placeholder.
 
 ## Promoted / declined

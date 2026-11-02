@@ -25,10 +25,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/tacplus-dev/operator/pkg/deployment"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
@@ -157,6 +159,14 @@ func (g *Generator) checkPinnedTenants(cfg *protoOperator.Config, topo *protoOpe
 func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools bool) (*Charts, error) {
 	topo := effectiveTopology(cfg, nodeCount)
 
+	if err := deployment.Validate(cfg); err != nil {
+		return nil, err
+	}
+	// A deployment may not read the cluster's nodes, so it has no count to
+	// derive gateway_nodes from.
+	if cfg.GetDeployment() != "" && topo.GetGatewayNodes() == 0 {
+		return nil, fmt.Errorf("deployment %s: topology.gateway_nodes must be set: a deployment has no rights to count the cluster's nodes", cfg.GetDeployment())
+	}
 	if err := g.checkPinnedTenants(cfg, topo); err != nil {
 		return nil, err
 	}
@@ -202,11 +212,13 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	}
 	for _, svc := range services {
 		if svc.PigeonsRBAC {
-			if err := g.addPigeonsNamespace(charts, cfg, topo); err != nil {
-				return nil, fmt.Errorf("generating the pigeons namespace: %w", err)
+			if err := g.addPigeonsRBAC(charts, cfg, svc); err != nil {
+				return nil, fmt.Errorf("generating %s's pigeons RBAC: %w", svc.Name, err)
 			}
-			break
 		}
+	}
+	if cfg.GetDeployment() != "" {
+		addDeploymentNetworkPolicies(charts, cfg, services)
 	}
 	// The runtime test harness (D27) is rendered by the fleet layer, not by
 	// this library: which harness, if any, a fleet runs is the deployment's
@@ -218,7 +230,58 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	}
 	charts.Files["templates/pipeline-secrets.yaml"] = manifest
 
+	// A deployment acts only in its own namespaces; everything cluster-scoped
+	// is the cluster pipeline's (#3).
+	if err := checkNoClusterScopedObjects(charts); err != nil {
+		return nil, err
+	}
 	return charts, nil
+}
+
+// clusterScopedKinds are the kinds a chart must not carry: Kubernetes'
+// cluster-scoped objects, of which a deployment may own none.
+var clusterScopedKinds = map[string]bool{
+	"Namespace":                        true,
+	"Node":                             true,
+	"PersistentVolume":                 true,
+	"ClusterRole":                      true,
+	"ClusterRoleBinding":               true,
+	"StorageClass":                     true,
+	"CSIDriver":                        true,
+	"PriorityClass":                    true,
+	"RuntimeClass":                     true,
+	"IngressClass":                     true,
+	"CustomResourceDefinition":         true,
+	"APIService":                       true,
+	"MutatingWebhookConfiguration":     true,
+	"ValidatingWebhookConfiguration":   true,
+	"ValidatingAdmissionPolicy":        true,
+	"ValidatingAdmissionPolicyBinding": true,
+	"CertificateSigningRequest":        true,
+	"FlowSchema":                       true,
+	"PriorityLevelConfiguration":       true,
+}
+
+// kindLine matches a manifest's top-level kind. Every template here writes
+// kind at column 0, as a manifest's top-level field has to be.
+var kindLine = regexp.MustCompile(`(?m)^kind:\s*(\S+)\s*$`)
+
+// checkNoClusterScopedObjects fails when any template of charts declares a
+// cluster-scoped kind.
+func checkNoClusterScopedObjects(charts *Charts) error {
+	paths := make([]string, 0, len(charts.Files))
+	for path := range charts.Files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		for _, m := range kindLine.FindAllStringSubmatch(string(charts.Files[path]), -1) {
+			if clusterScopedKinds[m[1]] {
+				return fmt.Errorf("%s renders a %s, which is cluster-scoped: a deployment owns nothing outside its namespaces, and cluster-scoped objects are the cluster pipeline's", path, m[1])
+			}
+		}
+	}
+	return nil
 }
 
 // WriteToDisk writes charts to outputDir/schematic/.
@@ -320,13 +383,13 @@ func stratumMemberRoleEnv(role string) string {
 // which no writer is up yet, where a search member would resolve nothing, decide it
 // was alone and form its own cluster of one. That is the same failure the seed list
 // was introduced for.
-func stratumSeedMembersEnv(writers, searchers int32) string {
-	return stratumSeedEnv("STRATUM_SEED_MEMBERS", writers, searchers, stratumHazelcastPort) +
-		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", writers, searchers, stratumWorkingSetPort)
+func stratumSeedMembersEnv(ns string, writers, searchers int32) string {
+	return stratumSeedEnv("STRATUM_SEED_MEMBERS", ns, writers, searchers, stratumHazelcastPort) +
+		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", ns, writers, searchers, stratumWorkingSetPort)
 }
 
-func stratumSeedEnv(name string, writers, searchers int32, port int) string {
-	members := stratumSeedList(writers, searchers, port)
+func stratumSeedEnv(name, ns string, writers, searchers int32, port int) string {
+	members := stratumSeedList(ns, writers, searchers, port)
 	if len(members) == 0 {
 		return ""
 	}
@@ -337,12 +400,12 @@ func stratumSeedEnv(name string, writers, searchers int32, port int) string {
 // renders: the same event-store seed list as STRATUM_SEED_MEMBERS. Since
 // stratum#2 the typed field is the one stratum requires (assert_required);
 // the operator writes it into kernel's services holder. Empty when no stratum
-// writer is rendered.
-func StratumSeedMembers(writers, searchers int32) []string {
-	return stratumSeedList(writers, searchers, stratumHazelcastPort)
+// writer is rendered. ns is the namespace stratum runs in.
+func StratumSeedMembers(ns string, writers, searchers int32) []string {
+	return stratumSeedList(ns, writers, searchers, stratumHazelcastPort)
 }
 
-func stratumSeedList(writers, searchers int32, port int) []string {
+func stratumSeedList(ns string, writers, searchers int32, port int) []string {
 	if writers <= 0 {
 		return nil
 	}
@@ -352,12 +415,13 @@ func stratumSeedList(writers, searchers int32, port int) []string {
 	// stratum-1, ... and the headless Service is "stratum" — NOT the
 	// stratum0 form a Deployment uses. Getting this wrong produces seed
 	// addresses that never resolve, and Hazelcast simply never forms a
-	// cluster: no error, just members that each sit alone.
+	// cluster: no error, just members that each sit alone. Full service names
+	// (deployment.ServiceHost), as for every endpoint the operator writes.
 	for i := int32(0); i < writers; i++ {
-		members = append(members, fmt.Sprintf("stratum-%d.stratum:%d", i, port))
+		members = append(members, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("stratum-%d.stratum", i), ns), port))
 	}
 	for i := int32(0); i < searchers; i++ {
-		members = append(members, fmt.Sprintf("%s-%d.%s:%d", stratumSearchName, i, stratumSearchName, port))
+		members = append(members, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("%s-%d.%s", stratumSearchName, i, stratumSearchName), ns), port))
 	}
 	return members
 }
@@ -385,7 +449,7 @@ const (
 // Delivered by env for the same reason stratum's STRATUM_SEED_MEMBERS is: peer
 // wiring is deployment topology the operator already knows, and a second typed
 // config path for it would only let the two disagree.
-func blobstorePeersEnv(replicas int32) string {
+func blobstorePeersEnv(ns string, replicas int32) string {
 	if replicas <= 0 {
 		return ""
 	}
@@ -394,7 +458,7 @@ func blobstorePeersEnv(replicas int32) string {
 		// <pod>.<headless service>:<peer port>. A StatefulSet's pods are
 		// blobstore-0, blobstore-1 and its headless Service is "blobstore" — NOT
 		// the blobstore0 form a Deployment uses.
-		peers = append(peers, fmt.Sprintf("blobstore-%d.blobstore:%d", i, blobstorePeerPort))
+		peers = append(peers, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("blobstore-%d.blobstore", i), ns), blobstorePeerPort))
 	}
 	return fmt.Sprintf("        - name: BLOBSTORE_PEERS\n          value: %q\n", strings.Join(peers, ","))
 }
@@ -522,11 +586,9 @@ type serviceSpec struct {
 	AutomountServiceAccountToken *bool
 	// ServiceAccountTokenProjections mounts explicit projected Kubernetes tokens.
 	ServiceAccountTokenProjections []*serviceAccountTokenProjection
-	// TokenReviewRBAC grants the service account permission to create Kubernetes TokenReviews.
-	TokenReviewRBAC bool
-	// PigeonsRBAC grants the service account the pigeons namespace: Jobs and
-	// their Secrets, and the Pods they run. Set on the coop, the fleet's one
-	// door to pigeons; it also makes the chart render the namespace itself.
+	// PigeonsRBAC grants the service account the namespaces pigeons run in,
+	// its tenants' (addPigeonsRBAC): Jobs and their Secrets, and the Pods they
+	// run. Set on the coop, the fleet's one door to pigeons.
 	PigeonsRBAC bool
 	// IsStatefulSet, if true, generates a StatefulSet with headless Service and
 	// volumeClaimTemplates instead of per-replica Deployments with separate PVCs.
@@ -605,6 +667,12 @@ type serviceSpec struct {
 	// TenantInstance marks one tenant's instance of a tenant-owned service
 	// ("<svc>-<tenant>"), pinned or not. It decides the instance's pool.
 	TenantInstance bool
+	// Tenant is the tenant a TenantInstance belongs to.
+	Tenant string
+	// Namespace, if non-empty, is the namespace every object of this workload
+	// lands in: a tenant instance's tenant namespace in a deployment. Empty is
+	// the chart's one namespace, .Values.global.namespace (see nsRef).
+	Namespace string
 	// NodePool, if non-empty, is the pool (CorePool or TenantPool) the workload
 	// is placed on. Generate sets it, and only when the cluster has pools.
 	NodePool string
@@ -753,7 +821,7 @@ func podDisruptionBudget(svc serviceSpec) []byte {
 kind: PodDisruptionBudget
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 spec:
@@ -761,7 +829,7 @@ spec:
   selector:
     matchLabels:
       %s: %s
-`, svc.Name, ServicePodLabel, svc.Name))
+`, svc.Name, nsRef(svc), ServicePodLabel, svc.Name))
 }
 
 // pvcFsGroupLines renders the pod securityContext for a service with a PVC.
@@ -1058,6 +1126,15 @@ func (g *Generator) resolveTag(proj, svc string) string {
 
 func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperator.Topology) []serviceSpec {
 	opt := cfg.GetOptionalServices()
+	platformNS := deployment.PlatformNamespace(cfg)
+	// tenantNamespace is where one tenant's instance runs: its own namespace in
+	// a deployment, the one namespace otherwise (rendered from values.yaml).
+	tenantNamespace := func(tenant string) string {
+		if cfg.GetDeployment() == "" {
+			return ""
+		}
+		return deployment.TenantNamespaceOf(cfg, tenant)
+	}
 
 	// Core always-on services.
 	// Resource defaults below are starting points. Memory sizing is a
@@ -1084,7 +1161,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 					IncludeNamespace:  true,
 				},
 			},
-			TokenReviewRBAC: true,
 			ExtraEnvVars: fmt.Sprintf(`        - name: KERNEL_K8S_TOKEN_AUDIENCE
           value: %s
 `, kernelTokenAudience()),
@@ -1106,7 +1182,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
 		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef(cfg, "stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{stratumSearchName}, ListenPort: 8443, IsStatefulSet: true,
-			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes, topo.GetStratumSearchNodes()) +
+			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
 				stratumMemberRoleEnv("writer"),
 			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
 			// record store is I/O-bound, not CPU-bound. Same reasoning as eventbus.
@@ -1135,7 +1211,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			HasGRPC:                   true, ListenPort: 8443, IsStatefulSet: true,
 			HasHazelcast: true, HasWorkingSetHazelcast: true,
 			HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{"stratum"},
-			ExtraEnvVars: stratumSeedMembersEnv(topo.StratumNodes, topo.GetStratumSearchNodes()) +
+			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
 				stratumMemberRoleEnv("search"),
 			// The same memory as a writer and none of its disk. A search member holds
 			// its share of the partitions and never evicts them — the idle clock is
@@ -1224,7 +1300,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 				{Name: "bytes", Port: blobstoreBytesPort},
 				{Name: "peer", Port: blobstorePeerPort},
 			},
-			ExtraEnvVars: blobstorePeersEnv(topo.BlobstoreNodes),
+			ExtraEnvVars: blobstorePeersEnv(platformNS, topo.BlobstoreNodes),
 			// Measured nowhere yet: this service streams bytes through a 64 KiB
 			// buffer and holds no working set, so its memory is the Go runtime plus
 			// one buffer per in-flight upload. Sized like the other small Go
@@ -1262,9 +1338,9 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			ConfigHasKeyMaterial: llmCredentialServices[name],
 			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
 		if name == coopServiceName {
-			// The coop runs pigeons as Kubernetes Jobs in the pigeons namespace
-			// (A30: one pigeon = one Job), so it talks to the API server with
-			// its own projected token.
+			// The coop runs pigeons as Kubernetes Jobs in its tenants'
+			// namespaces (A30: one pigeon = one Job), so it talks to the API
+			// server with its own projected token.
 			base.ServiceAccountTokenProjections = append(base.ServiceAccountTokenProjections, &serviceAccountTokenProjection{
 				VolumeName:        "kubernetes-api-token",
 				MountPath:         "/var/run/secrets/kubernetes.io/serviceaccount",
@@ -1287,6 +1363,8 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			inst := base
 			inst.Name = TenantInstanceName(name, tenant)
 			inst.TenantInstance = true
+			inst.Tenant = tenant
+			inst.Namespace = tenantNamespace(tenant)
 			svcs = append(svcs, withKernelServiceAuth(inst))
 			continue
 		}
@@ -1294,6 +1372,8 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			inst := base
 			inst.Name = TenantInstanceName(name, tenant)
 			inst.TenantInstance = true
+			inst.Tenant = tenant
+			inst.Namespace = tenantNamespace(tenant)
 			svcs = append(svcs, withKernelServiceAuth(inst))
 		}
 	}
@@ -1477,10 +1557,7 @@ func (g *Generator) addValuesYAML(charts *Charts, cfg *protoOperator.Config, top
 	if port == 0 {
 		port = 443
 	}
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
-	}
+	ns := deployment.PlatformNamespace(cfg)
 
 	// Annotate the gateway serviceSpec with port and webroot so it renders
 	// correctly in the range loop without creating a duplicate YAML key.
@@ -1712,29 +1789,23 @@ metadata:
 }
 
 // coopServiceName is the platform service that runs pigeons (tacplus registry
-// id 106). Listing it in app_services makes the chart render the pigeons
-// namespace it needs; the library knows this one service the way it knows
-// letsencrypt, because the namespace is part of the coop's contract (A30 §3.3,
-// §3.7), not a deployment's choice.
+// id 106). Listing it in app_services makes the chart grant it the tenant
+// namespaces its pigeons run in; the library knows this one service the way it
+// knows letsencrypt, because where pigeons run is part of the coop's contract
+// (A30 §3.3, §3.7), not a deployment's choice.
 const coopServiceName = "coop"
 
-// pigeonsNamespace is where the coop runs pigeon Jobs: the fleet's namespace
-// plus "-pigeons", so two fleets on one cluster never share it. The coop's
-// Config.pigeons_namespace must name the same namespace.
-func pigeonsNamespace(fleetNamespace string) string {
-	return fleetNamespace + "-pigeons"
-}
-
-// pigeonsRBACYAML grants svc's service account, in the pigeons namespace, what
-// the coop's Job lifecycle needs and nothing else: Jobs, the Secret each Job
-// mounts, and a read of the Pods a Job runs (A30 §3.3). No RBAC escalation is
-// possible: the Role is namespaced and grants no RBAC verbs.
-func pigeonsRBACYAML(svc serviceSpec, pigeonsNS string) []byte {
+// pigeonsRBACYAML grants the coop's service account svc, in namespace ns
+// where pigeons run, what the coop's Job lifecycle needs and nothing else:
+// Jobs, the Secret each Job mounts, and a read of the Pods a Job runs (A30
+// §3.3). No RBAC escalation is possible: the Role is namespaced and grants no
+// RBAC verbs. The subject is the coop's service account in its own namespace.
+func pigeonsRBACYAML(svc serviceSpec, ns string) []byte {
 	return []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: %s-pigeons
-  namespace: %s
+  name: %[1]s-pigeons
+  namespace: %[2]s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 rules:
@@ -1751,113 +1822,49 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: %s-pigeons
-  namespace: %s
+  name: %[1]s-pigeons
+  namespace: %[2]s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: %s-pigeons
+  name: %[1]s-pigeons
 subjects:
 - kind: ServiceAccount
-  name: %s
-  namespace: {{ .Values.global.namespace }}
-`, svc.Name, pigeonsNS, svc.Name, pigeonsNS, svc.Name, svc.ServiceAccountName))
+  name: %[3]s
+  namespace: %[4]s
+`, svc.Name, ns, svc.ServiceAccountName, nsRef(svc)))
 }
 
-// addPigeonsNamespace renders the namespace pigeon Jobs run in, with its
-// policies (A30 §3.7, slice 2: no internet): default-deny for ingress and
-// egress, egress allowed only to cluster DNS and to the fleet's kernel and
-// eventbus, and a ResourceQuota so a runaway kind cannot take the cluster.
-// Slice 3 adds the pigeonproxy egress rule here.
+// addPigeonsRBAC lets the coop svc run pigeons in each tenant's namespace
+// (the coop's pigeons_namespace per tenant, #3): a tenant-owned coop instance
+// in its own tenant's, a shared coop in every tenant's. The tenant namespace
+// is deploymentproxy's, with its baseline already in place: no ingress from
+// outside, egress only to the namespace itself, DNS and tac-<deployment>, and
+// a quota. That is the isolation the pigeons namespace of before rendered for
+// itself (A30 §3.7, no internet).
 //
-// Pods carry no per-service label: a Deployment's pods are "app: <name><i>"
-// and a StatefulSet's "app: <name>", so the eventbus rule lists every replica
-// the topology renders, the way the Hazelcast policy lists its peers.
-func (g *Generator) addPigeonsNamespace(charts *Charts, cfg *protoOperator.Config, topo *protoOperator.Topology) error {
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
+// Without a deployment there is no tenant namespace, and a namespace of the
+// pigeons' own is cluster-scoped, which the chart may not carry: generation
+// fails instead.
+func (g *Generator) addPigeonsRBAC(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
+	if cfg.GetDeployment() == "" {
+		return fmt.Errorf("pigeons run in tenant namespaces, which only a deployment has: set deployment in operator.yaml")
 	}
-	pns := pigeonsNamespace(ns)
-	eventbusApps := ""
-	for i := range int(topo.EventbusNodes) {
-		eventbusApps += fmt.Sprintf("\n          - eventbus%d", i)
+	if svc.ServiceAccountName == "" || svc.SharesServiceIdentityWith != "" {
+		return nil
 	}
-	charts.Files["templates/pigeons/namespace.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    schematic.io/pigeons-of: %s
-`, pns, ns))
-	charts.Files["templates/pigeons/networkpolicy.yaml"] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: default-deny
-  namespace: %[1]s
-spec:
-  podSelector: {}
-  policyTypes: ["Ingress", "Egress"]
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: pigeon-egress
-  namespace: %[1]s
-spec:
-  podSelector: {}
-  policyTypes: ["Egress"]
-  egress:
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: kube-system
-      podSelector:
-        matchLabels:
-          k8s-app: kube-dns
-    ports:
-    - protocol: UDP
-      port: 53
-    - protocol: TCP
-      port: 53
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: %[2]s
-      podSelector:
-        matchLabels:
-          app: kernel
-    ports:
-    - protocol: TCP
-      port: 5000
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: %[2]s
-      podSelector:
-        matchExpressions:
-        - key: app
-          operator: In
-          values:%[3]s
-    ports:
-    - protocol: TCP
-      port: 8443
-`, pns, ns, eventbusApps))
-	charts.Files["templates/pigeons/resourcequota.yaml"] = []byte(fmt.Sprintf(`apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: pigeons
-  namespace: %s
-spec:
-  hard:
-    pods: "32"
-    requests.cpu: "8"
-    requests.memory: 16Gi
-    limits.cpu: "16"
-    limits.memory: 32Gi
-`, pns))
+	tenants := cfg.GetTenants()
+	if svc.TenantInstance {
+		tenants = []string{svc.Tenant}
+	}
+	var buf bytes.Buffer
+	for _, tenant := range tenants {
+		buf.WriteString("---\n")
+		buf.Write(pigeonsRBACYAML(svc, deployment.TenantNamespaceOf(cfg, tenant)))
+	}
+	charts.Files[fmt.Sprintf("templates/%s/pigeons-rbac.yaml", svc.Name)] = buf.Bytes()
 	return nil
 }
 
@@ -2052,7 +2059,13 @@ func configVolumeSource(svc serviceSpec, name string) string {
 //     is inbound, and an egress allowlist would have to enumerate DNS, object
 //     storage, the token issuer and every S2S callee — much more to get wrong, for
 //     none of this particular risk.
-func hazelcastNetworkPolicy(svc serviceSpec) []byte {
+//
+// In a deployment (dep set) rule 2 must not undo the namespace's isolation
+// (deploymentIsolationPolicy): policies add up, so a rule admitting every
+// source would open the gRPC port to every other deployment on the cluster.
+// The gRPC port admits what the isolation policy admits, the deployment's own
+// namespaces, and only the health port stays open to every source.
+func hazelcastNetworkPolicy(svc serviceSpec, dep string) []byte {
 	listenPort := svc.ListenPort
 	if listenPort == 0 {
 		listenPort = 5000
@@ -2079,11 +2092,30 @@ func hazelcastNetworkPolicy(svc serviceSpec) []byte {
           app: %s
 `, app))
 	}
+	served := fmt.Sprintf(`  # Everything this service actually serves stays reachable as it is today.
+  - ports:
+    - protocol: TCP
+      port: %d
+    - protocol: TCP
+      port: %d
+`, listenPort, grpcHealthProbePort)
+	if dep != "" {
+		served = fmt.Sprintf(`  # What it serves: to its own deployment, as the namespace's isolation policy
+  # admits it, and the health port to the kubelet.
+  - from:
+%s    ports:
+    - protocol: TCP
+      port: %d
+  - ports:
+    - protocol: TCP
+      port: %d
+`, deploymentPeers(dep), listenPort, grpcHealthProbePort)
+	}
 	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: %s-hazelcast
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 spec:
@@ -2096,13 +2128,133 @@ spec:
   # Hazelcast member discovery and cluster join: peers only.
   - from:
 %s    ports:
-%s  # Everything this service actually serves stays reachable as it is today.
+%s%s`, svc.Name, nsRef(svc), svc.Name, peerSelectors.String(), memberPorts.String(), served))
+}
+
+// deploymentPeers is the NetworkPolicy peer list of deployment dep, seen from
+// its platform namespace: the namespace's own pods, and every pod of its
+// tenant namespaces, which deploymentproxy labels with the deployment. Indented
+// for an ingress rule's from.
+func deploymentPeers(dep string) string {
+	return fmt.Sprintf(`    - podSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          %s: %s
+`, deployment.OwnerLabel, dep)
+}
+
+// addDeploymentNetworkPolicies renders a deployment's isolation (#3): a
+// tenant namespace may reach its own deployment's platform namespace and
+// nothing else, and no deployment reaches another.
+//
+// Isolation is by ingress, on every namespace a deployment owns:
+//   - tac-<deployment> (deploymentIsolationPolicy) admits its own pods and its
+//     own tenant namespaces' (by deploymentproxy's owner label, which only
+//     deploymentproxy sets), and nothing else; the gateway's edge ports are the
+//     exception, open to every source as they are to the internet;
+//   - each tenant namespace already admits only its own pods (deploymentproxy's
+//     baseline, which also limits its egress to its own deployment's namespace);
+//     what the operator adds is the one thing specific to its services: its
+//     platform namespace may call them (the gateway routes to them).
+//
+// Egress from tac-<deployment> stays open: the platform calls out to the
+// internet (identity providers, ACME, the image registry, the Kubernetes API),
+// and a pod of another deployment refuses it at ingress anyway.
+//
+// Every policy also admits the health port from any source: the kubelet's
+// probe arrives from the node's address (grpcHealthProbePort).
+func addDeploymentNetworkPolicies(charts *Charts, cfg *protoOperator.Config, services []serviceSpec) {
+	dep := cfg.GetDeployment()
+	platform := deployment.PlatformNamespace(cfg)
+	charts.Files["templates/networkpolicy/deployment-isolation.yaml"] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deployment-isolation
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+%s  - ports:
+    - protocol: TCP
+      port: %d
+`, platform, deploymentPeers(dep), grpcHealthProbePort))
+
+	for _, svc := range services {
+		if svc.Port == 0 {
+			continue
+		}
+		// The public door: the gateway's LoadBalancer ports, from anywhere.
+		var apps, ports strings.Builder
+		for i := range int(svc.Replicas) {
+			fmt.Fprintf(&apps, "\n        - %s%d", svc.Name, i)
+		}
+		listenPort := svc.ListenPort
+		if listenPort == 0 {
+			listenPort = 5000
+		}
+		fmt.Fprintf(&ports, "    - protocol: TCP\n      port: %d\n", listenPort)
+		if svc.HttpPort != 0 {
+			fmt.Fprintf(&ports, "    - protocol: TCP\n      port: %d\n", svc.HttpPort)
+		}
+		charts.Files[fmt.Sprintf("templates/%s/networkpolicy-edge.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: %s-edge
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:%s
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+%s`, svc.Name, nsRef(svc), apps.String(), ports.String()))
+	}
+
+	// Every tenant namespace that runs one of the chart's workloads.
+	tenantNamespaces := map[string]bool{}
+	for _, svc := range services {
+		if svc.Namespace != "" {
+			tenantNamespaces[svc.Namespace] = true
+		}
+	}
+	names := make([]string, 0, len(tenantNamespaces))
+	for ns := range tenantNamespaces {
+		names = append(names, ns)
+	}
+	sort.Strings(names)
+	for _, ns := range names {
+		charts.Files[fmt.Sprintf("templates/networkpolicy/platform-ingress-%s.yaml", ns)] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: platform-ingress
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %s
   - ports:
     - protocol: TCP
       port: %d
-    - protocol: TCP
-      port: %d
-`, svc.Name, svc.Name, peerSelectors.String(), memberPorts.String(), listenPort, grpcHealthProbePort))
+`, ns, platform, grpcHealthProbePort))
+	}
 }
 
 // loadBalancerIPLine pins the cluster's one external LoadBalancer Service —
@@ -2121,22 +2273,29 @@ func loadBalancerIPLine(cfg *protoOperator.Config) string {
 	return fmt.Sprintf("  loadBalancerIP: %s\n", cfg.GetExternalIp())
 }
 
-func serviceAccountYAML(name string) []byte {
+func serviceAccountYAML(name, ns string) []byte {
 	return []byte(fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
-`, name))
+`, name, ns))
+}
+
+// nsRef is the namespace svc's objects land in, as a template renders it:
+// its own namespace when it has one (a tenant instance in a deployment), else
+// the chart's.
+func nsRef(svc serviceSpec) string {
+	if svc.Namespace != "" {
+		return svc.Namespace
+	}
+	return "{{ .Values.global.namespace }}"
 }
 
 func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc serviceSpec) error {
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = "schematic"
-	}
+	ns := nsRef(svc)
 	if svc.AutomountServiceAccountToken == nil {
 		svc.AutomountServiceAccountToken = falsePtr()
 	}
@@ -2145,44 +2304,12 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 	// own: it USES that service's, so a second object of the same name here would be
 	// a duplicate resource helm refuses to apply.
 	if svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
-		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = serviceAccountYAML(svc.ServiceAccountName)
+		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = serviceAccountYAML(svc.ServiceAccountName, ns)
 	}
-	if svc.TokenReviewRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
-		// ClusterRole/ClusterRoleBinding are cluster-scoped, so their names must be
-		// namespace-qualified: two fleets in two namespaces on one cluster would
-		// otherwise collide on the same fixed name, with the second deploy silently
-		// rewriting the first's binding to its own subject namespace.
-		tokenReviewName := fmt.Sprintf("%s-%s-tokenreview", ns, svc.Name)
-		charts.Files[fmt.Sprintf("templates/%s/tokenreview-rbac.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-rules:
-- apiGroups: ["authentication.k8s.io"]
-  resources: ["tokenreviews"]
-  verbs: ["create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: %s
-subjects:
-- kind: ServiceAccount
-  name: %s
-  namespace: {{ .Values.global.namespace }}
-`, tokenReviewName, tokenReviewName, tokenReviewName, svc.ServiceAccountName))
-	}
-	if svc.PigeonsRBAC && svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
-		charts.Files[fmt.Sprintf("templates/%s/pigeons-rbac.yaml", svc.Name)] = pigeonsRBACYAML(svc, pigeonsNamespace(ns))
-	}
+	// Kernel's TokenReview right was a ClusterRole and ClusterRoleBinding
+	// rendered here. Both are cluster-scoped, which a deployment may not own:
+	// the cluster pipeline binds kernel's service account to the built-in
+	// system:auth-delegator instead (#3).
 
 	// ConfigMap — or a Secret, for configs that embed private key material.
 	kind, typeLine, dataField, fileStem := "ConfigMap", "", "data", "configmap"
@@ -2202,10 +2329,10 @@ subjects:
 kind: %s
 metadata:
   name: %s-config
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
 %s%s:
   config.yaml: {{ %s | quote }}
-`, kind, name, typeLine, dataField, valuesRef(configValueKey, "config"))
+`, kind, name, ns, typeLine, dataField, valuesRef(configValueKey, "config"))
 		if svc.HasServiceConfig {
 			cmData += fmt.Sprintf("  service.yaml: {{ %s | quote }}\n", valuesRef(configValueKey, "serviceConfig"))
 		}
@@ -2217,13 +2344,13 @@ metadata:
 kind: PersistentVolumeClaim
 metadata:
   name: %s-data
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
 spec:
   accessModes: [ReadWriteOnce]
   resources:
     requests:
       storage: {{ %s }}
-`, name, valuesRef(svc.Name, "storage")))
+`, name, ns, valuesRef(svc.Name, "storage")))
 		}
 
 		// Service
@@ -2277,7 +2404,7 @@ spec:
 kind: Service
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
 spec:
   selector:
 %s
@@ -2285,7 +2412,7 @@ spec:
   - name: grpc
     port: %d
     targetPort: %d
-%s%s`, name, svcSelector, listenPort, listenPort, hazelcastPort, extraPort))
+%s%s`, name, ns, svcSelector, listenPort, listenPort, hazelcastPort, extraPort))
 
 		// External LoadBalancer service for services with a configured external port
 		// (e.g. gateway exposed on port 443). This is a separate service to avoid
@@ -2308,7 +2435,7 @@ spec:
 kind: Service
 metadata:
   name: %s-lb
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
 spec:
   type: LoadBalancer
 %s  selector:
@@ -2317,7 +2444,7 @@ spec:
   - name: https
     port: %d
     targetPort: %d
-%s`, name, loadBalancerIPLine(cfg), name, svc.Port, listenPort, httpPort))
+%s`, name, ns, loadBalancerIPLine(cfg), name, svc.Port, listenPort, httpPort))
 		}
 	}
 
@@ -2354,7 +2481,7 @@ spec:
 kind: Service
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
 spec:
   clusterIP: None
   # Peer DNS must resolve BEFORE a pod is Ready. Hazelcast joins at startup by
@@ -2373,12 +2500,12 @@ spec:
   - name: grpc
     port: %d
     targetPort: %d
-%s`, svc.Name, svc.Name, listenPort, listenPort, hazelcastHeadless))
+%s`, svc.Name, ns, svc.Name, listenPort, listenPort, hazelcastHeadless))
 	}
 
 	if svc.HazelcastNetworkPolicy {
 		charts.Files[fmt.Sprintf("templates/%s/networkpolicy.yaml", svc.Name)] =
-			hazelcastNetworkPolicy(svc)
+			hazelcastNetworkPolicy(svc, cfg.GetDeployment())
 	}
 	if pdb := podDisruptionBudget(svc); pdb != nil {
 		charts.Files[fmt.Sprintf("templates/%s/pdb.yaml", svc.Name)] = pdb
@@ -2432,7 +2559,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 spec:
@@ -2451,7 +2578,7 @@ spec:
       labels:
         app: %s
 %s        {{- include "schematic.labels" . | nindent 8 }}
-`, svc.Name, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name, servicePodLabelLine(svc)))
+`, svc.Name, ns, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name, servicePodLabelLine(svc)))
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {
@@ -2609,7 +2736,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
-  namespace: {{ .Values.global.namespace }}
+  namespace: %s
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 spec:
@@ -2624,7 +2751,7 @@ spec:
 %s        {{- include "schematic.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ %s | sha256sum | quote }}
-`, name, strategy, name, name, servicePodLabelLine(svc), valuesRef(svc.Name, "config")))
+`, name, ns, strategy, name, name, servicePodLabelLine(svc), valuesRef(svc.Name, "config")))
 			if svc.HasServiceConfig {
 				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ %s | sha256sum | quote }}
 `, valuesRef(svc.Name, "serviceConfig")))
