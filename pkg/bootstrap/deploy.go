@@ -120,6 +120,11 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		}
 	}
 	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
+	// operator.Config.spiffe_prefix must equal kernel's trust domain; the
+	// holder's operator entry is otherwise left at its local.dev default.
+	if oc := kernelConfig.Configs.OperatorConfig; oc != nil {
+		oc.SpiffePrefix = spiffeTrustDomain
+	}
 	spiffeLocationPath := kernelConfig.GetLocationPath()
 	kernelSpiffeURI, err := KernelServiceSpiffeURI(spiffeTrustDomain)
 	if err != nil {
