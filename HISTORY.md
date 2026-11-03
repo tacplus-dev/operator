@@ -11,3 +11,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-02 looper issue justfile has no gates recipe: add just gates (#11)
 - 2026-11-02 looper issue helm v3.17.3 and its docker/containerd deps carry 24 advisories; fixing needs a helm/k8s/controller-runtime upgrade (#10, dacd018)
 - 2026-11-02 looper issue golang.org/x/net v0.60.0: GO-2026-6860 and GO-2026-6866 in x/net/html; bump to v0.62.0 (#13, d7a8f0d)
+- 2026-11-03 looper issue Several deployments per cluster: tac-<deployment> and tac-<deployment>-<tid> namespaces (#3, 184523a)
