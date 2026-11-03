@@ -15,6 +15,11 @@ the looper then marks it `promoted` or `declined` here with the date.
   `helm.StratumSeedMembers` becomes per tenant. The old shape #2 removes is still rendered meanwhile:
   `STRATUM_MEMBER_ROLE`, `STRATUM_WS_SEED_MEMBERS`, the writers' volume and `disk_persistence`, which the stratum#2 image
   no longer reads.
+- **Reconcile tenant-namespace StatefulSets' immutable fields** (2026-11-03, #2): `reconcileImmutableStatefulSetFields`
+  (pkg/reconciler) lists the StatefulSets of the platform namespace only. `redo-restore` runs in the restore tenant's
+  namespace, so a change to a field Kubernetes forbids patching there (its storage class, say) fails the helm upgrade
+  instead of recreating the StatefulSet. Per-tenant Stratum (#2) will be StatefulSets in tenant namespaces too; the
+  reconciler should walk every namespace the chart renders into.
 - **Retire the auto-upgrade checker, or make it follow release lines** (2026-11-02, #8): `pkg/upgrade` now polls
   `ghcr.io/tacplus-dev/<service>`, but it still selects SeaBeam's tag scheme (`vMAJOR.MINOR.PROTO_PATCH-BRANCH.LOCAL_PATCH`,
   `selectLatest`), which no tacplus-dev release uses (#6: `vMAJOR.MINOR.PATCH`, line tag `MAJOR.MINOR`). Its registry

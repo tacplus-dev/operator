@@ -205,6 +205,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
 		"StratumConfig":           true,
 		"StratumSearchConfig":     true,
+		"RedoConfig":              true,
 		"LetsencryptConfig":       true,
 		"BlobstoreConfig":         true,
 		"OperatorBootstrapConfig": true,

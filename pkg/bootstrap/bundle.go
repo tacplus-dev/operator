@@ -79,6 +79,7 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
+		{redoInstanceName, dc.RedoConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {

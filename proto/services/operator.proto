@@ -498,4 +498,13 @@ message Config {
   // tenant's namespace, and the operator renders it into kernel's
   // Config.tenants so kernel keeps it as the tenant's id.
   map<string, string> tenant_ids = 28 [(spec.assert_max_size) = 64];
+
+  // redo_storage_class names the StorageClass of the redo service's volume
+  // (redo-restore, in the reserved restore tenant's namespace): a regional
+  // class, which replicates the disk synchronously across two zones, so a
+  // local ack survives the loss of a zone (redo.Config.data_dir). A
+  // StorageClass is cluster-scoped, so the cluster pipeline provides it and
+  // the chart only names it (#3). Unset: the cluster's default class, which is
+  // zonal; fine for a dev cluster, not for one whose durability counts.
+  string redo_storage_class = 29 [(spec.assert_max_size) = 253];
 }

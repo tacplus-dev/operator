@@ -25,6 +25,9 @@ depends:
   - eventbus
   - opa
   - letsencrypt
+  # redo, the durability of every tenant's Stratum: its registry entry
+  # (tenant_owned, pinned_tenant: restore) and its Config in the holder.
+  - redo
   # pkg/bootstrap tests exercise the app-service config path with llmproxy.
   - llmproxy
 header: |

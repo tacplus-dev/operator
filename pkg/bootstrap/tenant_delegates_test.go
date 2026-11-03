@@ -116,9 +116,10 @@ func TestDeployedServiceInstancesExpandsOnlyTenantOwnedServices(t *testing.T) {
 		}
 	}
 
-	// Every other deployed service is unchanged: one instance, no tenant.
+	// Every other deployed service is unchanged: one instance, no tenant. redo
+	// is restore's one instance (TestEnsureServiceDelegatesGivesRedoTheRestoreTenant).
 	for svc, insts := range byService {
-		if svc == "docmanager" {
+		if svc == "docmanager" || svc == redoServiceName {
 			continue
 		}
 		if len(insts) != 1 {
@@ -193,7 +194,7 @@ func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 	counts := map[string]int{}
 	for _, d := range loadDelegates(t, kernelPath) {
 		counts[d.Name]++
-		if d.Name == "docmanager" {
+		if d.Name == "docmanager" || d.Name == redoServiceName {
 			continue
 		}
 		if d.TenantNamespace != "" {

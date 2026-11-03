@@ -29,6 +29,8 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"mailbox":      true,
 	"personalauth": true,
 	"blobstore":    true,
+	// redo, deployed with stratum: one instance in the reserved restore tenant.
+	"redo": true,
 }
 
 // appServiceNames holds the application's own services, seeded from
@@ -80,6 +82,14 @@ var alwaysOnKernelAuthServices = []string{
 	"operator",
 	"stratum",
 }
+
+// redoServiceName is the redo service, deployed with stratum (helm's
+// enabledServices).
+const redoServiceName = "redo"
+
+// redoInstanceName names redo's one instance, in the restore tenant: its
+// workload, its service account and its values key.
+var redoInstanceName = helm.TenantInstanceName(redoServiceName, deployment.RestoreTenant)
 
 // operatorServiceAccountName is the Kubernetes ServiceAccount the operator pod
 // runs as, from the operator's own chart (helm/templates/serviceaccount.yaml).
@@ -159,6 +169,11 @@ func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, err
 	for _, svc := range AppServiceNames(cfg) {
 		perTenant[svc] = tenantOwned[svc]
 	}
+	// redo is the one platform service rendered as a tenant instance, in the
+	// reserved restore tenant, as the generator renders it. Its proto pins it
+	// there too (TestEmbeddedRegistryPinsRedoToRestore).
+	perTenant[redoServiceName] = true
+	pinnedTenant[redoServiceName] = deployment.RestoreTenant
 	var out []ServiceInstance
 	for _, svc := range DeployedKernelAuthServices(cfg) {
 		out = append(out, serviceInstances(cfg, svc, perTenant, pinnedTenant)...)
@@ -239,6 +254,9 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	}
 	if opt.GetBlobstore() && topo.GetBlobstoreNodes() > 0 {
 		out = append(out, "blobstore")
+	}
+	if topo.GetStratumNodes() > 0 {
+		out = append(out, redoServiceName)
 	}
 	// The application's own services, declared by name rather than by a proto
 	// field the platform had to add for them.

@@ -45,6 +45,7 @@ type DeployConfigs struct {
 	OpaConfig                []byte
 	StratumConfig            []byte
 	StratumSearchConfig      []byte
+	RedoConfig               []byte
 	LetsencryptConfig        []byte
 	BlobstoreConfig          []byte
 	LetsencryptServiceConfig []byte
@@ -124,6 +125,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		} else {
 			kernelConfig.Configs.StratumConfig = nil
 		}
+	}
+	// redo's data_dir is where the chart mounts its volume.
+	if rc := kernelConfig.Configs.RedoConfig; rc != nil {
+		rc.DataDir = helm.RedoDataDir
 	}
 	spiffeTrustDomain := kernelConfig.GetSpiffeTrustDomain()
 	// operator.Config.spiffe_prefix must equal kernel's trust domain; the
@@ -493,6 +498,15 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 
+	// redo takes the plain shape: its typed Config comes from the holder.
+	var redoConfigYAML []byte
+	if cfg.GetTopology().GetStratumNodes() > 0 {
+		redoConfigYAML, err = buildSvc(redoServiceName, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// blobstore is a StatefulSet on the generic chassis: its per-ordinal
 	// config Secrets copy this one bootstrap, exactly as stratum's do.
 	var blobstoreConfigYAML []byte
@@ -587,6 +601,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		OpaConfig:                opaConfigYAML,
 		StratumConfig:            stratumConfigYAML,
 		StratumSearchConfig:      stratumSearchConfigYAML,
+		RedoConfig:               redoConfigYAML,
 		LetsencryptConfig:        letsencryptConfigYAML,
 		BlobstoreConfig:          blobstoreConfigYAML,
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
@@ -693,6 +708,7 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
+		{redoInstanceName, dc.RedoConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {

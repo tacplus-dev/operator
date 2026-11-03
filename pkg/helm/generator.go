@@ -359,6 +359,14 @@ const grpcHealthProbePort = 8444
 // gateway's config (pkg/bootstrap).
 const gatewayHttpPort = 8080
 
+// redoServiceName is the redo service, rendered with Stratum.
+const redoServiceName = "redo"
+
+// RedoDataDir is where redo-restore's volume is mounted, and so its
+// Config.data_dir in kernel's services holder (pkg/bootstrap): one constant,
+// so the two cannot disagree. It is redo's own default.
+const RedoDataDir = "/var/lib/redo"
+
 // stratumSearchName is the volume-less second workload: search members, joining
 // the same Hazelcast cluster as the writers with the member attribute
 // stratum.role=search. Pods are stratum-search-0..M and the headless Service is
@@ -673,6 +681,11 @@ type serviceSpec struct {
 	// lands in: a tenant instance's tenant namespace in a deployment. Empty is
 	// the chart's one namespace, .Values.global.namespace (see nsRef).
 	Namespace string
+	// StorageClass names the StorageClass of the PVC's claim. Empty: the claim
+	// names none and the cluster's default class applies. Set on redo only.
+	StorageClass string
+	// DataMountPath is where the PVC is mounted. Empty: /app/data.
+	DataMountPath string
 	// NodePool, if non-empty, is the pool (CorePool or TenantPool) the workload
 	// is placed on. Generate sets it, and only when the cluster has pools.
 	NodePool string
@@ -1221,6 +1234,33 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}))
 	}
 
+	// redo: Stratum's durability (decisions/stratum-per-tenant-2026-10-25.md in
+	// tacplus-dev/roadmap), so it is rendered whenever Stratum is. Its proto
+	// pins it to the reserved restore tenant ((spec.service).pinned_tenant):
+	// one instance, redo-restore, in that tenant's namespace, never replicated
+	// and never in the platform namespace (Jody, 2026-10-26). restore has no
+	// Stratum: redo keeps its own disk.
+	//
+	// A StatefulSet for its volumeClaimTemplate: the logs live on that volume,
+	// mounted at redo.Config.data_dir, and a local ack is durable once it is on
+	// it. Durable across a zone loss only on a regional class, which is
+	// cluster-scoped and so the cluster pipeline's: the chart only names it
+	// (Config.redo_storage_class).
+	//
+	// Storage 10Gi is the smallest regional balanced disk; the logs are
+	// compacted into each tenant's snapshot (redo.Config.compact_after), so
+	// they grow with the tenants' data, not with time.
+	if topo.StratumNodes > 0 {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+			Name: TenantInstanceName(redoServiceName, deployment.RestoreTenant), Replicas: 1, Image: g.imageRef(cfg, redoServiceName),
+			TenantInstance: true, Tenant: deployment.RestoreTenant, Namespace: tenantNamespace(deployment.RestoreTenant),
+			HasGRPC: true, ListenPort: 8443, IsStatefulSet: true,
+			HasPVC: true, Storage: "10Gi", StorageClass: cfg.GetRedoStorageClass(), DataMountPath: RedoDataDir,
+			// Measured nowhere yet: sized like the other small Go services.
+			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB",
+		}))
+	}
+
 	// OAuth (OAuth2/OIDC broker) — always enabled.
 	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef(cfg, "oauth"), HasGRPC: true, ListenPort: 8443,
 		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m",
@@ -1459,6 +1499,11 @@ func (g *Generator) KernelAuthServiceNames(cfg *protoOperator.Config, nodeCount 
 		name := s.Name
 		if s.SharesServiceIdentityWith != "" {
 			name = s.SharesServiceIdentityWith
+		}
+		// A tenant's instance (redo-restore) is its service's identity, with
+		// the tenant on the delegate, not in the name.
+		if s.TenantInstance {
+			name = strings.TrimSuffix(name, "-"+s.Tenant)
 		}
 		if seen[name] {
 			continue
@@ -2664,9 +2709,9 @@ spec:
 `)
 		ssBuf.WriteString(projectedServiceAccountTokenMount(svc))
 		if svc.HasPVC {
-			ssBuf.WriteString(`        - name: data
-          mountPath: /app/data
-`)
+			ssBuf.WriteString(fmt.Sprintf(`        - name: data
+          mountPath: %s
+`, dataMountPath(svc)))
 		}
 		if svc.ConfigOverrideMount {
 			ssBuf.WriteString(fmt.Sprintf(`        - name: config-override
@@ -2709,10 +2754,10 @@ spec:
       name: data
     spec:
       accessModes: [ReadWriteOnce]
-      resources:
+%s      resources:
         requests:
           storage: {{ %s }}
-`, valuesRef(svc.Name, "storage")))
+`, storageClassLine(svc), valuesRef(svc.Name, "storage")))
 		}
 		charts.Files[fmt.Sprintf("templates/%s/statefulset.yaml", svc.Name)] = ssBuf.Bytes()
 	} else {
@@ -2878,6 +2923,23 @@ spec:
 	}
 
 	return nil
+}
+
+// dataMountPath is where svc's PVC is mounted in its container.
+func dataMountPath(svc serviceSpec) string {
+	if svc.DataMountPath != "" {
+		return svc.DataMountPath
+	}
+	return "/app/data"
+}
+
+// storageClassLine is a volumeClaimTemplate's storageClassName, or nothing
+// when svc names no class.
+func storageClassLine(svc serviceSpec) string {
+	if svc.StorageClass == "" {
+		return ""
+	}
+	return fmt.Sprintf("      storageClassName: %q\n", svc.StorageClass)
 }
 
 func indentLines(s, prefix string) string {

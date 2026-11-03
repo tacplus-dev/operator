@@ -90,6 +90,7 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"opa", dc.OpaConfig},
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
+		{redoInstanceName, dc.RedoConfig},
 		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 		{"operator", dc.OperatorBootstrapConfig},

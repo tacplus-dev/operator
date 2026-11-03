@@ -61,6 +61,9 @@ func BuildConfigOutput(cfgDir string) error {
 	if len(dc.StratumSearchConfig) > 0 && t.GetStratumSearchNodes() > 0 {
 		serviceFiles["stratum-search"] = dc.StratumSearchConfig
 	}
+	if len(dc.RedoConfig) > 0 {
+		serviceFiles[redoInstanceName] = dc.RedoConfig
+	}
 	if len(dc.BlobstoreConfig) > 0 && t.BlobstoreNodes > 0 && dc.Cfg.GetOptionalServices().GetBlobstore() {
 		serviceFiles["blobstore"] = dc.BlobstoreConfig
 	}
