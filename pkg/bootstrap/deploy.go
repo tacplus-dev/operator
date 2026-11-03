@@ -51,6 +51,10 @@ type DeployConfigs struct {
 	LetsencryptServiceConfig []byte
 	GatewayOpts              GatewayOptions
 	Cfg                      *protoOperator.Config
+	// Kernel is the kernel Config every node's bootstrap is built from, its
+	// defaults applied: what the chart must agree with kernel on (its Raft
+	// port, helm.KernelRaftPort) comes from here.
+	Kernel *protoKernel.Config
 
 	// OperatorBootstrapConfig is the operator's OWN chassis grpcconfig.Config —
 	// the same shape every other service gets, built from the same kernel
@@ -607,6 +611,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
 		GatewayOpts:              gatewayOpts,
 		Cfg:                      cfg,
+		Kernel:                   kernelConfig,
 		OperatorBootstrapConfig:  operatorBootstrapYAML,
 	}
 
@@ -783,6 +788,7 @@ func NewServiceConfigProvider(cfgDir string, records func() *protoKernel.ConfigS
 			TenantIds:       tids,
 			TenantsComplete: complete,
 			RefusedTenants:  refused,
+			Kernel:          dc.Kernel,
 		}, nil
 	}
 }

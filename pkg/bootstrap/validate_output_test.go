@@ -195,6 +195,8 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"BootstrapNames": true,
 		"GatewayOpts":    true,
 		"Cfg":            true,
+		// The Config BootstrapYAMLs are built from; they are its emitted form.
+		"Kernel": true,
 	}
 
 	validated := map[string]bool{

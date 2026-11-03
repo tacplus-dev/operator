@@ -1,6 +1,6 @@
 # State: operator
 
-Overwritten to stay current (loopers and agents). Last updated: 2026-11-02 by the looper (#3).
+Overwritten to stay current (loopers and agents). Last updated: 2026-11-03 by the looper (#20).
 
 - **Version / line:** unreleased (no tag yet, #6); tacplus floor 2.5 in `tacplus.yaml` (#15); Go 1.27.3 (deploymentproxy v0.2.0 requires it, #3)
 - **Works:** `generate` renders the platform services (kernel, gateway, eventbus, oauth, opa, stratum, letsencrypt) and the app's own services from operator.yaml and crypto.yaml. kmaker is retired (#16): no kmaker workload, config or RBAC, and no `pki.kmaker_signing_ca`; generate rewrites an older crypto.yaml that still holds that key. The fleet has one SPIFFE trust domain (#14): operator.yaml `spiffe_prefix`, else kernel.yaml `spiffe_trust_domain`, else `local.dev`, in kernel, every service config and kernel's SAN; the two set and differing is refused. Nothing depends on SeaBeam (#8): the module is `github.com/tacplus-dev/operator` (generated code in `tacplus/`), images come from `ghcr.io/tacplus-dev/<service>`, and `just gates` refuses any SeaBeam reference outside PROVENANCE.md and the dated records.
@@ -14,7 +14,9 @@ Overwritten to stay current (loopers and agents). Last updated: 2026-11-02 by th
   edge ports and the health port excepted), and in a tenant namespace its platform. The chart has no cluster-scoped object
   (`generate` fails on one): kernel's TokenReview right is the cluster pipeline's `system:auth-delegator` binding. Without
   `deployment` the one-namespace layout (`namespace`) is rendered as before, less the TokenReview ClusterRole; the coop needs
-  a deployment. The SPIFFE trust domain stays the fleet's (`spiffe_prefix`): the roadmap decision's addendum of 2026-10-29
+  a deployment. Kernel's Raft port (its Config's `ratis_listener`, unauthenticated Ratis gRPC until tacplus-dev/kernel#42)
+  admits only kernel's own pods (`kernel-raft` NetworkPolicy, #20), in both layouts; in a deployment the isolation policy
+  leaves kernel to it. The SPIFFE trust domain stays the fleet's (`spiffe_prefix`): the roadmap decision's addendum of 2026-10-29
   superseded deriving it from the deployment name.
 - **Released / deployed:** nothing released from this repository yet
 - **Known gaps:** Stratum is rendered as before, one shared cluster (writers and search members), though stratum#2 marks it tenant_owned: per-tenant Stratum, without roles, volumes or env seeds, is #2. Until then its delegate stays shared and kernel seeds its `seed_members` with the rendered pods (#15). The redo service is rendered with Stratum (#2): one instance, `redo-restore`, a StatefulSet in the reserved restore tenant's namespace (`tac-<deployment>-00000002`), its volume on `Config.redo_storage_class` (the cluster pipeline's regional class; unset, the cluster default) mounted at `redo.Config.data_dir`. Per-tenant Stratum waits on its per-tenant seed members: a tenant-scope config slice (tacplus-dev/stratum#26), delivered by kernel from its bootstrap tenants (tacplus-dev/kernel#34), Jody's option B of 2026-11-03

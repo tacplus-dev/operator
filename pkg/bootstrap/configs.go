@@ -11,12 +11,16 @@ import (
 // to <cfgDir>/configs/. These files are consumed by Helm chart generation or
 // directly mounted into containers.
 func BuildConfigOutput(cfgDir string) error {
-	configsDir := filepath.Join(cfgDir, "configs")
-
 	dc, err := buildDeployConfigs(cfgDir, nil, nil, nil)
 	if err != nil {
 		return err
 	}
+	return writeConfigOutput(cfgDir, dc)
+}
+
+// writeConfigOutput is BuildConfigOutput for the configs dc already built.
+func writeConfigOutput(cfgDir string, dc *DeployConfigs) error {
+	configsDir := filepath.Join(cfgDir, "configs")
 
 	if err := os.MkdirAll(configsDir, 0755); err != nil {
 		return fmt.Errorf("creating configs directory: %w", err)

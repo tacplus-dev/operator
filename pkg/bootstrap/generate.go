@@ -18,6 +18,7 @@ import (
 
 	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
@@ -78,7 +79,11 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Write rendered per-service configs to configs/ directory.
-	if err := BuildConfigOutput(dir); err != nil {
+	dc, err := buildDeployConfigs(dir, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("writing service configs: %w", err)
+	}
+	if err := writeConfigOutput(dir, dc); err != nil {
 		return fmt.Errorf("writing service configs: %w", err)
 	}
 
@@ -98,7 +103,7 @@ func runGenerateCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
 	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant).WithKernelConfig(dc.Kernel)
 	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err
@@ -145,6 +150,7 @@ func init() {
 func runApply(cmd *cobra.Command, args []string) error {
 	var cfg *protoOperator.Config
 	var svcValues map[string]interface{}
+	var kernel *protoKernel.Config
 
 	if applyBundleFile != "" {
 		b, err := LoadBundle(applyBundleFile)
@@ -156,6 +162,10 @@ func runApply(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		svcValues = BundleServiceValues(b)
+		kernel, err = BundleKernelConfig(b)
+		if err != nil {
+			return err
+		}
 	} else {
 		dir := resolveConfigDir()
 		var err error
@@ -178,6 +188,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("building deploy configs: %w", err)
 		}
 		svcValues = ServiceConfigValues(dc)
+		kernel = dc.Kernel
 	}
 
 	if applyGateways > 0 {
@@ -197,7 +208,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("reading pinned-tenant services from registry: %w", err)
 	}
-	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant)
+	g := helm.New(CurrentSeries(), CurrentMajorMinor(), nil, tenantOwned, pinnedTenant).WithKernelConfig(kernel)
 	charts, err := g.Generate(cfg, 0, false)
 	if err != nil {
 		return err

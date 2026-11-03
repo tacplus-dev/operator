@@ -54,5 +54,14 @@ the looper then marks it `promoted` or `declined` here with the date.
 - **values.yaml has no `serviceConfig` placeholder** (2026-11-02, #3): a chart with letsencrypt rendered with no values
   override fails in helm (`sha256sum` of a nil `.Values.letsencrypt.serviceConfig`), unlike every `config` key, which has
   an empty placeholder. The reconciler always passes it, so only dry runs and tests meet it; add the placeholder.
+- **Remove the kernel-raft NetworkPolicy when kernel#42 lands** (2026-11-03, #20): `kernelRaftNetworkPolicy`
+  (pkg/helm/generator.go) admits only kernel's pods to its Raft port, and `deployment-isolation` leaves kernel out of its
+  selector for it, because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves that traffic into
+  the authenticated member port and retires the port: then the policy, kernel's exclusion from the isolation selector
+  and `helm.KernelRaftPort` go, and kernel is isolated like every other platform pod.
+- **Confine kernel's Hazelcast member port to kernel's pods too** (2026-11-03, #20): the kernel-raft policy keeps kernel's
+  Hazelcast port (5001) open to the whole deployment (to every source without one), as it was. Its member protocol is as
+  unauthenticated as Raft (see `HazelcastNetworkPolicy`, stratum's), and admitting it only from `app: kernel` is now one
+  line in the same policy; it was held back until verified against a live kernel cluster.
 
 ## Promoted / declined

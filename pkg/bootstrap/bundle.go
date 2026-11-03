@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
@@ -154,6 +155,20 @@ func BundleConfig(b *Bundle) (*protoOperator.Config, error) {
 		proto.Merge(cfg, part)
 	}
 	return cfg, nil
+}
+
+// BundleKernelConfig is the kernel Config of the bundle's first kernel node
+// (every node's is built from the same one), or nil when the bundle has none.
+func BundleKernelConfig(b *Bundle) (*protoKernel.Config, error) {
+	bs, ok := b.Services["bootstrap0"]
+	if !ok {
+		return nil, nil
+	}
+	k, err := protoKernel.ConfigFromBytes([]byte(bs))
+	if err != nil {
+		return nil, fmt.Errorf("parsing bundle kernel config: %w", err)
+	}
+	return k, nil
 }
 
 // bundleKeyToValuesKey translates bundle service keys to Helm values keys.

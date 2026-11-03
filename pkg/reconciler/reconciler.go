@@ -54,6 +54,7 @@ import (
 	"github.com/tacplus-dev/operator/pkg/deployment"
 	"github.com/tacplus-dev/operator/pkg/helm"
 	"github.com/tacplus-dev/operator/pkg/upgrade"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
@@ -102,6 +103,9 @@ type ServiceConfigs struct {
 	// whose record has not been read yet, and deleting its namespace would
 	// delete its data.
 	TenantsComplete bool
+	// Kernel is the kernel Config the chart's kernel runs with; nil means
+	// kernel's defaults (helm.Generator.WithKernelConfig).
+	Kernel *protoKernel.Config
 }
 
 // ServiceConfigProvider returns the generated configuration on each reconcile.
@@ -326,7 +330,11 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	}
 
 	chartCfg := chartConfig(r.cfg, sc)
-	charts, err := r.generator.Generate(chartCfg, nodeCount, nodePools)
+	var kernel *protoKernel.Config
+	if sc != nil {
+		kernel = sc.Kernel
+	}
+	charts, err := r.generator.WithKernelConfig(kernel).Generate(chartCfg, nodeCount, nodePools)
 	if err != nil {
 		return fmt.Errorf("generating charts: %w", err)
 	}

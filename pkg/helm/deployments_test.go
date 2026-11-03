@@ -212,8 +212,17 @@ func admitsFromEverywhere(rule networkingv1.NetworkPolicyIngressRule) bool {
 func TestPlatformNamespaceAdmitsOnlyItsOwnDeployment(t *testing.T) {
 	objs := renderedObjects(t, generateDeployment(t, deploymentConfig("prod")))
 	np := decodePolicy(t, findObject(t, objs, "NetworkPolicy", "tac-prod", "deployment-isolation"))
-	if len(np.Spec.PodSelector.MatchLabels)+len(np.Spec.PodSelector.MatchExpressions) != 0 {
-		t.Errorf("isolation policy must select every pod: %+v", np.Spec.PodSelector)
+	// Every pod but kernel's, which kernel-raft isolates (TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment).
+	for _, app := range []string{"gateway0", "stratum", "docmanager-acme0", ""} {
+		if !selects(t, &np.Spec.PodSelector, map[string]string{"app": app}) {
+			t.Errorf("isolation policy must select app %q: %+v", app, np.Spec.PodSelector)
+		}
+	}
+	if !selects(t, &np.Spec.PodSelector, map[string]string{}) {
+		t.Errorf("isolation policy must select a pod without an app label: %+v", np.Spec.PodSelector)
+	}
+	if selects(t, &np.Spec.PodSelector, kernelPod) {
+		t.Errorf("isolation policy must leave kernel to kernel-raft: %+v", np.Spec.PodSelector)
 	}
 	var ownNamespace, ownTenants bool
 	for _, rule := range np.Spec.Ingress {

@@ -31,6 +31,7 @@ import (
 	"text/template"
 
 	"github.com/tacplus-dev/operator/pkg/deployment"
+	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
 
@@ -100,6 +101,17 @@ type Generator struct {
 	// Config.tenants. May be nil, which means no service is pinned — the
 	// fleet's state today.
 	pinnedTenant map[string]string
+	// kernel is the kernel Config the chart's kernel runs with, for what the
+	// chart must agree with it on (its Raft port, KernelRaftPort). May be nil,
+	// which means kernel's defaults.
+	kernel *protoKernel.Config
+}
+
+// WithKernelConfig returns a copy of g that renders for kernel's Config k.
+func (g *Generator) WithKernelConfig(k *protoKernel.Config) *Generator {
+	c := *g
+	c.kernel = k
+	return &c
 }
 
 // New returns a new Generator.
@@ -219,6 +231,12 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	}
 	if cfg.GetDeployment() != "" {
 		addDeploymentNetworkPolicies(charts, cfg, services)
+	}
+	for _, svc := range services {
+		if svc.Name == "kernel" {
+			charts.Files["templates/kernel/networkpolicy-raft.yaml"] =
+				kernelRaftNetworkPolicy(svc, cfg.GetDeployment(), KernelRaftPort(g.kernel))
+		}
 	}
 	// The runtime test harness (D27) is rendered by the fleet layer, not by
 	// this library: which harness, if any, a fleet runs is the deployment's
@@ -2176,6 +2194,82 @@ spec:
 %s%s`, svc.Name, nsRef(svc), svc.Name, peerSelectors.String(), memberPorts.String(), served))
 }
 
+// KernelRaftPort is the port kernel's Config k binds the Ratis peer of its
+// FencedLock on: its ratis_listener, else kernel's own default for it. k may be
+// nil, which means kernel's defaults.
+func KernelRaftPort(k *protoKernel.Config) int32 {
+	if port := k.GetRatisListener().GetPort(); port != 0 {
+		return port
+	}
+	defaults := &protoKernel.Config{}
+	protoKernel.ConfigDefaults(defaults)
+	return defaults.GetRatisListener().GetPort()
+}
+
+// kernelRaftNetworkPolicy admits only kernel's own pods to its Raft port.
+//
+// Interim (tacplus-dev/roadmap:items/fenced-lock-consensus.md, "Decided: the
+// network layer"): kernel's FencedLock runs Ratis's stock gRPC on that port
+// with no TLS and no authentication, so who can open the socket is who can
+// speak Raft to kernel. Remove this policy, and kernel's exclusion from
+// deploymentIsolation's selector, when tacplus-dev/kernel#42 moves the Raft
+// traffic into the authenticated member port and retires the port.
+//
+// A bare podSelector peer means this namespace, which is kernel's own: the
+// platform namespace in a deployment, so only the same deployment's kernel.
+// Selecting kernel turns on default-deny for every port this policy does not
+// name, so it names the rest of what kernel serves: its gRPC port and its
+// Hazelcast member port to whom they reach today (the deployment's own
+// namespaces in a deployment, as the isolation policy kernel is left out of
+// admits them; every source without one), and the health port to the kubelet.
+func kernelRaftNetworkPolicy(svc serviceSpec, dep string, raftPort int32) []byte {
+	listenPort := svc.ListenPort
+	if listenPort == 0 {
+		listenPort = 5000
+	}
+	served := fmt.Sprintf(`    - protocol: TCP
+      port: %d
+`, listenPort)
+	if svc.HasHazelcast {
+		served += fmt.Sprintf(`    - protocol: TCP
+      port: %d
+`, stratumHazelcastPort)
+	}
+	from := ""
+	if dep != "" {
+		from = "  - from:\n" + deploymentPeers(dep) + "    ports:\n"
+	} else {
+		from = "  - ports:\n"
+	}
+	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: %s-raft
+  namespace: %s
+  labels:
+    {{- include "schematic.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: %s
+  policyTypes:
+  - Ingress
+  ingress:
+  # Raft (FencedLock): kernel's own pods only.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: %s
+    ports:
+    - protocol: TCP
+      port: %d
+  # What kernel serves, reachable as it is without this policy.
+%s%s  - ports:
+    - protocol: TCP
+      port: %d
+`, svc.Name, nsRef(svc), svc.Name, svc.Name, raftPort, from, served, grpcHealthProbePort))
+}
+
 // deploymentPeers is the NetworkPolicy peer list of deployment dep, seen from
 // its platform namespace: the namespace's own pods, and every pod of its
 // tenant namespaces, which deploymentproxy labels with the deployment. Indented
@@ -2219,7 +2313,15 @@ metadata:
   labels:
     {{- include "schematic.labels" . | nindent 4 }}
 spec:
-  podSelector: {}
+  # Every pod but kernel's, which kernelRaftNetworkPolicy isolates instead:
+  # policies add up, so this one selecting kernel would open its Raft port to
+  # the whole deployment.
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: NotIn
+      values:
+      - kernel
   policyTypes:
   - Ingress
   ingress:
