@@ -11,6 +11,7 @@ Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked
 - The uni-config defines a deployment entirely: the pipeline assembles it from config plus GitLab secrets, the operator consumes only it, no per-pod env vars (#17) (Jody, 2026-11-01)
 - Stop rendering kmaker; remove the extra signing CA private key (#16)
 - Nothing unblocked yet; everything waits on #1.
+- `GetConfig`: the deployment uni-config's redacted twin, for the Admiral only (#19). Agent, at Jody's request, 2026-11-02 (`tacplus-dev/roadmap:decisions/skipper-and-admiral-2026-11-01.md`, addendum 2026-11-02).
 
 ## Later
 - Declare the tacplus floor 2.4 (#1), after tacplus#188
