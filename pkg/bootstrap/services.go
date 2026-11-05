@@ -10,11 +10,10 @@ import (
 )
 
 var kernelAuthenticatedServiceNames = map[string]bool{
-	"eventbus":    true,
-	"oauth":       true,
-	"opa":         true,
-	"letsencrypt": true,
-	"gateway":     true,
+	"eventbus": true,
+	"oauth":    true,
+	"opa":      true,
+	"gateway":  true,
 	// The operator authenticates to kernel like any other service: it is not
 	// deployed BY the fleet chart -- it deploys that chart -- but from kernel's
 	// point of view it is an ordinary delegate. The live opa config push this
@@ -237,9 +236,6 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	opt := cfg.GetOptionalServices()
 	topo := cfg.GetTopology()
 
-	if cfg.GetTls().GetLetsencrypt() {
-		out = append(out, "letsencrypt")
-	}
 	if opt.GetEcho() && topo.GetEchoNodes() > 0 {
 		out = append(out, "echo")
 	}

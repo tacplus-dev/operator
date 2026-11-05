@@ -17,6 +17,7 @@ func AllServices() []ServiceRef {
 		// move #1): out of the fleet build, protos deleted, no image published.
 		{Proj: "stratum", Svc: "stratum"},
 		{Proj: "oauth", Svc: "oauth"},
-		{Proj: "letsencrypt", Svc: "letsencrypt"},
+		// letsencrypt retired 2026-11-04 (#21): the pipeline delivers the edge
+		// certificate (decisions/certificates-by-pipeline-2026-11-03.md).
 	}
 }

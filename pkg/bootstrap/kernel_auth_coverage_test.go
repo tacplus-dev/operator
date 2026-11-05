@@ -16,7 +16,6 @@ import (
 func everyPlatformServiceConfig() *protoOperator.Config {
 	return &protoOperator.Config{
 		Namespace: "schematic",
-		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		OptionalServices: &protoOperator.OptionalServices{
 			Echo:         true,
 			Messaging:    true,

@@ -224,7 +224,7 @@ func TestRecordReadResolvesStratumDelegate(t *testing.T) {
 
 // A service that subscribes to a topic hosted by eventbus (named in the topic
 // RPC's auth_services, on the publisher's node) gets eventbus in its deps:
-// stratum ingests letsencrypt's record topic and must be able to mint for the
+// stratum ingests a publisher's record topic (mailbox here) and must be able to mint for the
 // broker.
 func TestTopicSubscriberGetsBroker(t *testing.T) {
 	sd, err := loadServiceDepsFrom([]byte(`{
@@ -234,11 +234,11 @@ func TestTopicSubscriberGetsBroker(t *testing.T) {
      "services": [{"name": "Admin", "package": "eventbus", "grpc_service": "eventbus.Admin"}]},
     {"name": "stratum", "full_path": "services/stratum",
      "services": [{"name": "Stratum", "package": "stratum", "grpc_service": "stratum.Stratum"}]},
-    {"name": "letsencrypt", "full_path": "services/letsencrypt",
-     "boundaries": [{"state_root": "LetsEncryptCertBus", "label": ["eventbus"], "graph_type": "topic"}],
-     "services": [{"name": "LetsEncryptCertBusStateService", "package": "letsencrypt",
-       "grpc_service": "letsencrypt.LetsEncryptCertBusStateService",
-       "rpcs": [{"rpc": "PublishToStream", "auth_services": ["letsencrypt"]},
+    {"name": "mailbox", "full_path": "services/mailbox",
+     "boundaries": [{"state_root": "MailboxRecordBus", "label": ["eventbus"], "graph_type": "topic"}],
+     "services": [{"name": "MailboxRecordBusStateService", "package": "mailbox",
+       "grpc_service": "mailbox.MailboxRecordBusStateService",
+       "rpcs": [{"rpc": "PublishToStream", "auth_services": ["mailbox"]},
                 {"rpc": "SubscribeToStream", "auth_services": ["stratum"]}]}]}
   ]
 }`))
@@ -246,9 +246,9 @@ func TestTopicSubscriberGetsBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if deps := sd.authorizedServicesFor("stratum"); !toSet(deps)["eventbus"] {
-		t.Errorf("stratum deps %v missing 'eventbus' (it subscribes to letsencrypt's topic there)", deps)
+		t.Errorf("stratum deps %v missing 'eventbus' (it subscribes to mailbox's topic there)", deps)
 	}
-	if deps := sd.authorizedServicesFor("letsencrypt"); !toSet(deps)["eventbus"] {
-		t.Errorf("letsencrypt deps %v missing 'eventbus' (it publishes there)", deps)
+	if deps := sd.authorizedServicesFor("mailbox"); !toSet(deps)["eventbus"] {
+		t.Errorf("mailbox deps %v missing 'eventbus' (it publishes there)", deps)
 	}
 }

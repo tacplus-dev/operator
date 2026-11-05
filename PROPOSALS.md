@@ -51,9 +51,14 @@ the looper then marks it `promoted` or `declined` here with the date.
   namespace (a ConfigMap), or pools become operator.yaml settings.
 - **Watch tenant namespaces too** (2026-11-02, #3): the reconciler's cache and `replaceStuckOldRevisionPods` cover only the
   platform namespace; a tenant instance stuck on an old revision in its tenant namespace is not replaced.
-- **values.yaml has no `serviceConfig` placeholder** (2026-11-02, #3): a chart with letsencrypt rendered with no values
-  override fails in helm (`sha256sum` of a nil `.Values.letsencrypt.serviceConfig`), unlike every `config` key, which has
-  an empty placeholder. The reconciler always passes it, so only dry runs and tests meet it; add the placeholder.
+- **Retire the per-service `serviceConfig` delivery** (2026-11-04, #21; it replaces the 2026-11-02 placeholder proposal
+  from #3): letsencrypt was its only user and retired with the in-deployment ACME path (tacplus-dev/roadmap
+  decisions/certificates-by-pipeline-2026-11-03.md). `serviceSpec.HasServiceConfig` (pkg/helm/generator.go) is set by no
+  service now, and `Bundle.ServiceConfigs` (pkg/bootstrap/bundle.go) is always empty except when an older bundle carries
+  one. Remove both, or keep them as the generic mechanism and add the missing values.yaml placeholder then.
+- **gateway.yaml `letsencrypt` is no longer read** (2026-11-04, #21): `LoadGatewayOptions` used to accept
+  `letsencrypt: true` in services/gateway.yaml as a second switch; it is gone with the mode. gateway's Config has no such
+  field, so `BuildKernelConfigProto` already refuses the key as unknown (TestBuildKernelConfigRejectsUnknownServiceKey).
 - **Remove the kernel-raft NetworkPolicy when kernel#42 lands** (2026-11-03, #20): `kernelRaftNetworkPolicy`
   (pkg/helm/generator.go) admits only kernel's pods to its Raft port, and `deployment-isolation` leaves kernel out of its
   selector for it, because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves that traffic into

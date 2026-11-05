@@ -20,20 +20,6 @@ import (
 // table naming every service's package — the whole-fleet assumption the fleet
 // build removes.)
 
-// servicesHolderDefaultsSkipped are holder entries the operator deliberately
-// leaves absent even when the service is deployed, because their Config carries
-// an assert_required field that has no default at all: a defaulted-but-empty
-// entry fails the operator's own output validation (ValidateDeployConfigs),
-// which would block generation for every cluster running that service.
-//
-//   - letsencrypt: hostnames is assert_required; the operator delivers
-//     letsencrypt's config out of band as DeployConfigs.LetsencryptServiceConfig.
-//
-// It therefore still gets whatever kernel seeds from an absent holder entry.
-var servicesHolderDefaultsSkipped = map[string]bool{
-	"letsencrypt": true,
-}
-
 // ApplyServicesHolderDefaults populates the holder entry of every deployed
 // service and applies the generated defaults, so kernel never re-seeds a
 // deployed service's ConfigState from an all-zero config. A service with no
@@ -44,9 +30,6 @@ func ApplyServicesHolderDefaults(s *protoServicesConfig.Services, services []str
 	}
 	holder := s.ProtoReflect()
 	for _, name := range services {
-		if servicesHolderDefaultsSkipped[name] {
-			continue
-		}
 		fd := holder.Descriptor().Fields().ByName(protoreflect.Name(name + "_config"))
 		if fd == nil || fd.Message() == nil {
 			continue

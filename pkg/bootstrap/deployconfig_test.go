@@ -9,11 +9,12 @@ import (
 	"syscall"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/tacplus-dev/operator/pkg/reconciler"
 	wrapperX509 "github.com/tacplus-dev/operator/tacplus/chassis/x509"
 	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
-	protoLetsencrypt "github.com/tacplus-dev/operator/tacplus/types/services/letsencrypt"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
 	protoTokenRequest "github.com/tacplus-dev/operator/tacplus/types/sys/tokenrequest"
@@ -624,184 +625,10 @@ func TestGatewayExternalTLSPEMExtraction(t *testing.T) {
 	}
 }
 
-// TestGatewayLetsencryptModeAlsoGeneratesEdgeCert pins the contract gateway
-// d29e0f1 introduced: in LETSENCRYPT mode gateway no longer blocks startup on
-// a real ACME cert, it builds its TLS listener immediately from
-// external_cert_pem/external_key_pem -- the same cluster-CA edge material
-// CERT_CHAIN mode serves -- and hot-swaps the public cert in once
-// LetsEncryptState delivers one. Gateway owns port 80, which answers the
-// HTTP-01 challenge, so blocking on the cert deadlocked its own issuance.
-//
-// This test previously asserted the opposite (external_cert_pem ABSENT in
-// letsencrypt mode), which is what left a fresh gateway0 rollout crash-looping
-// on `external_cert_pem is empty`. The mode itself is unchanged: gateway must
-// still report EXTERNAL_TLS_MODE_LETSENCRYPT so its watcher keeps running.
-func TestGatewayLetsencryptModeAlsoGeneratesEdgeCert(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &protoOperator.Config{
-		Namespace:    "schematic",
-		Fqdn:         "schematic.localtest.me",
-		SpiffePrefix: "local.dev",
-		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
-		Topology: &protoOperator.Topology{
-			KernelNodes:   1,
-			GatewayNodes:  1,
-			EventbusNodes: 1,
-		},
-	}
-	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveSettings(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveCrypto(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	servicesDir := filepath.Join(dir, "services")
-	if err := os.MkdirAll(servicesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	dc, err := BuildDeployConfigs(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gwCfg := string(dc.GatewayConfig)
-	if !strings.Contains(gwCfg, "EXTERNAL_TLS_MODE_LETSENCRYPT") {
-		t.Fatalf("letsencrypt mode gateway should have LETSENCRYPT mode:\n%s", gwCfg)
-	}
-	// The interim edge cert must be present and be real PEM, exactly as in
-	// cert_chain mode -- gateway parses it at startup before any ACME issuance.
-	if !strings.Contains(gwCfg, "external_cert_pem:") {
-		t.Fatalf("letsencrypt mode gateway missing external_cert_pem:\n%s", gwCfg)
-	}
-	if !strings.Contains(gwCfg, "external_key_pem:") {
-		t.Fatalf("letsencrypt mode gateway missing external_key_pem:\n%s", gwCfg)
-	}
-	if !strings.Contains(gwCfg, "BEGIN CERTIFICATE") {
-		t.Fatalf("letsencrypt mode gateway external_cert_pem not PEM:\n%s", gwCfg)
-	}
-	if !strings.Contains(gwCfg, "PRIVATE KEY") {
-		t.Fatalf("letsencrypt mode gateway external_key_pem not PEM:\n%s", gwCfg)
-	}
-
-	// The generated material must carry the FQDN and localhost SANs, same as
-	// TestGatewayExternalTLSCertHasFQDNAndLocalhost asserts for cert_chain.
-	// BuildDeployConfigs works on its own cfg loaded from cfgDir and persists
-	// the newly minted edge cert back to crypto.yaml, so reload from disk
-	// rather than reading this test's in-memory cfg, which never saw it.
-	persisted, err := LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certPEM, keyPEM, err := GatewayExternalTLSPEM(persisted)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(certPEM, "BEGIN CERTIFICATE") {
-		t.Fatalf("certPEM does not contain PEM certificate:\n%s", certPEM)
-	}
-	if !strings.Contains(keyPEM, "PRIVATE KEY") {
-		t.Fatalf("keyPEM does not contain PEM private key:\n%s", keyPEM)
-	}
-	cc, err := wrapperX509.NewImmutableX509CertChain(persisted.Pki.EdgeTls[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	hasFQDN := false
-	hasLocalhost := false
-	for _, dns := range cc.Leaf().X509Certificate().DNSNames {
-		if dns == cfg.Fqdn {
-			hasFQDN = true
-		}
-		if dns == "localhost" {
-			hasLocalhost = true
-		}
-	}
-	if !hasFQDN {
-		t.Fatalf("letsencrypt mode edge cert missing FQDN SAN: %v", cc.Leaf().X509Certificate().DNSNames)
-	}
-	if !hasLocalhost {
-		t.Fatalf("letsencrypt mode edge cert missing localhost SAN: %v", cc.Leaf().X509Certificate().DNSNames)
-	}
-}
-
-// TestLetsencryptModeWiresGatewayPort80 covers the operator half of the
-// one-LoadBalancer design: the gateway owns the edge's port 80, so it is the
-// operator that must turn its plaintext listener on and tell it where the
-// letsencrypt HTTP-01 responder lives in-cluster. Neither field has a proto
-// default — the answer depends on external_tls_mode, which tacplus has no
-// conditional default for — so nothing else would set them, and a gateway with
-// an unset http_listener binds nothing at all while the LoadBalancer happily
-// forwards port 80 into a closed port.
-func TestLetsencryptModeWiresGatewayPort80(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &protoOperator.Config{
-		Namespace:    "cavalier",
-		Fqdn:         "console.example.net",
-		SpiffePrefix: "local.dev",
-		Tls:          &protoOperator.TLSConfig{Letsencrypt: true},
-		Topology: &protoOperator.Topology{
-			KernelNodes:   1,
-			GatewayNodes:  1,
-			EventbusNodes: 1,
-		},
-	}
-	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveSettings(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveCrypto(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	servicesDir := filepath.Join(dir, "services")
-	if err := os.MkdirAll(servicesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(servicesDir, "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	dc, err := BuildDeployConfigs(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kernelCfg, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
-	if err != nil {
-		t.Fatalf("parsing kernel bootstrap YAML: %v", err)
-	}
-	gwInKernel := kernelCfg.GetConfigs().GetGatewayConfig()
-	if gwInKernel == nil {
-		t.Fatal("kernel config has no GatewayConfig in services holder")
-	}
-
-	if got := gwInKernel.GetHttpListener(); got.GetHost() != "0.0.0.0" || got.GetPort() != gatewayHttpPort {
-		t.Errorf("gateway http_listener = %v, want 0.0.0.0:%d", got, gatewayHttpPort)
-	}
-	// The name must be the letsencrypt replica's ClusterIP Service in THIS
-	// namespace, in a form host.Host's FQDN assertion accepts.
-	acme := gwInKernel.GetAcmeBackend()
-	if acme.GetHost() != "letsencrypt0.cavalier.svc.cluster.local" || acme.GetPort() != letsencryptAcmePort {
-		t.Errorf("gateway acme_backend = %v, want letsencrypt0.cavalier.svc.cluster.local:%d", acme, letsencryptAcmePort)
-	}
-
-	// The responder it points at must actually be listening there.
-	leCfg := string(dc.LetsencryptServiceConfig)
-	if !strings.Contains(leCfg, "port: 8080") {
-		t.Errorf("letsencrypt http_listener does not match the gateway's acme_backend port:\n%s", leCfg)
-	}
-}
-
-// extra_hostnames adds public names alongside fqdn. Both consumers of the public
-// name list must see all of them — the gateway (external_hostnames) and
-// letsencrypt (hostnames) — with fqdn first, while the OIDC issuer stays fqdn.
-func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
+// extra_hostnames adds public names alongside fqdn. The gateway's
+// external_hostnames must carry all of them, fqdn first, while the OIDC issuer
+// stays fqdn.
+func TestExtraHostnamesReachGateway(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &protoOperator.Config{
 		Namespace:      "cavalier",
@@ -809,7 +636,6 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 		ExtraHostnames: []string{"console.example.org"},
 		Port:           443,
 		SpiffePrefix:   "local.dev",
-		Tls:            &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
 			GatewayNodes:  1,
@@ -848,24 +674,6 @@ func TestExtraHostnamesReachGatewayAndLetsencrypt(t *testing.T) {
 	}
 	if got := kernelCfg.GetIssuer(); got != "https://console.example.net" {
 		t.Errorf("kernel issuer = %q, want https://console.example.net", got)
-	}
-
-	leCfg, err := protoLetsencrypt.ConfigFromBytes(dc.LetsencryptServiceConfig)
-	if err != nil {
-		t.Fatalf("parsing letsencrypt service config: %v", err)
-	}
-	if got := leCfg.GetHostnames(); !slices.Equal(got, want) {
-		t.Errorf("letsencrypt hostnames = %v, want %v", got, want)
-	}
-	// Kernel's services holder carries the same config: letsencrypt's
-	// ServiceManager fetches its Config from kernel and refuses one with no
-	// hostnames.
-	inKernel := kernelCfg.GetConfigs().GetLetsencryptConfig()
-	if got := inKernel.GetHostnames(); !slices.Equal(got, want) {
-		t.Errorf("kernel letsencrypt_config hostnames = %v, want %v", got, want)
-	}
-	if inKernel.GetHttpListener().GetPort() != letsencryptAcmePort || inKernel.GetRenewalCheckIntervalSeconds() != 3600 {
-		t.Errorf("kernel letsencrypt_config = %v", inKernel)
 	}
 }
 
@@ -943,14 +751,106 @@ func TestKernelBootstrapCarriesGatewayExternalTLS(t *testing.T) {
 	if len(gwInKernel.RootCa) == 0 {
 		t.Fatal("kernel gateway config root_ca is empty")
 	}
-	// Port 80 exists to carry ACME HTTP-01 challenges. Without letsencrypt
-	// there are none, and a listener bound here would only be a second
-	// plaintext surface.
+	// The edge forwards no port 80, so a listener bound here would only be a
+	// second plaintext surface.
 	if gwInKernel.GetHttpListener() != nil {
-		t.Errorf("cert_chain mode set an http_listener: %v", gwInKernel.GetHttpListener())
+		t.Errorf("gateway config set an http_listener: %v", gwInKernel.GetHttpListener())
 	}
-	if gwInKernel.GetAcmeBackend() != nil {
-		t.Errorf("cert_chain mode set an acme_backend: %v", gwInKernel.GetAcmeBackend())
+
+	// The chain and key are exactly the edge material the operator holds, in
+	// both deliveries: kernel's services holder and the gateway's own config.
+	persisted, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := GatewayExternalTLSPEM(persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gwInKernel.ExternalCertPem != certPEM || gwInKernel.ExternalKeyPem != keyPEM {
+		t.Error("kernel gateway config does not carry the operator's edge chain and key")
+	}
+	var gwSvc struct {
+		ExternalTlsMode string `yaml:"external_tls_mode"`
+		ExternalCertPem string `yaml:"external_cert_pem"`
+		ExternalKeyPem  string `yaml:"external_key_pem"`
+	}
+	if err := yaml.Unmarshal(dc.GatewayConfig, &gwSvc); err != nil {
+		t.Fatalf("parsing gateway config: %v", err)
+	}
+	if gwSvc.ExternalTlsMode != "EXTERNAL_TLS_MODE_CERT_CHAIN" {
+		t.Errorf("gateway config external_tls_mode = %q, want EXTERNAL_TLS_MODE_CERT_CHAIN", gwSvc.ExternalTlsMode)
+	}
+	if gwSvc.ExternalCertPem != certPEM || gwSvc.ExternalKeyPem != keyPEM {
+		t.Error("gateway config does not carry the operator's edge chain and key")
+	}
+}
+
+// TestGenerateRendersNoLetsencrypt: the letsencrypt service retired with the
+// in-deployment ACME path (tacplus-dev/roadmap
+// decisions/certificates-by-pipeline-2026-11-03.md). Nothing the operator
+// emits for a deployment names it: no bundle or values entry, no config file,
+// no kernel delegate, no holder entry, no kernel-authenticated service.
+func TestGenerateRendersNoLetsencrypt(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &protoOperator.Config{
+		Namespace:    "cavalier",
+		Fqdn:         "console.example.net",
+		SpiffePrefix: "local.dev",
+		Topology: &protoOperator.Topology{
+			KernelNodes:   1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+		},
+	}
+	if err := GenerateCrypto(cfg, 1, 0, cfg.Fqdn, cfg.SpiffePrefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveCrypto(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "services"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "services", "kernel.yaml"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureServiceDelegates(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	dc, err := BuildDeployConfigs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, y := range dc.BootstrapYAMLs {
+		if strings.Contains(strings.ToLower(string(y)), "letsencrypt") {
+			t.Errorf("kernel bootstrap %d names letsencrypt:\n%s", i, y)
+		}
+	}
+	vals, err := yaml.Marshal(ServiceConfigValues(dc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(vals)), "letsencrypt") {
+		t.Errorf("chart values name letsencrypt:\n%s", vals)
+	}
+	b, err := BuildBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := yaml.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(bundle)), "letsencrypt") {
+		t.Errorf("config bundle names letsencrypt:\n%s", bundle)
+	}
+	if slices.Contains(DeployedKernelAuthServices(dc.Cfg), "letsencrypt") {
+		t.Errorf("letsencrypt is a deployed kernel-authenticated service: %v", DeployedKernelAuthServices(dc.Cfg))
 	}
 }
 

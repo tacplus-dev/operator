@@ -18,7 +18,6 @@ import (
 	protoEventbus "github.com/tacplus-dev/operator/tacplus/types/services/eventbus"
 	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
-	protoLetsencrypt "github.com/tacplus-dev/operator/tacplus/types/services/letsencrypt"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 	protoDiskstore "github.com/tacplus-dev/operator/tacplus/types/sys/diskstore"
 	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
@@ -38,19 +37,17 @@ type DeployConfigs struct {
 	// by service name. Platform services each have a named field above because
 	// the platform's service set is fixed; an app's is not known until its
 	// config declares it, so those cannot be fields.
-	AppConfigs               map[string][]byte
-	GatewayConfig            []byte
-	EventbusConfig           []byte
-	OauthConfig              []byte
-	OpaConfig                []byte
-	StratumConfig            []byte
-	StratumSearchConfig      []byte
-	RedoConfig               []byte
-	LetsencryptConfig        []byte
-	BlobstoreConfig          []byte
-	LetsencryptServiceConfig []byte
-	GatewayOpts              GatewayOptions
-	Cfg                      *protoOperator.Config
+	AppConfigs          map[string][]byte
+	GatewayConfig       []byte
+	EventbusConfig      []byte
+	OauthConfig         []byte
+	OpaConfig           []byte
+	StratumConfig       []byte
+	StratumSearchConfig []byte
+	RedoConfig          []byte
+	BlobstoreConfig     []byte
+	GatewayOpts         GatewayOptions
+	Cfg                 *protoOperator.Config
 	// Kernel is the kernel Config every node's bootstrap is built from, its
 	// defaults applied: what the chart must agree with kernel on (its Raft
 	// port, helm.KernelRaftPort) comes from here.
@@ -315,26 +312,20 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	}
 
 	gatewayOpts := LoadGatewayOptions(filepath.Join(cfgDir, "services"))
-	if cfg.GetTls() != nil && cfg.GetTls().GetLetsencrypt() {
-		gatewayOpts.LetsEncrypt = true
-	}
-	// Every public name, fqdn first. letsencrypt defaults its ACME email to
-	// admin@<hostnames[0]>; the OIDC issuer is built from fqdn alone (Issuer)
-	// and extra_hostnames never reaches it. Only fqdn gets a usable certificate:
-	// letsencrypt publishes hostnames[0]'s single-name cert and the gateway has
-	// no SNI selection, so extra_hostnames must stay empty (decisions/
-	// extra-hostnames-2026-09-30.md).
+	// Every public name, fqdn first. The OIDC issuer is built from fqdn alone
+	// (Issuer) and extra_hostnames never reaches it. The gateway serves one
+	// certificate and has no SNI selection, so extra_hostnames must stay empty
+	// (decisions/extra-hostnames-2026-09-30.md).
 	publicHostnames := append([]string{cfg.Fqdn}, cfg.GetExtraHostnames()...)
 	if cfg.Fqdn != "" {
 		gatewayOpts.Hostnames = publicHostnames
 	}
 
-	// Ensure gateway has a cluster-CA external TLS cert in BOTH modes.
-	// CERT_CHAIN mode serves it for the life of the pod. LETSENCRYPT mode
-	// serves it as the interim edge cert at startup: gateway owns port 80,
-	// which answers the HTTP-01 challenge, so it cannot block on a real ACME
-	// cert without deadlocking its own issuance (gateway d29e0f1). Its watcher
-	// hot-swaps the public cert in once LetsEncryptState delivers one.
+	// Ensure gateway has a cluster-CA external TLS cert. The gateway serves
+	// the chain it is given (CERT_CHAIN, its only mode) and hot-swaps a new
+	// one when its config carries it: the deployment's pipeline delivers the
+	// public certificate that way (tacplus-dev/roadmap
+	// decisions/certificates-by-pipeline-2026-11-03.md).
 	if cfg.Fqdn != "" {
 		gwTLSGenerated, err := EnsureGatewayExternalTLS(cfg, cfg.Fqdn)
 		if err != nil {
@@ -368,21 +359,9 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 			protoGateway.ConfigDefaults(kernelConfig.Configs.GatewayConfig)
 		}
 		gwCfg := kernelConfig.Configs.GatewayConfig
-		if gatewayOpts.LetsEncrypt {
-			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_LETSENCRYPT
-			// The gateway owns the edge's port 80 in this mode: its own
-			// LoadBalancer carries 443 and 80, and the letsencrypt service is
-			// no longer exposed outside the cluster at all. Both fields are
-			// declared without a default (the answer depends on
-			// external_tls_mode, which tacplus cannot express as a conditional
-			// default), so the operator is what turns the listener on.
-			gwCfg.HttpListener = &protoHost.Host{Host: "0.0.0.0", Port: gatewayHttpPort}
-			gwCfg.AcmeBackend = &protoHost.Host{Host: letsencryptAcmeHost(cfg), Port: letsencryptAcmePort}
-		} else {
-			gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN
-			gwCfg.HttpListener = nil
-			gwCfg.AcmeBackend = nil
-		}
+		gwCfg.ExternalTlsMode = protoGateway.ExternalTlsMode_EXTERNAL_TLS_MODE_CERT_CHAIN
+		// The edge forwards no port 80, so nothing binds a plaintext listener.
+		gwCfg.HttpListener = nil
 		gwCfg.ExternalHostnames = gatewayOpts.Hostnames
 		gwCfg.ExternalCertPem = gatewayOpts.ExternalCertPEM
 		gwCfg.ExternalKeyPem = gatewayOpts.ExternalKeyPEM
@@ -521,42 +500,6 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		}
 	}
 
-	var letsencryptConfigYAML []byte
-	var letsencryptServiceConfigYAML []byte
-	if cfg.GetTls().GetLetsencrypt() {
-		letsencryptConfigYAML, err = buildSvc("letsencrypt", nil)
-		if err != nil {
-			return nil, err
-		}
-		leSvc := map[string]any{
-			"fqdn":                           cfg.Fqdn,
-			"hostnames":                      publicHostnames,
-			"http_listener":                  map[string]any{"host": "0.0.0.0", "port": int64(letsencryptAcmePort)},
-			"renewal_check_interval_seconds": int64(3600),
-		}
-		// Only set when configured; letsencrypt's own default is admin@<fqdn>.
-		if email := cfg.GetTls().GetEmail(); email != "" {
-			leSvc["lets_encrypt_email"] = email
-		}
-		letsencryptServiceConfigYAML, err = yaml.Marshal(leSvc)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling letsencrypt service config: %w", err)
-		}
-		// The same config into kernel's services holder, as the gateway's
-		// operator-derived fields are above: letsencrypt runs under the
-		// ServiceManager, which fetches its typed Config from kernel and
-		// refuses to start on one with no hostnames. One source (this map),
-		// two deliveries, until the file delivery is retired.
-		leCfg, err := protoLetsencrypt.ConfigFromBytes(letsencryptServiceConfigYAML)
-		if err != nil {
-			return nil, fmt.Errorf("parsing letsencrypt service config: %w", err)
-		}
-		if kernelConfig.Configs == nil {
-			kernelConfig.Configs = &protoServicesConfig.Services{}
-		}
-		kernelConfig.Configs.LetsencryptConfig = leCfg
-	}
-
 	// Per-node kernel bootstrap configs.
 	members := make([]*protoHost.Host, nodeCount)
 	for i := range nodeCount {
@@ -591,28 +534,26 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	}
 
 	dc := &DeployConfigs{
-		CACertPEM:                caCertPEM,
-		BootstrapNames:           bootstrapNames,
-		BootstrapYAMLs:           bootstrapYAMLs,
-		EchoConfig:               echoConfigYAML,
-		MessagingConfig:          messagingConfigYAML,
-		MailboxConfig:            mailboxConfigYAML,
-		PersonalauthConfig:       personalauthConfigYAML,
-		AppConfigs:               appConfigs,
-		GatewayConfig:            gatewayConfigYAML,
-		EventbusConfig:           eventbusConfigYAML,
-		OauthConfig:              oauthConfigYAML,
-		OpaConfig:                opaConfigYAML,
-		StratumConfig:            stratumConfigYAML,
-		StratumSearchConfig:      stratumSearchConfigYAML,
-		RedoConfig:               redoConfigYAML,
-		LetsencryptConfig:        letsencryptConfigYAML,
-		BlobstoreConfig:          blobstoreConfigYAML,
-		LetsencryptServiceConfig: letsencryptServiceConfigYAML,
-		GatewayOpts:              gatewayOpts,
-		Cfg:                      cfg,
-		Kernel:                   kernelConfig,
-		OperatorBootstrapConfig:  operatorBootstrapYAML,
+		CACertPEM:               caCertPEM,
+		BootstrapNames:          bootstrapNames,
+		BootstrapYAMLs:          bootstrapYAMLs,
+		EchoConfig:              echoConfigYAML,
+		MessagingConfig:         messagingConfigYAML,
+		MailboxConfig:           mailboxConfigYAML,
+		PersonalauthConfig:      personalauthConfigYAML,
+		AppConfigs:              appConfigs,
+		GatewayConfig:           gatewayConfigYAML,
+		EventbusConfig:          eventbusConfigYAML,
+		OauthConfig:             oauthConfigYAML,
+		OpaConfig:               opaConfigYAML,
+		StratumConfig:           stratumConfigYAML,
+		StratumSearchConfig:     stratumSearchConfigYAML,
+		RedoConfig:              redoConfigYAML,
+		BlobstoreConfig:         blobstoreConfigYAML,
+		GatewayOpts:             gatewayOpts,
+		Cfg:                     cfg,
+		Kernel:                  kernelConfig,
+		OperatorBootstrapConfig: operatorBootstrapYAML,
 	}
 
 	// Every artifact above is a serialized proto its consumer validates at
@@ -714,20 +655,11 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
-		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
 		}
-	}
-	if len(dc.LetsencryptServiceConfig) > 0 {
-		le, ok := vals["letsencrypt"].(map[string]interface{})
-		if !ok {
-			le = map[string]interface{}{}
-			vals["letsencrypt"] = le
-		}
-		le["serviceConfig"] = string(dc.LetsencryptServiceConfig)
 	}
 
 	// The application's own services, keyed the same way.

@@ -370,13 +370,6 @@ const stratumWorkingSetPort = 5701
 // ingress and a policy that forgets it takes the pod NotReady.
 const grpcHealthProbePort = 8444
 
-// gatewayHttpPort is the container-side port the gateway binds for the edge's
-// PLAINTEXT port 80 — ACME HTTP-01 challenges and the redirect to https. The
-// LoadBalancer maps external 80 to it, so the container never needs
-// NET_BIND_SERVICE. Must match the http_listener the operator writes into the
-// gateway's config (pkg/bootstrap).
-const gatewayHttpPort = 8080
-
 // redoServiceName is the redo service, rendered with Stratum.
 const redoServiceName = "redo"
 
@@ -577,18 +570,6 @@ type serviceSpec struct {
 	// ExtraEnvVars, if non-empty, is appended to the env block in the Deployment.
 	// Each entry should be a fully-formed YAML env var block (name + value lines).
 	ExtraEnvVars string
-	// AcmePort, if non-zero, adds a containerPort and an extra port on the
-	// per-replica ClusterIP Service for the ACME HTTP-01 responder. IN-CLUSTER
-	// ONLY: the gateway owns the edge's port 80 and proxies challenge requests
-	// here, so this responder is not exposed outside the cluster and there is
-	// no LoadBalancer for it.
-	AcmePort int32
-	// HttpPort, if non-zero, adds a containerPort and a port-80 entry on this
-	// service's external LoadBalancer (external 80 -> HttpPort in the
-	// container). Set on gateway only, and only in LETSENCRYPT mode: one
-	// LoadBalancer carries both 443 and 80, so a single reserved address serves
-	// the public HTTPS endpoint and ACME HTTP-01 validation.
-	HttpPort int32
 	// ExtraPort, if non-zero, adds an additional named port to the ClusterIP Service.
 	// ExtraPortName is the port name used in the Service spec (required when ExtraPort != 0).
 	ExtraPort     int32
@@ -598,9 +579,7 @@ type serviceSpec struct {
 	// Service, which is what makes a port reachable at a pod's stable DNS name.
 	//
 	// IN-CLUSTER ONLY, every one of them: nothing here reaches a LoadBalancer.
-	// AcmePort above is the single-port special case of the same idea, kept as it
-	// is because it is letsencrypt's and is referenced by name; this is the general
-	// form, added for blobstore, which needs two (its byte listener, which the
+	// Added for blobstore, which needs two (its byte listener, which the
 	// gateway proxies, and its peer listener, which only the other pod dials).
 	NamedPorts []namedPort
 	// SkipProbes, if true, omits the readiness and liveness probes from the Deployment.
@@ -1436,31 +1415,10 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		}
 	}
 
-	// Let's Encrypt ACME agent — one replica, only when tls.letsencrypt = true.
-	if cfg.GetTls().GetLetsencrypt() {
-		// The gateway takes the edge's port 80 on its own LoadBalancer, and
-		// only in this mode: it exists to carry ACME HTTP-01 challenges to the
-		// letsencrypt service and to redirect everything else to https. In
-		// CERT_CHAIN mode nothing binds 8080, so the chart renders no port 80
-		// rather than a forwarding rule into a closed port.
-		for i := range svcs {
-			if svcs[i].Name == "gateway" {
-				svcs[i].HttpPort = gatewayHttpPort
-				break
-			}
-		}
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
-			Name:             "letsencrypt",
-			Replicas:         1,
-			Image:            g.imageRef(cfg, "letsencrypt"),
-			HasGRPC:          true,
-			ListenPort:       8443,
-			AcmePort:         8080,
-			SkipProbes:       true,
-			ExtraEnvVars:     "        - name: SERVICE_CONFIG\n          value: /data/service.yaml\n",
-			HasServiceConfig: true,
-		}))
-	}
+	// The letsencrypt service was rendered here, with port 80 on the gateway's
+	// LoadBalancer for its HTTP-01 challenges. It retired 2026-11-04 (#21): the
+	// deployment's pipeline delivers the edge certificate (tacplus-dev/roadmap
+	// decisions/certificates-by-pipeline-2026-11-03.md).
 
 	// The application proxy services (anthropic, openai, gitlab, github), the MCP
 	// server and msggateway were rendered here. They were application concerns,
@@ -1853,8 +1811,8 @@ metadata:
 
 // coopServiceName is the platform service that runs pigeons (tacplus registry
 // id 106). Listing it in app_services makes the chart grant it the tenant
-// namespaces its pigeons run in; the library knows this one service the way it
-// knows letsencrypt, because where pigeons run is part of the coop's contract
+// namespaces its pigeons run in; the library knows this one service by name,
+// because where pigeons run is part of the coop's contract
 // (A30 §3.3, §3.7), not a deployment's choice.
 const coopServiceName = "coop"
 
@@ -2297,7 +2255,7 @@ func deploymentPeers(dep string) string {
 //     platform namespace may call them (the gateway routes to them).
 //
 // Egress from tac-<deployment> stays open: the platform calls out to the
-// internet (identity providers, ACME, the image registry, the Kubernetes API),
+// internet (identity providers, the image registry, the Kubernetes API),
 // and a pod of another deployment refuses it at ingress anyway.
 //
 // Every policy also admits the health port from any source: the kubelet's
@@ -2345,9 +2303,6 @@ spec:
 			listenPort = 5000
 		}
 		fmt.Fprintf(&ports, "    - protocol: TCP\n      port: %d\n", listenPort)
-		if svc.HttpPort != 0 {
-			fmt.Fprintf(&ports, "    - protocol: TCP\n      port: %d\n", svc.HttpPort)
-		}
 		charts.Files[fmt.Sprintf("templates/%s/networkpolicy-edge.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -2405,9 +2360,8 @@ spec:
 }
 
 // loadBalancerIPLine pins the cluster's one external LoadBalancer Service —
-// the gateway's -lb, carrying TCP/443 and TCP/80 — to its reserved static
-// external address. fqdn's public A record resolves to it, and ACME HTTP-01
-// validation connects to port 80 on that same name. Without this the provider
+// the gateway's -lb, carrying TCP/443 — to its reserved static external
+// address. fqdn's public A record resolves to it. Without this the provider
 // hands the Service an ephemeral address, so a re-render silently moves the
 // gateway off the address DNS points at.
 //
@@ -2525,15 +2479,6 @@ spec:
     targetPort: %d
 `, svc.ExtraPortName, svc.ExtraPort, svc.ExtraPort)
 		}
-		// The ACME HTTP-01 responder, reachable in-cluster only. The gateway is
-		// the one caller: it holds the edge's port 80 and proxies
-		// /.well-known/acme-challenge/* here.
-		if svc.AcmePort != 0 {
-			extraPort += fmt.Sprintf(`  - name: acme
-    port: %d
-    targetPort: %d
-`, svc.AcmePort, svc.AcmePort)
-		}
 		for _, np := range svc.NamedPorts {
 			extraPort += fmt.Sprintf(`  - name: %s
     port: %d
@@ -2565,19 +2510,6 @@ spec:
 		// (e.g. gateway exposed on port 443). This is a separate service to avoid
 		// HostPort conflicts with other services using the same container port.
 		if svc.Port != 0 {
-			// Port 80 rides the SAME LoadBalancer as 443 when the service
-			// declares an HttpPort. One Service, one forwarding rule set, one
-			// reserved address: the public A record and ACME HTTP-01
-			// validation both land on this pod. A second LoadBalancer for
-			// port 80 would take an address of its own, which HTTP-01 never
-			// reaches — it connects to port 80 on the NAME.
-			httpPort := ""
-			if svc.HttpPort != 0 {
-				httpPort = fmt.Sprintf(`  - name: http
-    port: 80
-    targetPort: %d
-`, svc.HttpPort)
-			}
 			charts.Files[fmt.Sprintf("templates/%s/service-%d-lb.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -2591,7 +2523,7 @@ spec:
   - name: https
     port: %d
     targetPort: %d
-%s`, name, ns, loadBalancerIPLine(cfg), name, svc.Port, listenPort, httpPort))
+`, name, ns, loadBalancerIPLine(cfg), name, svc.Port, listenPort))
 		}
 	}
 
@@ -2952,16 +2884,6 @@ spec:
         - containerPort: %d
           name: grpc
 `, listenPort))
-			if svc.AcmePort != 0 {
-				deployBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
-          name: acme
-`, svc.AcmePort))
-			}
-			if svc.HttpPort != 0 {
-				deployBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
-          name: http
-`, svc.HttpPort))
-			}
 			if svc.HasHazelcast {
 				deployBuf.WriteString(`        - containerPort: 5001
           name: hazelcast

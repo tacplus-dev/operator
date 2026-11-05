@@ -61,7 +61,7 @@ func validateServiceBootstrap(data []byte) error {
 
 // deployArtifacts lists every artifact in dc alongside the generated validator
 // for the proto its consumer parses it as. Artifacts that are not a proto
-// message (the CA PEM, the letsencrypt ACME options file) are not listed.
+// message (the CA PEM) are not listed.
 func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 	var out []generatedArtifact
 
@@ -91,7 +91,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
-		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 		{"operator", dc.OperatorBootstrapConfig},
 	}

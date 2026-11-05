@@ -48,24 +48,20 @@ enum OperatorMode {
   GENERATE_ONLY = 1;
 }
 
-// TLSConfig controls how edge-facing TLS certificates are obtained.
-// When letsencrypt = true, the operator deploys one letsencrypt service replica.
+// TLSConfig holds the edge's custom CA chain. The gateway serves only the
+// certificate chain it is given (EXTERNAL_TLS_MODE_CERT_CHAIN): the deployment's
+// pipeline obtains and renews the public certificate and delivers it, and no
+// letsencrypt service is deployed (tacplus-dev/roadmap
+// decisions/certificates-by-pipeline-2026-11-03.md).
 message TLSConfig {
-  // When true, Let's Encrypt is used for edge TLS and one letsencrypt service
-  // replica is deployed. The gateway must be reachable on port 443 from the
-  // public internet.
-  // When false, ca must be populated with a valid CA chain.
-  bool letsencrypt = 1;
+  // 1 held letsencrypt and 3 held email (the ACME account address): the
+  // in-deployment Let's Encrypt path retired with the decision above. An
+  // operator.yaml that still sets tls.letsencrypt is refused at load.
+  reserved 1, 3;
+  reserved "letsencrypt", "email";
 
-  // Custom CA chain for edge TLS certificates.
-  // Required when letsencrypt = false. Ignored when letsencrypt = true.
+  // Custom CA chain for edge TLS certificates. Required when tls is set.
   x509.X509CertChain ca = 2;
-
-  // email is the ACME account registration address, rendered into the
-  // letsencrypt service's config as lets_encrypt_email. Let's Encrypt sends
-  // certificate expiry notices there. Empty leaves the letsencrypt service on
-  // its own "admin@<fqdn>" default. Ignored when letsencrypt = false.
-  string email = 3;
 }
 
 // Topology declares the desired replica count for each service.
@@ -291,7 +287,6 @@ message PKI {
   repeated x509.X509CertChain node_signing_ca = 4 [(spec.assert_max_size) = 1024];
 
   // Edge TLS certificates for gateway and oauth.
-  // Not used when tls.letsencrypt = true.
   repeated x509.X509CertChain edge_tls = 5 [(spec.assert_max_size) = 1024];
 
   // Edge signing CAs.
@@ -342,8 +337,8 @@ message Config {
   // Service replica topology.
   Topology topology = 6;
 
-  // TLS configuration — letsencrypt or custom CA.
-  // Validation: if tls.letsencrypt = false, tls.ca must be set.
+  // TLS configuration — the edge's custom CA.
+  // Validation: if tls is set, tls.ca must be set.
   TLSConfig tls = 7;
 
   // PKI material. Loaded from crypto.yaml and merged at runtime.
@@ -437,13 +432,7 @@ message Config {
   // pre-reserved static external address (e.g. a GCP regional compute
   // address). It is rendered as spec.loadBalancerIP on the gateway's
   // "<gateway>-lb" Service — the ONE externally-exposed Service there is,
-  // carrying TCP/443 and TCP/80 together.
-  //
-  // Both ports are on the one Service on purpose: fqdn's public A record
-  // resolves to this address, and ACME HTTP-01 validation connects to port 80
-  // on that same name. The gateway answers on 80 and proxies challenge
-  // requests to the letsencrypt service in-cluster, so letsencrypt needs no
-  // external address of its own.
+  // carrying TCP/443. fqdn's public A record resolves to this address.
   //
   // Leave empty to let the provider assign an ephemeral address per Service —
   // fine for local and dev clusters, but then the address changes on every
@@ -452,14 +441,13 @@ message Config {
 
   // extra_hostnames are public names served IN ADDITION to fqdn (e.g. a second
   // domain during a cutover). The operator renders fqdn followed by these into
-  // the gateway's external_hostnames and letsencrypt's hostnames. fqdn stays
+  // the gateway's external_hostnames. fqdn stays
   // the primary name: the OIDC issuer and every other single-name use of fqdn
   // ignore this field.
   //
-  // Not usable until N-cert/SNI (option b) exists: certmagic issues one
-  // single-name certificate per name (not one multi-SAN cert), letsencrypt
-  // publishes only fqdn's, and the gateway has no SNI selection — an extra name
-  // is served fqdn's certificate and fails TLS name checks. Leave empty.
+  // Not usable until N-cert/SNI (option b) exists: the gateway serves one
+  // certificate and has no SNI selection, so an extra name not covered by it
+  // fails TLS name checks. Leave empty.
   repeated string extra_hostnames = 24 [(spec.assert_max_size) = 16];
 
   // image_digests pins service images by digest. Key is the image name (the

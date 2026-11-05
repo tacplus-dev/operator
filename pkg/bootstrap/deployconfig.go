@@ -8,10 +8,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/tacplus-dev/operator/pkg/deployment"
 	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
-	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
 	protoX509 "github.com/tacplus-dev/operator/tacplus/types/sys/x509"
 )
@@ -20,30 +18,6 @@ var (
 	kernelGRPCPort = int32(protoKernel.DefaultListenerPort)
 	gatewayPort    = int32(protoGateway.DefaultTcpListenerPort)
 )
-
-const (
-	// gatewayHttpPort is the container-side port the gateway binds for the
-	// edge's PLAINTEXT port 80 — ACME HTTP-01 challenges proxied to
-	// letsencrypt, and a 301 to https for everything else. The gateway's
-	// LoadBalancer maps external 80 to it, so the container binds a port above
-	// 1024 and needs no NET_BIND_SERVICE. Must match helm's gatewayHttpPort.
-	gatewayHttpPort = int32(8080)
-
-	// letsencryptAcmePort is the letsencrypt service's HTTP-01 responder port,
-	// reachable in-cluster only: nothing outside the cluster reaches it any
-	// more, only the gateway's port-80 proxy.
-	letsencryptAcmePort = int32(8080)
-)
-
-// letsencryptAcmeHost is the in-cluster DNS name of that responder. The
-// letsencrypt service has exactly one replica, so its per-replica ClusterIP
-// Service is "letsencrypt0". Written in full svc.cluster.local form because
-// host.Host asserts an FQDN and a bare single label is not one — and the
-// short "letsencrypt0.<ns>" form only passes that assertion for namespaces
-// whose name happens to end in letters.
-func letsencryptAcmeHost(cfg *protoOperator.Config) string {
-	return deployment.ServiceHost("letsencrypt0", deployment.PlatformNamespace(cfg))
-}
 
 func defaultLoggerFields() map[string]any {
 	return map[string]any{
@@ -139,7 +113,6 @@ func BuildBackendFields(trustedCAs []*protoX509.X509Cert, endpoints []*protoHost
 type GatewayOptions struct {
 	EnableTCP       bool
 	EnableQUIC      bool
-	LetsEncrypt     bool
 	Hostnames       []string
 	ExternalCertPEM string
 	ExternalKeyPEM  string
@@ -167,11 +140,7 @@ func BuildGatewayServiceConfig(
 	config["logger"] = defaultLoggerFields()
 	config["enable_tcp"] = opts.EnableTCP
 	config["enable_quic"] = opts.EnableQUIC
-	if opts.LetsEncrypt {
-		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_LETSENCRYPT"
-	} else {
-		config["external_tls_mode"] = "EXTERNAL_TLS_MODE_CERT_CHAIN"
-	}
+	config["external_tls_mode"] = "EXTERNAL_TLS_MODE_CERT_CHAIN"
 	if len(opts.Hostnames) > 0 {
 		config["external_hostnames"] = opts.Hostnames
 	}
@@ -226,11 +195,6 @@ func LoadGatewayOptions(servicesDir string) GatewayOptions {
 	if v, ok := raw["enable_quic"]; ok {
 		if b, ok := v.(bool); ok {
 			opts.EnableQUIC = b
-		}
-	}
-	if v, ok := raw["letsencrypt"]; ok {
-		if b, ok := v.(bool); ok && b {
-			opts.LetsEncrypt = true
 		}
 	}
 	return opts

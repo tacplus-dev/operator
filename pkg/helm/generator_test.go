@@ -55,7 +55,6 @@ func TestGenerateKernelProjectedTokens(t *testing.T) {
 func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
-		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			EventbusNodes: 1,
 			GatewayNodes:  1,
@@ -76,7 +75,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		"opa",
 		"stratum",
 		"oauth",
-		"letsencrypt",
 		"echo",
 	}
 	for _, service := range services {
@@ -1658,22 +1656,18 @@ func probeHelperBody(t *testing.T, helpers, name string) string {
 	return helpers[i : i+j]
 }
 
-// TestGatewayLoadBalancerCarriesBothPorts guards the shape of the edge: ONE
-// LoadBalancer on the reserved address, carrying 443 and 80. gateway0-lb held
-// 34.70.146.195 in the live cluster only because it was kubectl apply'd by
-// hand — the generator rendered no loadBalancerIP at all, so the next routine
-// re-render would have handed the gateway a fresh ephemeral address and broken
-// the A record pointing at it. Port 80 must ride the SAME Service: ACME
-// HTTP-01 validation connects to port 80 on the NAME, which resolves to this
-// one address, so a second LoadBalancer for port 80 takes an address of its
-// own and is never reached.
-func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
+// TestGatewayLoadBalancerPinsTheReservedAddress: external_ip pins the
+// gateway's -lb, the one externally-exposed Service, so a re-render cannot
+// hand the gateway a fresh ephemeral address and break the A record pointing
+// at it. It carries 443 alone: the edge certificate comes from the pipeline
+// (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md), so
+// there is no ACME HTTP-01 challenge for a port 80 to carry.
+func TestGatewayLoadBalancerPinsTheReservedAddress(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
 		Fqdn:       "console.example.net",
 		Port:       443,
 		ExternalIp: "34.70.146.195",
-		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
 			GatewayNodes: 1,
@@ -1687,74 +1681,46 @@ func TestGatewayLoadBalancerCarriesBothPorts(t *testing.T) {
 	if !strings.Contains(gatewayLB, "  - name: https\n    port: 443\n    targetPort: 8443\n") {
 		t.Errorf("gateway -lb Service does not serve 443:\n%s", gatewayLB)
 	}
-	if !strings.Contains(gatewayLB, "  - name: http\n    port: 80\n    targetPort: 8080\n") {
-		t.Errorf("gateway -lb Service does not serve 80 — HTTP-01 validation has nowhere to land:\n%s", gatewayLB)
-	}
-
-	// The gateway pod must actually declare the port the Service targets.
-	gatewayDeploy := chartFile(t, charts, "templates/gateway/deployment.yaml")
-	if !strings.Contains(gatewayDeploy, "        - containerPort: 8080\n          name: http\n") {
-		t.Errorf("gateway Deployment declares no http containerPort:\n%s", gatewayDeploy)
-	}
 }
 
-// TestNoExternalAcmeLoadBalancer is the other half of the one-LB design: the
-// letsencrypt service keeps its HTTP-01 responder, but only in-cluster. The
-// gateway holds port 80 and proxies /.well-known/acme-challenge/* to it, so a
-// second externally-exposed Service would be an address nothing points at and
-// a second public surface to defend.
-func TestNoExternalAcmeLoadBalancer(t *testing.T) {
+// TestGenerateRendersNoLetsencrypt: the letsencrypt service retired with the
+// in-deployment ACME path (decisions/certificates-by-pipeline-2026-11-03.md).
+// The chart renders no letsencrypt workload, Service or config, no port 80 on
+// the gateway's LoadBalancer or pod, and exactly one LoadBalancer.
+func TestGenerateRendersNoLetsencrypt(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace:  "schematic",
 		Fqdn:       "console.example.net",
 		Port:       443,
 		ExternalIp: "34.70.146.195",
-		Tls:        &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			GatewayNodes: 1,
+			KernelNodes:   1,
+			GatewayNodes:  1,
+			EventbusNodes: 1,
+			OpaNodes:      1,
+			StratumNodes:  1,
 		},
 	})
 
-	for name := range charts.Files {
-		if strings.HasSuffix(name, "-acme.yaml") {
-			t.Errorf("chart still renders an external ACME Service: %s", name)
-		}
-	}
 	for name, body := range charts.Files {
+		if strings.Contains(strings.ToLower(name), "letsencrypt") || strings.Contains(strings.ToLower(name), "acme") {
+			t.Errorf("chart renders %s", name)
+		}
+		if strings.Contains(strings.ToLower(string(body)), "letsencrypt") {
+			t.Errorf("%s names letsencrypt:\n%s", name, body)
+		}
 		if strings.Contains(string(body), "type: LoadBalancer") && name != "templates/gateway/service-0-lb.yaml" {
 			t.Errorf("%s is a second LoadBalancer; the design has exactly one:\n%s", name, body)
 		}
 	}
 
-	// The responder still has to be reachable by the gateway.
-	leSvc := chartFile(t, charts, "templates/letsencrypt/service-0.yaml")
-	if strings.Contains(leSvc, "type: LoadBalancer") {
-		t.Errorf("letsencrypt Service must stay ClusterIP:\n%s", leSvc)
-	}
-	if !strings.Contains(leSvc, "  - name: acme\n    port: 8080\n    targetPort: 8080\n") {
-		t.Errorf("letsencrypt ClusterIP Service does not expose the ACME responder in-cluster:\n%s", leSvc)
-	}
-}
-
-// TestCertChainModeRendersNoPort80 keeps port 80 tied to the reason it exists.
-// Without letsencrypt there is no challenge to carry and no listener bound on
-// 8080, so a port-80 forwarding rule would point into a closed port.
-func TestCertChainModeRendersNoPort80(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace:  "schematic",
-		Fqdn:       "console.example.net",
-		Port:       443,
-		ExternalIp: "34.70.146.195",
-		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			GatewayNodes: 1,
-		},
-	})
-
 	gatewayLB := chartFile(t, charts, "templates/gateway/service-0-lb.yaml")
-	if strings.Contains(gatewayLB, "port: 80\n") {
-		t.Errorf("cert_chain mode must not render a port 80 entry:\n%s", gatewayLB)
+	if strings.Contains(gatewayLB, "port: 80\n") || strings.Contains(gatewayLB, "name: http\n") {
+		t.Errorf("gateway -lb Service renders a port 80:\n%s", gatewayLB)
+	}
+	gatewayDeploy := chartFile(t, charts, "templates/gateway/deployment.yaml")
+	if strings.Contains(gatewayDeploy, "name: http\n") || strings.Contains(gatewayDeploy, "name: acme\n") {
+		t.Errorf("gateway Deployment declares an http or acme containerPort:\n%s", gatewayDeploy)
 	}
 }
 
@@ -1766,7 +1732,6 @@ func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
 		Namespace: "schematic",
 		Fqdn:      "cavalier.localtest.me",
 		Port:      8443,
-		Tls:       &protoOperator.TLSConfig{Letsencrypt: true},
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
 			GatewayNodes: 1,

@@ -40,7 +40,7 @@ func (k *kernelConfigState) Proto() *protoKernel.ConfigState {
 // deployed it. Bootstrapping synchronously would deadlock the first install.
 // Until it succeeds the reconciler renders operator.yaml's tenants only.
 //
-// sm.New() is the same bootstrap letsencrypt and opa use. SetServing(true)
+// sm.New() is the same bootstrap opa uses. SetServing(true)
 // follows it because New() leaves the health handle NOT_SERVING and only Run()
 // flips it — and the operator does not call Run(): it serves no gRPC of its own
 // here, it only needs the kernel identity and the state client that come with it.

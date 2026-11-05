@@ -94,11 +94,6 @@ func writeConfigOutput(cfgDir string, dc *DeployConfigs) error {
 			return fmt.Errorf("writing %s.yaml: %w", svc, err)
 		}
 	}
-	if len(dc.LetsencryptServiceConfig) > 0 {
-		if err := os.WriteFile(filepath.Join(configsDir, "letsencrypt-service.yaml"), dc.LetsencryptServiceConfig, 0600); err != nil {
-			return fmt.Errorf("writing letsencrypt-service.yaml: %w", err)
-		}
-	}
 
 	// Retire configs for services the topology no longer deploys.
 	//
@@ -117,9 +112,6 @@ func writeConfigOutput(cfgDir string, dc *DeployConfigs) error {
 	}
 	for _, name := range dc.BootstrapNames {
 		keep[name+".yaml"] = true
-	}
-	if len(dc.LetsencryptServiceConfig) > 0 {
-		keep["letsencrypt-service.yaml"] = true
 	}
 	entries, err := os.ReadDir(configsDir)
 	if err != nil {

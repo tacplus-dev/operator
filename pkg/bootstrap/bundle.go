@@ -81,7 +81,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"stratum", dc.StratumConfig},
 		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
-		{"letsencrypt", dc.LetsencryptConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {
 		if len(pair.data) > 0 {
@@ -96,9 +95,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 	}
 
 	serviceConfigs := make(map[string]string)
-	if len(dc.LetsencryptServiceConfig) > 0 {
-		serviceConfigs["letsencrypt"] = string(dc.LetsencryptServiceConfig)
-	}
 
 	return &Bundle{
 		Version:        Version,

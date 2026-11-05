@@ -161,3 +161,39 @@ func TestImageDigestsLoadFromImagesYAMLOnly(t *testing.T) {
 		t.Errorf("operator.yaml carries image_digests:\n%s", data)
 	}
 }
+
+// tls.letsencrypt retired with the in-deployment Let's Encrypt path
+// (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md): the
+// pipeline delivers the edge certificate and the gateway serves only the chain
+// it is given. Its field number is reserved, so ConfigFromBytes would drop the
+// key and quietly start a deployment that asked for letsencrypt without one.
+// LoadConfig refuses it instead, naming the field and the decision; false is
+// refused too, because the key no longer means anything either way.
+func TestLoadConfigRefusesRetiredLetsencrypt(t *testing.T) {
+	for _, settings := range []string{
+		"fqdn: cluster.example.com\ntls:\n  letsencrypt: true\n",
+		"fqdn: cluster.example.com\ntls:\n  letsencrypt: true\n  email: ops@example.com\n",
+		"fqdn: cluster.example.com\ntls:\n  letsencrypt: false\n",
+		`{"fqdn": "cluster.example.com", "tls": {"letsencrypt": true}}`,
+	} {
+		dir := t.TempDir()
+		writeFileString(t, filepath.Join(dir, OperatorSettingsFile), settings)
+
+		_, err := LoadConfig(dir)
+		if err == nil {
+			t.Fatalf("LoadConfig accepted an operator.yaml that sets tls.letsencrypt:\n%s", settings)
+		}
+		for _, want := range []string{OperatorSettingsFile, "tls.letsencrypt", "decisions/certificates-by-pipeline-2026-11-03.md"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want it to name %q", err, want)
+			}
+		}
+	}
+
+	// A tls block without the key still loads.
+	dir := t.TempDir()
+	writeFileString(t, filepath.Join(dir, OperatorSettingsFile), "fqdn: cluster.example.com\ntls: {}\n")
+	if _, err := LoadConfig(dir); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+}

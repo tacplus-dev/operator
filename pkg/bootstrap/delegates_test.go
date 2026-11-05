@@ -293,17 +293,16 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 
 	cfg := &protoOperator.Config{
 		Topology: &protoOperator.Topology{
-			KernelNodes:   1,
-			EventbusNodes: 1,
-			GatewayNodes:  1,
-			OpaNodes:      1,
-			StratumNodes:  1,
-			OauthNodes:    1,
-			EchoNodes:     1,
+			KernelNodes:    1,
+			EventbusNodes:  1,
+			GatewayNodes:   1,
+			OpaNodes:       1,
+			StratumNodes:   1,
+			OauthNodes:     1,
+			EchoNodes:      1,
+			MessagingNodes: 1,
 		},
-		Tls: &protoOperator.TLSConfig{
-			Letsencrypt: true,
-		},
+		OptionalServices: &protoOperator.OptionalServices{Echo: true},
 	}
 
 	if err := EnsureServiceDelegates(dir, cfg); err != nil {
@@ -318,15 +317,15 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 	}
 
 	// Enabled optional services must have delegates.
-	for _, svc := range []string{"letsencrypt"} {
+	for _, svc := range []string{"echo"} {
 		if !delegateNames[svc] {
 			t.Fatalf("missing delegate for enabled optional service %q", svc)
 		}
 	}
 
-	// Disabled optional services must NOT have delegates. echo is the surviving
-	// optional service and is left disabled above, so it carries this case.
-	for _, svc := range []string{"echo"} {
+	// Disabled optional services must NOT have delegates: messaging has nodes
+	// but is not enabled. letsencrypt retired (#21) and is never deployed.
+	for _, svc := range []string{"messaging", "letsencrypt"} {
 		if delegateNames[svc] {
 			t.Fatalf("unexpected delegate for disabled optional service %q", svc)
 		}

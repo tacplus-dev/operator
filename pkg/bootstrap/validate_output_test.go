@@ -187,8 +187,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 	// Artifacts that are not a serialized proto message, so there is no
 	// generated validator to run against them.
 	notAProtoMessage := map[string]string{
-		"CACertPEM":                "PEM bytes, not a proto message",
-		"LetsencryptServiceConfig": "ACME options map, no proto in the operator's model",
+		"CACertPEM": "PEM bytes, not a proto message",
 	}
 	// Fields that carry the validated artifacts rather than being one.
 	notAnArtifact := map[string]bool{
@@ -208,7 +207,6 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"StratumConfig":           true,
 		"StratumSearchConfig":     true,
 		"RedoConfig":              true,
-		"LetsencryptConfig":       true,
 		"BlobstoreConfig":         true,
 		"OperatorBootstrapConfig": true,
 	}

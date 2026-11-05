@@ -28,6 +28,9 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 
 	settingsPath := filepath.Join(cfgDir, OperatorSettingsFile)
 	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := refuseRetiredLetsencrypt(data); err != nil {
+			return nil, fmt.Errorf("%s: %w", OperatorSettingsFile, err)
+		}
 		part, err := protoOperator.ConfigFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", OperatorSettingsFile, err)
@@ -131,6 +134,26 @@ func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
 	return os.WriteFile(filepath.Join(cfgDir, OperatorCryptoFile), data, 0600)
 }
 
+// refuseRetiredLetsencrypt reports an operator.yaml that still sets
+// tls.letsencrypt. The field is reserved now (the pipeline delivers the edge
+// certificate; tacplus-dev/roadmap
+// decisions/certificates-by-pipeline-2026-11-03.md), and ConfigFromBytes drops
+// unknown fields, so without this a deployment that asked for letsencrypt
+// would start quietly on the cluster-CA edge certificate. Data that is not a
+// YAML (or JSON) map is left to ConfigFromBytes to report.
+func refuseRetiredLetsencrypt(data []byte) error {
+	var settings struct {
+		Tls map[string]any `yaml:"tls"`
+	}
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
+	if _, ok := settings.Tls["letsencrypt"]; ok {
+		return fmt.Errorf("tls.letsencrypt is retired: the deployment's pipeline delivers the edge certificate and the gateway serves only that chain (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md); remove tls.letsencrypt and tls.email")
+	}
+	return nil
+}
+
 // retiredPKIKeys are crypto.yaml keys under pki whose fields are reserved now
 // but which held private keys in files already written. Each is listed in
 // both spellings ConfigFromBytes accepts.
@@ -185,9 +208,9 @@ func ValidateConfig(cfg *protoOperator.Config) error {
 	if cfg.Pki == nil || cfg.Pki.RootCa == nil || len(cfg.Pki.RootCa.Chain) == 0 {
 		return fmt.Errorf("pki.root_ca is required — run 'schematic-operator init ca' first")
 	}
-	if cfg.Tls != nil && !cfg.Tls.Letsencrypt {
+	if cfg.Tls != nil {
 		if cfg.Tls.Ca == nil || len(cfg.Tls.Ca.Chain) == 0 {
-			return fmt.Errorf("tls.ca is required when letsencrypt = false")
+			return fmt.Errorf("tls.ca is required when tls is set")
 		}
 	}
 	if cfg.GetMode() == protoOperator.OperatorMode_GENERATE_ONLY {
