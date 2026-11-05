@@ -13,3 +13,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-02 looper issue golang.org/x/net v0.60.0: GO-2026-6860 and GO-2026-6866 in x/net/html; bump to v0.62.0 (#13, d7a8f0d)
 - 2026-11-03 looper issue Several deployments per cluster: tac-<deployment> and tac-<deployment>-<tid> namespaces (#3, 184523a)
 - 2026-11-03 looper issue Interim: NetworkPolicy so only kernel pods reach kernel's unauthenticated Raft port (until kernel#42) (#20, 032ed80)
+- 2026-11-05 looper issue just gates fails on main: deploy.go still sets gateway's retired letsencrypt mode (EXTERNAL_TLS_MODE_LETSENCRYPT, acme_backend) (#21, 4dc0a3d)
