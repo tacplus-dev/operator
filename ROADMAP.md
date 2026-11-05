@@ -12,6 +12,7 @@ Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked
 - Stop rendering kmaker; remove the extra signing CA private key (#16)
 - Nothing unblocked yet; everything waits on #1.
 - `GetConfig`: the deployment uni-config's redacted twin, for the Admiral only (#19). Agent, at Jody's request, 2026-11-02 (`tacplus-dev/roadmap:decisions/skipper-and-admiral-2026-11-01.md`, addendum 2026-11-02).
+- The fleet gateway's Service is a standalone-NEG ClusterIP backend for the TCP proxy LB, not a LoadBalancer (#22). Agent, at Jody's request, 2026-11-05 (`tacplus-dev/roadmap:decisions/network-exposure-2026-11-03.md`, addendum: we terminate TLS).
 
 ## Later
 - Declare the tacplus floor 2.4 (#1), after tacplus#188
