@@ -428,16 +428,15 @@ message Config {
   // config a service can read.
   repeated string tenants = 22 [(spec.assert_max_size) = 64];
 
-  // external_ip pins the cluster's external LoadBalancer Service to a
-  // pre-reserved static external address (e.g. a GCP regional compute
-  // address). It is rendered as spec.loadBalancerIP on the gateway's
-  // "<gateway>-lb" Service — the ONE externally-exposed Service there is,
-  // carrying TCP/443. fqdn's public A record resolves to this address.
-  //
-  // Leave empty to let the provider assign an ephemeral address per Service —
-  // fine for local and dev clusters, but then the address changes on every
-  // re-render and any DNS record pointing at it goes stale.
-  string external_ip = 23;
+  // 23 held external_ip, rendered as loadBalancerIP on the gateway's
+  // "<gateway>-lb" Service of type LoadBalancer. Only the cloud's proxy load
+  // balancer is public, and it holds the address: the gateway's Service is a
+  // ClusterIP behind a standalone NEG (tacplus-dev/roadmap
+  // decisions/network-exposure-2026-11-03.md, addendum "we terminate TLS, not
+  // the cloud"; #22). An operator.yaml that still sets external_ip is refused
+  // at load.
+  reserved 23;
+  reserved "external_ip";
 
   // extra_hostnames are public names served IN ADDITION to fqdn (e.g. a second
   // domain during a cutover). The operator renders fqdn followed by these into

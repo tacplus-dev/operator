@@ -31,6 +31,9 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 		if err := refuseRetiredLetsencrypt(data); err != nil {
 			return nil, fmt.Errorf("%s: %w", OperatorSettingsFile, err)
 		}
+		if err := refuseRetiredExternalIP(data); err != nil {
+			return nil, fmt.Errorf("%s: %w", OperatorSettingsFile, err)
+		}
 		part, err := protoOperator.ConfigFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", OperatorSettingsFile, err)
@@ -150,6 +153,26 @@ func refuseRetiredLetsencrypt(data []byte) error {
 	}
 	if _, ok := settings.Tls["letsencrypt"]; ok {
 		return fmt.Errorf("tls.letsencrypt is retired: the deployment's pipeline delivers the edge certificate and the gateway serves only that chain (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md); remove tls.letsencrypt and tls.email")
+	}
+	return nil
+}
+
+// refuseRetiredExternalIP reports an operator.yaml that still sets
+// external_ip, in either spelling ConfigFromBytes accepts. The field is
+// reserved now: only the cloud's proxy load balancer is public and it holds the
+// address, the gateway's Service a ClusterIP behind a standalone NEG
+// (tacplus-dev/roadmap decisions/network-exposure-2026-11-03.md, addendum "we
+// terminate TLS, not the cloud"; #22). Without this the key would be dropped
+// and the deployment would start with no Service on the address it names.
+func refuseRetiredExternalIP(data []byte) error {
+	var settings map[string]any
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
+	for _, k := range []string{"external_ip", "externalIp"} {
+		if _, ok := settings[k]; ok {
+			return fmt.Errorf("external_ip is retired: only the cloud's proxy load balancer is public and it holds the address, with the gateway behind it as a standalone NEG (tacplus-dev/roadmap decisions/network-exposure-2026-11-03.md); remove external_ip")
+		}
 	}
 	return nil
 }

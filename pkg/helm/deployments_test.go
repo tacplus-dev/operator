@@ -110,7 +110,7 @@ func TestDeploymentRendersPlatformAndTenantNamespaces(t *testing.T) {
 	findObject(t, objs, "StatefulSet", "tac-prod", "kernel")
 	findObject(t, objs, "Deployment", "tac-prod", "gateway0")
 	findObject(t, objs, "Deployment", "tac-prod", "widgeter0")
-	findObject(t, objs, "Service", "tac-prod", "gateway0-lb")
+	findObject(t, objs, "Service", "tac-prod", "gateway-edge")
 	// Each tenant's instance, with everything it owns, in its own namespace.
 	for tenant, ns := range map[string]string{"acme": "tac-prod-a1b2c3d4", "beta": "tac-prod-b1c2d3e4"} {
 		name := "docmanager-" + tenant

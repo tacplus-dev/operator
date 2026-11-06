@@ -61,11 +61,15 @@ const (
 // ServicePodLabel names the workload on every pod when pools are on. The
 // per-replica Deployments' pods share no other label (each is app: <svc><i>),
 // and a PodDisruptionBudget has to select all of a service's replicas.
+//
+// EdgePodLabel marks every replica of the service with a public port (the
+// gateway), always: its one edge Service selects them all (edgeServiceYAML).
 const (
 	NodePoolLabel   = "tacplus.dev/pool"
 	CorePool        = "core"
 	TenantPool      = "tenant"
 	ServicePodLabel = "tacplus.dev/service"
+	EdgePodLabel    = "tacplus.dev/edge"
 )
 
 // Charts is the in-memory representation of a generated Helm chart.
@@ -199,7 +203,7 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	}
 
 	services := g.enabledServices(cfg, topo)
-	// Annotate gateway with external port so the service template creates a LoadBalancer.
+	// Give the gateway its public port, so addService renders its edge Service.
 	port := cfg.Port
 	if port == 0 {
 		port = 443
@@ -578,7 +582,7 @@ type serviceSpec struct {
 	// service's ClusterIP Service and — for a StatefulSet — on its headless
 	// Service, which is what makes a port reachable at a pod's stable DNS name.
 	//
-	// IN-CLUSTER ONLY, every one of them: nothing here reaches a LoadBalancer.
+	// IN-CLUSTER ONLY, every one of them: nothing here reaches the edge Service.
 	// Added for blobstore, which needs two (its byte listener, which the
 	// gateway proxies, and its peer listener, which only the other pod dials).
 	NamedPorts []namedPort
@@ -816,6 +820,15 @@ func servicePodLabelLine(svc serviceSpec) string {
 		return ""
 	}
 	return fmt.Sprintf("        %s: %s\n", ServicePodLabel, svc.Name)
+}
+
+// edgePodLabelLine renders the EdgePodLabel pod-template label that the
+// service's edge Service selects on, for a service with a public port.
+func edgePodLabelLine(svc serviceSpec) string {
+	if svc.Port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("        %s: %s\n", EdgePodLabel, svc.Name)
 }
 
 // podDisruptionBudget lets a voluntary disruption — a node drain for a pool
@@ -2293,7 +2306,8 @@ spec:
 		if svc.Port == 0 {
 			continue
 		}
-		// The public door: the gateway's LoadBalancer ports, from anywhere.
+		// The public door: the gateway's TLS port, which the cloud's proxy load
+		// balancer reaches through its NEG, straight to the pods.
 		var apps, ports strings.Builder
 		for i := range int(svc.Replicas) {
 			fmt.Fprintf(&apps, "\n        - %s%d", svc.Name, i)
@@ -2359,19 +2373,47 @@ spec:
 	}
 }
 
-// loadBalancerIPLine pins the cluster's one external LoadBalancer Service —
-// the gateway's -lb, carrying TCP/443 — to its reserved static external
-// address. fqdn's public A record resolves to it. Without this the provider
-// hands the Service an ephemeral address, so a re-render silently moves the
-// gateway off the address DNS points at.
+// edgeServiceYAML renders the public entry of a service with a public port
+// (the gateway): ONE Service across its replicas, a ClusterIP whose endpoints
+// GKE puts in a standalone NEG, the backend of the cloud's TCP proxy load
+// balancer. The load balancer holds the only public address and passes TLS
+// through: the gateway terminates it (tacplus-dev/roadmap
+// decisions/network-exposure-2026-11-03.md, addendum "we terminate TLS, not
+// the cloud"; #22). One Service rather than one per replica, so scaling the
+// gateway never changes the cloud's backends.
 //
-// An empty external_ip renders nothing, leaving local and dev clusters on the
-// provider-assigned address they have always had.
-func loadBalancerIPLine(cfg *protoOperator.Config) string {
-	if cfg.GetExternalIp() == "" {
-		return ""
+// The NEG's name is a contract with tacplus-dev/cloud (README, The public
+// entry): <deployment>-<service>, unique in its zone and project. Without a
+// deployment the namespace stands in for it. Off GKE the annotation does
+// nothing and the Service is an ordinary ClusterIP.
+func edgeServiceYAML(cfg *protoOperator.Config, svc serviceSpec) []byte {
+	listenPort := svc.ListenPort
+	if listenPort == 0 {
+		listenPort = 5000
 	}
-	return fmt.Sprintf("  loadBalancerIP: %s\n", cfg.GetExternalIp())
+	owner := cfg.GetDeployment()
+	if owner == "" {
+		owner = cfg.GetNamespace()
+	}
+	if owner == "" {
+		owner = "schematic"
+	}
+	return []byte(fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: %s-edge
+  namespace: %s
+  annotations:
+    cloud.google.com/neg: '{"exposed_ports": {"%d": {"name": "%s-%s"}}}'
+spec:
+  type: ClusterIP
+  selector:
+    %s: %s
+  ports:
+  - name: https
+    port: %d
+    targetPort: %d
+`, svc.Name, nsRef(svc), svc.Port, owner, svc.Name, EdgePodLabel, svc.Name, svc.Port, listenPort))
 }
 
 func serviceAccountYAML(name, ns string) []byte {
@@ -2506,25 +2548,10 @@ spec:
     targetPort: %d
 %s%s`, name, ns, svcSelector, listenPort, listenPort, hazelcastPort, extraPort))
 
-		// External LoadBalancer service for services with a configured external port
-		// (e.g. gateway exposed on port 443). This is a separate service to avoid
-		// HostPort conflicts with other services using the same container port.
-		if svc.Port != 0 {
-			charts.Files[fmt.Sprintf("templates/%s/service-%d-lb.yaml", svc.Name, i)] = []byte(fmt.Sprintf(`apiVersion: v1
-kind: Service
-metadata:
-  name: %s-lb
-  namespace: %s
-spec:
-  type: LoadBalancer
-%s  selector:
-    app: %s
-  ports:
-  - name: https
-    port: %d
-    targetPort: %d
-`, name, ns, loadBalancerIPLine(cfg), name, svc.Port, listenPort))
-		}
+	}
+
+	if svc.Port != 0 {
+		charts.Files[fmt.Sprintf("templates/%s/service-edge.yaml", svc.Name)] = edgeServiceYAML(cfg, svc)
 	}
 
 	// Headless Service for StatefulSet DNS discovery.
@@ -2657,7 +2684,7 @@ spec:
       labels:
         app: %s
 %s        {{- include "schematic.labels" . | nindent 8 }}
-`, svc.Name, ns, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name, servicePodLabelLine(svc)))
+`, svc.Name, ns, svc.Name, svc.Replicas, podManagementPolicy, svc.Name, svc.Name, servicePodLabelLine(svc)+edgePodLabelLine(svc)))
 		ssBuf.WriteString(`      annotations:
 `)
 		for i := range int(svc.Replicas) {
@@ -2830,7 +2857,7 @@ spec:
 %s        {{- include "schematic.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ %s | sha256sum | quote }}
-`, name, ns, strategy, name, name, servicePodLabelLine(svc), valuesRef(svc.Name, "config")))
+`, name, ns, strategy, name, name, servicePodLabelLine(svc)+edgePodLabelLine(svc), valuesRef(svc.Name, "config")))
 			if svc.HasServiceConfig {
 				deployBuf.WriteString(fmt.Sprintf(`        checksum/service-config: {{ %s | sha256sum | quote }}
 `, valuesRef(svc.Name, "serviceConfig")))

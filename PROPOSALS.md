@@ -4,6 +4,15 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Admit the gateway's edge port only from Google's proxy ranges on GKE** (2026-11-06, #22): the `gateway-edge`
+  NetworkPolicy (`addDeploymentNetworkPolicies`) admits the gateway's TLS port from anywhere, which was the
+  LoadBalancer's need. Behind the standalone NEG the connections come from Google's proxies and health checks
+  (`35.191.0.0/16`, `130.211.0.0/22`; tacplus-dev/cloud README, The public entry), and cloud's node firewall already
+  admits only those. Narrowing the policy too (an operator.yaml switch, since local clusters reach the pods otherwise)
+  would hold if a node firewall rule is ever widened.
+- **Local clusters reach the gateway by port-forward** (2026-11-06, #22): with no LoadBalancer Service, a kind or Docker
+  Desktop cluster no longer gets the gateway on localhost by itself; `kubectl port-forward svc/gateway-edge 8443`
+  does it. A note in the local docs (or a dev-only NodePort) if that turns out to bite.
 - **Drop the retired-key scrub once every crypto.yaml is rewritten** (2026-10-30, #16): `cryptoHoldsRetiredKeys`
   (pkg/bootstrap/settings.go) makes generate rewrite a crypto.yaml that still holds `pki.kmaker_signing_ca`, so the
   kmaker CA private key leaves existing config dirs. Once every deployment has run a generate with it (after the first

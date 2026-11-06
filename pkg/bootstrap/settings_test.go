@@ -197,3 +197,30 @@ func TestLoadConfigRefusesRetiredLetsencrypt(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 }
+
+// external_ip retired with the gateway's LoadBalancer Service (#22;
+// tacplus-dev/roadmap decisions/network-exposure-2026-11-03.md): only the
+// cloud's proxy load balancer is public and it holds the address, the gateway
+// behind it as a NEG. Its field number is reserved, so ConfigFromBytes would
+// drop the key and quietly start a deployment whose public address its
+// operator.yaml still names. LoadConfig refuses it instead, empty too.
+func TestLoadConfigRefusesRetiredExternalIP(t *testing.T) {
+	for _, settings := range []string{
+		"fqdn: cluster.example.com\nexternal_ip: 146.148.80.132\nport: 443\n",
+		"fqdn: cluster.example.com\nexternal_ip: \"\"\n",
+		`{"fqdn": "cluster.example.com", "externalIp": "146.148.80.132"}`,
+	} {
+		dir := t.TempDir()
+		writeFileString(t, filepath.Join(dir, OperatorSettingsFile), settings)
+
+		_, err := LoadConfig(dir)
+		if err == nil {
+			t.Fatalf("LoadConfig accepted an operator.yaml that sets external_ip:\n%s", settings)
+		}
+		for _, want := range []string{OperatorSettingsFile, "external_ip", "decisions/network-exposure-2026-11-03.md"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want it to name %q", err, want)
+			}
+		}
+	}
+}

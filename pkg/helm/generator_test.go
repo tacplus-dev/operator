@@ -1656,43 +1656,113 @@ func probeHelperBody(t *testing.T, helpers, name string) string {
 	return helpers[i : i+j]
 }
 
-// TestGatewayLoadBalancerPinsTheReservedAddress: external_ip pins the
-// gateway's -lb, the one externally-exposed Service, so a re-render cannot
-// hand the gateway a fresh ephemeral address and break the A record pointing
-// at it. It carries 443 alone: the edge certificate comes from the pipeline
-// (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md), so
-// there is no ACME HTTP-01 challenge for a port 80 to carry.
-func TestGatewayLoadBalancerPinsTheReservedAddress(t *testing.T) {
+// TestGatewayServiceIsTheNEGBackend: the gateway's public entry is the cloud's
+// TCP proxy load balancer, whose backend is a standalone NEG named by
+// tacplus-dev/cloud (README, The public entry; tacplus-dev/roadmap
+// decisions/network-exposure-2026-11-03.md, addendum "we terminate TLS, not
+// the cloud"). So the gateway has ONE Service across its replicas, a
+// ClusterIP carrying the NEG annotation with the agreed name
+// <deployment>-gateway on port 443, its targetPort the gateway's TLS port:
+// scaling the gateway never changes the cloud's backends.
+func TestGatewayServiceIsTheNEGBackend(t *testing.T) {
+	charts := generateDeployment(t, deploymentConfig("seatrials")) // two gateway replicas
+
+	edge := chartFile(t, charts, "templates/gateway/service-edge.yaml")
+	for _, want := range []string{
+		"  name: gateway-edge\n",
+		`    cloud.google.com/neg: '{"exposed_ports": {"443": {"name": "seatrials-gateway"}}}'` + "\n",
+		"  type: ClusterIP\n",
+		"  selector:\n    " + EdgePodLabel + ": gateway\n",
+		"  - name: https\n    port: 443\n    targetPort: 8443\n",
+	} {
+		if !strings.Contains(edge, want) {
+			t.Errorf("gateway's Service lacks %q:\n%s", want, edge)
+		}
+	}
+
+	// One Service for every replica, and every replica behind it.
+	objs := renderedObjects(t, charts)
+	findObject(t, objs, "Service", "tac-seatrials", "gateway-edge")
+	var negs []string
+	for _, o := range objs {
+		if o.Kind == "Service" && strings.Contains(o.Doc, "cloud.google.com/neg") {
+			negs = append(negs, o.key())
+		}
+	}
+	if len(negs) != 1 {
+		t.Errorf("want exactly one NEG Service, got %v", negs)
+	}
+	deploys := chartFile(t, charts, "templates/gateway/deployment.yaml")
+	if got := strings.Count(deploys, "        "+EdgePodLabel+": gateway\n"); got != 2 {
+		t.Errorf("%d of the 2 gateway pods carry %s: gateway:\n%s", got, EdgePodLabel, deploys)
+	}
+}
+
+// TestGatewayNEGInTheOneNamespaceLayout: without a deployment the namespace is
+// the one name the chart has, so it names the NEG, unique per zone and project
+// as a deployment's would be. The port is the configured one.
+func TestGatewayNEGInTheOneNamespaceLayout(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace:  "schematic",
-		Fqdn:       "console.example.net",
-		Port:       443,
-		ExternalIp: "34.70.146.195",
+		Namespace: "schematic",
+		Fqdn:      "cavalier.localtest.me",
+		Port:      8443,
 		Topology: &protoOperator.Topology{
 			KernelNodes:  1,
 			GatewayNodes: 1,
 		},
 	})
 
-	gatewayLB := chartFile(t, charts, "templates/gateway/service-0-lb.yaml")
-	if !strings.Contains(gatewayLB, "  type: LoadBalancer\n  loadBalancerIP: 34.70.146.195\n") {
-		t.Errorf("gateway -lb Service does not pin the reserved address:\n%s", gatewayLB)
+	edge := chartFile(t, charts, "templates/gateway/service-edge.yaml")
+	for _, want := range []string{
+		`    cloud.google.com/neg: '{"exposed_ports": {"8443": {"name": "schematic-gateway"}}}'` + "\n",
+		"  type: ClusterIP\n",
+		"  - name: https\n    port: 8443\n    targetPort: 8443\n",
+	} {
+		if !strings.Contains(edge, want) {
+			t.Errorf("gateway's Service lacks %q:\n%s", want, edge)
+		}
 	}
-	if !strings.Contains(gatewayLB, "  - name: https\n    port: 443\n    targetPort: 8443\n") {
-		t.Errorf("gateway -lb Service does not serve 443:\n%s", gatewayLB)
+}
+
+// TestGenerateRendersNoLoadBalancer: only the cloud's proxy load balancer is
+// public (decisions/network-exposure-2026-11-03.md). A Service of type
+// LoadBalancer is a passthrough load balancer with a public IP of its own, so
+// no layout renders one, nor a loadBalancerIP.
+func TestGenerateRendersNoLoadBalancer(t *testing.T) {
+	for name, charts := range map[string]*Charts{
+		"deployment": generateDeployment(t, deploymentConfig("prod")),
+		"one namespace": generateTestChart(t, &protoOperator.Config{
+			Namespace: "schematic",
+			Fqdn:      "console.example.net",
+			Port:      443,
+			Topology: &protoOperator.Topology{
+				KernelNodes:    1,
+				GatewayNodes:   1,
+				EventbusNodes:  1,
+				OpaNodes:       1,
+				StratumNodes:   1,
+				BlobstoreNodes: 2,
+			},
+			OptionalServices: &protoOperator.OptionalServices{Blobstore: true},
+		}),
+	} {
+		for path, body := range charts.Files {
+			if strings.Contains(string(body), "LoadBalancer") || strings.Contains(string(body), "loadBalancerIP") {
+				t.Errorf("%s: %s renders a LoadBalancer:\n%s", name, path, body)
+			}
+		}
 	}
 }
 
 // TestGenerateRendersNoLetsencrypt: the letsencrypt service retired with the
 // in-deployment ACME path (decisions/certificates-by-pipeline-2026-11-03.md).
 // The chart renders no letsencrypt workload, Service or config, no port 80 on
-// the gateway's LoadBalancer or pod, and exactly one LoadBalancer.
+// the gateway's Service or pod.
 func TestGenerateRendersNoLetsencrypt(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace:  "schematic",
-		Fqdn:       "console.example.net",
-		Port:       443,
-		ExternalIp: "34.70.146.195",
+		Namespace: "schematic",
+		Fqdn:      "console.example.net",
+		Port:      443,
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
 			GatewayNodes:  1,
@@ -1709,37 +1779,15 @@ func TestGenerateRendersNoLetsencrypt(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(body)), "letsencrypt") {
 			t.Errorf("%s names letsencrypt:\n%s", name, body)
 		}
-		if strings.Contains(string(body), "type: LoadBalancer") && name != "templates/gateway/service-0-lb.yaml" {
-			t.Errorf("%s is a second LoadBalancer; the design has exactly one:\n%s", name, body)
-		}
 	}
 
-	gatewayLB := chartFile(t, charts, "templates/gateway/service-0-lb.yaml")
-	if strings.Contains(gatewayLB, "port: 80\n") || strings.Contains(gatewayLB, "name: http\n") {
-		t.Errorf("gateway -lb Service renders a port 80:\n%s", gatewayLB)
+	gatewayEdge := chartFile(t, charts, "templates/gateway/service-edge.yaml")
+	if strings.Contains(gatewayEdge, "port: 80\n") || strings.Contains(gatewayEdge, "name: http\n") {
+		t.Errorf("gateway's Service renders a port 80:\n%s", gatewayEdge)
 	}
 	gatewayDeploy := chartFile(t, charts, "templates/gateway/deployment.yaml")
 	if strings.Contains(gatewayDeploy, "name: http\n") || strings.Contains(gatewayDeploy, "name: acme\n") {
 		t.Errorf("gateway Deployment declares an http or acme containerPort:\n%s", gatewayDeploy)
-	}
-}
-
-// TestUnsetExternalIPRendersNoLoadBalancerIP keeps clusters that reserve no
-// address on the provider-assigned one. An empty external_ip rendering
-// "loadBalancerIP:" with no value is a chart that does not install.
-func TestUnsetExternalIPRendersNoLoadBalancerIP(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Fqdn:      "cavalier.localtest.me",
-		Port:      8443,
-		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			GatewayNodes: 1,
-		},
-	})
-
-	if body := chartFile(t, charts, "templates/gateway/service-0-lb.yaml"); strings.Contains(body, "loadBalancerIP") {
-		t.Errorf("gateway -lb names loadBalancerIP while external_ip is unset:\n%s", body)
 	}
 }
 
