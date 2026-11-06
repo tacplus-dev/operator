@@ -1,6 +1,6 @@
 kind: library
 # Compiler floor: the looper builds with this MAJOR.MINOR's latest patch (tacplus#161).
-tacplus: "2.5"
+tacplus: "2.6"
 language: go
 # pkg is derived from go.mod (github.com/tacplus-dev/operator: the org name has a hyphen,
 # which pkg cannot carry). A derived Go package is <module>/tacplus, so the output is "tacplus".
