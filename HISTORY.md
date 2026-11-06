@@ -14,3 +14,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-03 looper issue Several deployments per cluster: tac-<deployment> and tac-<deployment>-<tid> namespaces (#3, 184523a)
 - 2026-11-03 looper issue Interim: NetworkPolicy so only kernel pods reach kernel's unauthenticated Raft port (until kernel#42) (#20, 032ed80)
 - 2026-11-05 looper issue just gates fails on main: deploy.go still sets gateway's retired letsencrypt mode (EXTERNAL_TLS_MODE_LETSENCRYPT, acme_backend) (#21, 4dc0a3d)
+- 2026-11-06 looper issue The fleet gateway's Service is a standalone-NEG ClusterIP backend for the TCP proxy LB, not a type: LoadBalancer (#22, 0b21a53)
