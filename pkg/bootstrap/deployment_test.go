@@ -76,9 +76,6 @@ func TestDeploymentConfigsUseFullServiceNames(t *testing.T) {
 	if !slices.Equal(members, want) {
 		t.Errorf("kernel members = %v, want %v", members, want)
 	}
-	if got := kernel.GetConfigs().GetStratumConfig().GetSeedMembers(); len(got) != 2 || got[0] != "stratum-0.stratum.tac-prod.svc.cluster.local:5001" {
-		t.Errorf("stratum seed_members = %v, want full service names", got)
-	}
 	for name, cfgYAML := range map[string][]byte{"gateway": dc.GatewayConfig, "eventbus": dc.EventbusConfig, "operator": dc.OperatorBootstrapConfig} {
 		for _, host := range want {
 			if !bytes.Contains(cfgYAML, []byte("host: "+host)) {

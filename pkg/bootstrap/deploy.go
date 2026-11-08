@@ -117,16 +117,10 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	if err := ApplyServicesHolderDefaults(kernelConfig.Configs, DeployedKernelAuthServices(cfg)); err != nil {
 		return nil, err
 	}
-	// stratum's seed_members has no default and is assert_required (stratum#2):
-	// it is the members the chart renders. A fleet that renders no stratum has
-	// no members to name, so its holder entry stays absent rather than invalid.
-	if sc := kernelConfig.Configs.StratumConfig; sc != nil {
-		if seeds := helm.StratumSeedMembers(ns, t.StratumNodes, t.GetStratumSearchNodes()); len(seeds) > 0 {
-			sc.SeedMembers = seeds
-		} else {
-			kernelConfig.Configs.StratumConfig = nil
-		}
-	}
+	// stratum's seed_members is not in its holder entry: it moved to the
+	// tenant-scope StratumTenantConfig (stratum#26), which reaches stratum
+	// through TenantConfig.stratum once kernel fills it from its bootstrap
+	// tenants (kernel#34) and #2 renders each tenant's list.
 	// redo's data_dir is where the chart mounts its volume.
 	if rc := kernelConfig.Configs.RedoConfig; rc != nil {
 		rc.DataDir = helm.RedoDataDir

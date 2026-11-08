@@ -419,11 +419,12 @@ func stratumSeedEnv(name, ns string, writers, searchers int32, port int) string 
 	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
 }
 
-// StratumSeedMembers is stratum's Config.seed_members for the members the chart
-// renders: the same event-store seed list as STRATUM_SEED_MEMBERS. Since
-// stratum#2 the typed field is the one stratum requires (assert_required);
-// the operator writes it into kernel's services holder. Empty when no stratum
-// writer is rendered. ns is the namespace stratum runs in.
+// StratumSeedMembers is the seed list for the members the chart renders: the
+// same event-store seed list as STRATUM_SEED_MEMBERS. Stratum reads its typed
+// seeds from its tenant's StratumTenantConfig.seed_members (stratum#26), which
+// nothing delivers yet: #2 renders it per tenant, once kernel carries
+// TenantConfig.stratum from its bootstrap tenants (kernel#34). Empty when no
+// stratum writer is rendered. ns is the namespace stratum runs in.
 func StratumSeedMembers(ns string, writers, searchers int32) []string {
 	return stratumSeedList(ns, writers, searchers, stratumHazelcastPort)
 }

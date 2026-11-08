@@ -24,8 +24,9 @@ depends:
   - gateway
   - eventbus
   - opa
-  # stratum: pkg/bootstrap sets its seed_members in the holder. It used to
-  # arrive only through letsencrypt's depends, retired here (#21).
+  # stratum: its Config in the holder, and its StratumTenantConfig (the
+  # per-tenant seed_members #2 delivers). It used to arrive only through
+  # letsencrypt's depends, retired here (#21).
   - stratum
   # redo, the durability of every tenant's Stratum: its registry entry
   # (tenant_owned, pinned_tenant: restore) and its Config in the holder.
