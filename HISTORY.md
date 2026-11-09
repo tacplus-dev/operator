@@ -17,3 +17,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-06 looper issue The fleet gateway's Service is a standalone-NEG ClusterIP backend for the TCP proxy LB, not a type: LoadBalancer (#22, 0b21a53)
 - 2026-11-06 looper issue Stop rendering kmaker: nothing calls it; drop its objects and the extra signing CA private key (#16)
 - 2026-11-07 looper issue tacplus floor is 2.5; the latest released line is 2.6: raise the floor and commit tacplus.lock (#23)
+- 2026-11-09 looper issue just gates fails on main: stratum v0.1.0 moved Config.seed_members into StratumTenantConfig (pkg/bootstrap/deploy.go:125) (#25)
