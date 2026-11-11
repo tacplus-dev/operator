@@ -311,7 +311,7 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 	base := filepath.Join(outputDir, "schematic")
 	for relPath, content := range charts.Files {
 		full := filepath.Join(base, relPath)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
 			return err
 		}
 		if err := os.WriteFile(full, content, 0600); err != nil {

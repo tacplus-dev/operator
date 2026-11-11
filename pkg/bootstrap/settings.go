@@ -98,7 +98,7 @@ func dedupe(in []string) []string {
 // credential are stripped before writing (they live in crypto.yaml), and so
 // are image digests (they live in images.yaml).
 func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
-	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+	if err := os.MkdirAll(cfgDir, configDirMode); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
@@ -113,13 +113,13 @@ func SaveSettings(cfgDir string, cfg *protoOperator.Config) error {
 		return fmt.Errorf("marshaling operator.yaml: %w", err)
 	}
 
-	return os.WriteFile(filepath.Join(cfgDir, OperatorSettingsFile), data, 0644)
+	return writeConfigFile(filepath.Join(cfgDir, OperatorSettingsFile), data)
 }
 
 // SaveCrypto writes PKI material and the shared LLM credential to crypto.yaml.
 // All other fields are stripped before writing (they live in operator.yaml).
 func SaveCrypto(cfgDir string, cfg *protoOperator.Config) error {
-	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+	if err := os.MkdirAll(cfgDir, configDirMode); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 

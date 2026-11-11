@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -348,8 +349,7 @@ func downloadReplace(url, token, dest string) error {
 	defer os.Remove(tmpName)
 
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing download: %w", err)
+		return errors.Join(fmt.Errorf("writing download: %w", err), tmp.Close())
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp file: %w", err)
@@ -369,8 +369,7 @@ func writeFile(path string, r io.Reader, mode os.FileMode) error {
 		return fmt.Errorf("creating %s: %w", path, err)
 	}
 	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		return fmt.Errorf("writing %s: %w", path, err)
+		return errors.Join(fmt.Errorf("writing %s: %w", path, err), f.Close())
 	}
 	return f.Close()
 }

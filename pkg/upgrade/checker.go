@@ -378,10 +378,15 @@ func (c *Checker) listTags(ctx context.Context, repo, token string) ([]string, e
 		if err != nil {
 			return nil, err
 		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if cerr := resp.Body.Close(); err == nil {
+			err = cerr
+		}
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("tags/list returned %s", resp.Status)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tags/list: %w", err)
 		}
 		var tr struct {
 			Tags []string `json:"tags"`

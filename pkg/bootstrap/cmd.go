@@ -328,10 +328,10 @@ func runSetDeployList(cmd *cobra.Command, args []string) error {
 	}
 
 	dstPath := filepath.Join(dir, "deploy.list")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, configDirMode); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.WriteFile(dstPath, data, 0644); err != nil {
+	if err := writeConfigFile(dstPath, data); err != nil {
 		return fmt.Errorf("writing deploy.list: %w", err)
 	}
 
@@ -425,7 +425,7 @@ func runMerge(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling merged config: %w", err)
 	}
-	if err := os.WriteFile(dstPath, outData, 0644); err != nil {
+	if err := writeConfigFile(dstPath, outData); err != nil {
 		return fmt.Errorf("writing %s: %w", dstPath, err)
 	}
 

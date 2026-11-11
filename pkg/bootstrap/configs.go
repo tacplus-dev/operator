@@ -22,11 +22,11 @@ func BuildConfigOutput(cfgDir string) error {
 func writeConfigOutput(cfgDir string, dc *DeployConfigs) error {
 	configsDir := filepath.Join(cfgDir, "configs")
 
-	if err := os.MkdirAll(configsDir, 0755); err != nil {
+	if err := os.MkdirAll(configsDir, configDirMode); err != nil {
 		return fmt.Errorf("creating configs directory: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(configsDir, "ca.pem"), dc.CACertPEM, 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(configsDir, "ca.pem"), dc.CACertPEM); err != nil {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 
