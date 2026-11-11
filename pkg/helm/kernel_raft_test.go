@@ -99,8 +99,9 @@ func ruleAdmits(t *testing.T, ns string, rule networkingv1.NetworkPolicyIngressR
 var kernelPod = map[string]string{"app": "kernel"}
 
 // Kernel's Raft port carries unauthenticated gRPC until kernel#42: in a
-// deployment only kernel's own pods reach it, while the deployment keeps
-// reaching kernel's served ports and the kubelet its health port.
+// deployment only kernel's own pods reach it. Its gRPC port, whose door is the
+// token, and its health port admit every source (#24); its Hazelcast member
+// port keeps the deployment-wide reach it had.
 func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 	objs := renderedObjects(t, generateDeployment(t, deploymentConfig("prod")))
 	raft := int(protoKernel.DefaultRatisListenerPort)
@@ -123,8 +124,10 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 		{"node to raft", node, raft, false},
 		{"gateway to grpc", platformPod("tac-prod", "gateway0"), 5000, true},
 		{"tenant to grpc", tenantPod("prod", "tac-prod-a1b2c3d4"), 5000, true},
-		{"other deployment to grpc", platformPod("tac-dev", "gateway0"), 5000, false},
+		{"other deployment to grpc", platformPod("tac-dev", "gateway0"), 5000, true},
 		{"kernel to hazelcast", platformPod("tac-prod", "kernel"), 5001, true},
+		{"tenant to hazelcast", tenantPod("prod", "tac-prod-a1b2c3d4"), 5001, true},
+		{"other deployment to hazelcast", platformPod("tac-dev", "kernel"), 5001, false},
 		{"node to health", node, grpcHealthProbePort, true},
 	} {
 		if got := admitted(t, objs, "tac-prod", kernelPod, c.from, c.port); got != c.want {
@@ -132,12 +135,9 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 		}
 	}
 
-	// The rest of the namespace keeps its isolation.
-	if !admitted(t, objs, "tac-prod", map[string]string{"app": "stratum"}, platformPod("tac-prod", "gateway0"), 8443) {
-		t.Error("the deployment no longer reaches stratum")
-	}
-	if admitted(t, objs, "tac-prod", map[string]string{"app": "stratum"}, platformPod("tac-dev", "gateway0"), 8443) {
-		t.Error("another deployment reaches stratum")
+	// The policy is kernel's alone: no other pod is isolated by the network.
+	if !admitted(t, objs, "tac-prod", map[string]string{"app": "stratum"}, platformPod("tac-dev", "gateway0"), 8443) {
+		t.Error("the network isolates stratum; its token is its door")
 	}
 }
 

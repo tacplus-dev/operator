@@ -45,8 +45,8 @@ var reservedTids = map[string]string{PeopleTenant: PeopleTid, RestoreTenant: Res
 const DeploymentLabel = "tacplus.dev/deployment"
 
 // deploymentproxy's labels on a tenant namespace it made (deploymentproxy
-// v0.2.0). The platform namespace's NetworkPolicy admits the deployment's
-// tenant namespaces by OwnerLabel.
+// v0.2.0). kernel's Raft NetworkPolicy admits the deployment's tenant
+// namespaces to kernel's Hazelcast port by OwnerLabel.
 const (
 	OwnerLabel = "deploymentproxy.tacplus.dev/deployment"
 	TidLabel   = "deploymentproxy.tacplus.dev/tid"

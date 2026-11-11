@@ -1,6 +1,6 @@
 # State: operator
 
-Overwritten to stay current (loopers and agents). Last updated: 2026-11-06 by the looper (#22).
+Overwritten to stay current (loopers and agents). Last updated: 2026-11-08 by the looper (#24).
 
 - **Version / line:** unreleased (no tag yet, #6); tacplus floor 2.6 in `tacplus.yaml`, the build pinned to tacplus 2.6.1 and its build image by digest in `tacplus.lock` (#23); Go 1.27.3 (deploymentproxy v0.2.0 requires it, #3)
 - **Works:** `generate` renders the platform services (kernel, gateway, eventbus, oauth, opa, stratum) and the app's own services from operator.yaml and crypto.yaml. The gateway serves the edge certificate chain it is given (`EXTERNAL_TLS_MODE_CERT_CHAIN`, its only mode, #21): letsencrypt is retired, with no workload, config, port 80 or `depends` entry, and an operator.yaml that sets `tls.letsencrypt` is refused at load (tacplus-dev/roadmap decisions/certificates-by-pipeline-2026-11-03.md); the pipeline's certificate delivery is #17. The gateway's public entry is the cloud's TCP proxy load balancer (#22; tacplus-dev/roadmap decisions/network-exposure-2026-11-03.md, addendum "we terminate TLS, not the cloud"): the chart renders no `LoadBalancer` Service, only one ClusterIP `gateway-edge` across the gateway's replicas (port `port`, targetPort 8443) with the standalone-NEG annotation named `<deployment>-gateway` (the namespace without a deployment), the name tacplus-dev/cloud's README (The public entry) gives; `external_ip` is reserved and an operator.yaml that sets it is refused at load. kmaker is retired (#16): no kmaker workload, config or RBAC, and no `pki.kmaker_signing_ca`; generate rewrites an older crypto.yaml that still holds that key. The fleet has one SPIFFE trust domain (#14): operator.yaml `spiffe_prefix`, else kernel.yaml `spiffe_trust_domain`, else `local.dev`, in kernel, every service config and kernel's SAN; the two set and differing is refused. Nothing depends on SeaBeam (#8): the module is `github.com/tacplus-dev/operator` (generated code in `tacplus/`), images come from `ghcr.io/tacplus-dev/<service>`, and `just gates` refuses any SeaBeam reference outside PROVENANCE.md and the dated records.
@@ -10,13 +10,16 @@ Overwritten to stay current (loopers and agents). Last updated: 2026-11-06 by th
   records brings its own. In cluster the operator asks deploymentproxy (v0.2.0) for each tenant namespace with a
   `TenantNamespace` object, waits for Ready, and deletes the object of a tenant that is gone. Every endpoint it writes is
   `<svc>.<namespace>.svc.cluster.local` (kernel's certificate carries those names); delegates match the namespace each
-  instance runs in. NetworkPolicies admit, in `tac-<deployment>`, only its own pods and its tenant namespaces (the gateway's
-  edge ports and the health port excepted), and in a tenant namespace its platform. The chart has no cluster-scoped object
+  instance runs in. Isolation is the bearer token checked at every door, not the network (#24; tacplus-dev/roadmap
+  decisions/s2s-never-crosses-tenants-2026-10-31.md, addendum 2026-11-07 (2)): the charts render no NetworkPolicy but
+  kernel's Raft one, in either layout. The chart has no cluster-scoped object
   (`generate` fails on one): kernel's TokenReview right is the cluster pipeline's `system:auth-delegator` binding. Without
   `deployment` the one-namespace layout (`namespace`) is rendered as before, less the TokenReview ClusterRole; the coop needs
   a deployment. Kernel's Raft port (its Config's `ratis_listener`, unauthenticated Ratis gRPC until tacplus-dev/kernel#42)
-  admits only kernel's own pods (`kernel-raft` NetworkPolicy, #20), in both layouts; in a deployment the isolation policy
-  leaves kernel to it. The SPIFFE trust domain stays the fleet's (`spiffe_prefix`): the roadmap decision's addendum of 2026-10-29
+  admits only kernel's own pods (`kernel-raft` NetworkPolicy, #20), in both layouts; the same policy opens kernel's gRPC
+  and health ports to every source and keeps its Hazelcast port at the deployment's own namespaces (every source without
+  one). Tenant namespaces lose their `platform-ingress` policy: the platform reaches tenant services once deploymentproxy
+  drops its baseline policy too (tacplus-dev/deploymentproxy#14). The SPIFFE trust domain stays the fleet's (`spiffe_prefix`): the roadmap decision's addendum of 2026-10-29
   superseded deriving it from the deployment name.
 - **Released / deployed:** v0.1.0 (a source tag on green main); v0.1.1, the patch for #25 (main builds again against stratum v0.1.0's contract)
 - **Known gaps:** Stratum is rendered as before, one shared cluster (writers and search members), though stratum#2 marks it tenant_owned: per-tenant Stratum, without roles, volumes or env seeds, is #2. Until then its delegate stays shared. Stratum has no seed delivery (#25): stratum v0.1.0 moved `seed_members` from its deployment-wide `Config` into the tenant-scope `StratumTenantConfig` (tacplus-dev/stratum#26), read from the tenant's `TenantConfig.stratum`, so the operator no longer writes seeds into kernel's holder, and a stratum v0.1.0 pod refuses to start until #2 renders each tenant's list (`helm.StratumSeedMembers`) once tacplus-dev/kernel#34 delivers it. The redo service is rendered with Stratum (#2): one instance, `redo-restore`, a StatefulSet in the reserved restore tenant's namespace (`tac-<deployment>-00000002`), its volume on `Config.redo_storage_class` (the cluster pipeline's regional class; unset, the cluster default) mounted at `redo.Config.data_dir`. Per-tenant Stratum waits on its per-tenant seed members: a tenant-scope config slice (tacplus-dev/stratum#26), delivered by kernel from its bootstrap tenants (tacplus-dev/kernel#34), Jody's option B of 2026-11-03

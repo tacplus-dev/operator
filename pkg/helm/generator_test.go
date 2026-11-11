@@ -384,49 +384,6 @@ func TestStratumRendersBothHazelcastClusters(t *testing.T) {
 	}
 }
 
-// The Hazelcast member protocol has no TLS and no member authentication, so the
-// NetworkPolicy IS the authentication: it must name both member ports and admit
-// only stratum's own pods on them, while leaving the gRPC service port and the
-// kubelet's health port open — a policy that selects a pod default-denies
-// everything it does not name, and forgetting 8444 takes the pod NotReady.
-func TestStratumHazelcastNetworkPolicy(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes:  3,
-			StratumNodes: 3,
-		},
-	})
-
-	np := chartFile(t, charts, "templates/stratum/networkpolicy.yaml")
-	for _, want := range []string{
-		"kind: NetworkPolicy",
-		"name: stratum-hazelcast",
-		"  podSelector:\n    matchLabels:\n      app: stratum\n",
-		"  - from:\n    - podSelector:\n        matchLabels:\n          app: stratum\n",
-		"      port: 5001",
-		"      port: 5701",
-		"      port: 8443",
-		"      port: 8444",
-	} {
-		if !strings.Contains(np, want) {
-			t.Errorf("stratum networkpolicy missing %q\n--- networkpolicy ---\n%s", want, np)
-		}
-	}
-
-	// Egress is deliberately not restricted: the exposure is inbound, and an
-	// egress allowlist would have to enumerate every callee.
-	if strings.Contains(np, "Egress") {
-		t.Errorf("stratum networkpolicy must not restrict egress\n--- networkpolicy ---\n%s", np)
-	}
-
-	// Kernel has the same open member port but its policy is not verified yet, so
-	// it must keep rendering none rather than acquire one by accident.
-	if _, ok := charts.Files["templates/kernel/networkpolicy.yaml"]; ok {
-		t.Error("kernel must not render a NetworkPolicy until its policy is verified")
-	}
-}
-
 // stratum_search_nodes renders a SECOND, VOLUME-LESS stratum workload: search
 // members, joining the same Hazelcast cluster as the writers with
 // STRATUM_MEMBER_ROLE=search.
@@ -527,23 +484,6 @@ func TestStratumSearchNodesRenderAVolumeLessWorkload(t *testing.T) {
 		t.Errorf("values.yaml did not render the search image\n--- values.yaml ---\n%s", values)
 	}
 
-	// The member protocol has no authentication, so each workload's policy must admit
-	// the other's pods — separate podSelectors, because one matchLabels is an AND and
-	// two app values there would match nothing.
-	for _, f := range []string{"templates/stratum/networkpolicy.yaml", "templates/stratum-search/networkpolicy.yaml"} {
-		np := chartFile(t, charts, f)
-		for _, want := range []string{
-			"        matchLabels:\n          app: stratum\n",
-			"        matchLabels:\n          app: stratum-search\n",
-			"      port: 5001",
-			"      port: 5701",
-			"      port: 8444",
-		} {
-			if !strings.Contains(np, want) {
-				t.Errorf("%s missing %q\n--- networkpolicy ---\n%s", f, want, np)
-			}
-		}
-	}
 }
 
 // The default is zero search members, and zero renders NOTHING — not an empty

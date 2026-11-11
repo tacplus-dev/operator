@@ -4,12 +4,6 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
-- **Admit the gateway's edge port only from Google's proxy ranges on GKE** (2026-11-06, #22): the `gateway-edge`
-  NetworkPolicy (`addDeploymentNetworkPolicies`) admits the gateway's TLS port from anywhere, which was the
-  LoadBalancer's need. Behind the standalone NEG the connections come from Google's proxies and health checks
-  (`35.191.0.0/16`, `130.211.0.0/22`; tacplus-dev/cloud README, The public entry), and cloud's node firewall already
-  admits only those. Narrowing the policy too (an operator.yaml switch, since local clusters reach the pods otherwise)
-  would hold if a node firewall rule is ever widened.
 - **Local clusters reach the gateway by port-forward** (2026-11-06, #22): with no LoadBalancer Service, a kind or Docker
   Desktop cluster no longer gets the gateway on localhost by itself; `kubectl port-forward svc/gateway-edge 8443`
   does it. A note in the local docs (or a dev-only NodePort) if that turns out to bite.
@@ -68,14 +62,21 @@ the looper then marks it `promoted` or `declined` here with the date.
 - **gateway.yaml `letsencrypt` is no longer read** (2026-11-04, #21): `LoadGatewayOptions` used to accept
   `letsencrypt: true` in services/gateway.yaml as a second switch; it is gone with the mode. gateway's Config has no such
   field, so `BuildKernelConfigProto` already refuses the key as unknown (TestBuildKernelConfigRejectsUnknownServiceKey).
-- **Remove the kernel-raft NetworkPolicy when kernel#42 lands** (2026-11-03, #20): `kernelRaftNetworkPolicy`
-  (pkg/helm/generator.go) admits only kernel's pods to its Raft port, and `deployment-isolation` leaves kernel out of its
-  selector for it, because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves that traffic into
-  the authenticated member port and retires the port: then the policy, kernel's exclusion from the isolation selector
-  and `helm.KernelRaftPort` go, and kernel is isolated like every other platform pod.
-- **Confine kernel's Hazelcast member port to kernel's pods too** (2026-11-03, #20): the kernel-raft policy keeps kernel's
-  Hazelcast port (5001) open to the whole deployment (to every source without one), as it was. Its member protocol is as
-  unauthenticated as Raft (see `HazelcastNetworkPolicy`, stratum's), and admitting it only from `app: kernel` is now one
-  line in the same policy; it was held back until verified against a live kernel cluster.
+- **Remove the kernel-raft NetworkPolicy when kernel#42 lands** (2026-11-03, #20; 2026-11-08, #24): `kernelRaftNetworkPolicy`
+  (pkg/helm/generator.go), the one NetworkPolicy the charts render since #24, admits only kernel's pods to its Raft port,
+  because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves that traffic behind the
+  authenticated member port and retires the port: then the policy and `helm.KernelRaftPort` go, and the charts render
+  no NetworkPolicy at all.
+- **Kernel's Hazelcast member port: behind the member port, or confined to kernel's pods** (2026-11-03, #20; 2026-11-08,
+  #24): the kernel-raft policy keeps kernel's Hazelcast port (5001) open to the whole deployment (to every source without
+  one), as it was before #24, which opened kernel's gRPC port to every source. Stratum moved its member traffic behind the
+  generated member port (tacplus#212, stratum#17), so #24 dropped stratum's Hazelcast policies; kernel has not adopted it
+  that we can see (its PROPOSALS of #20 called the port as unauthenticated as Raft). Once it does, the port joins gRPC
+  in the open rule; until then, admitting it only from `app: kernel` is one line, held back until verified against a live
+  kernel cluster.
 
 ## Promoted / declined
+- **Admit the gateway's edge port only from Google's proxy ranges on GKE** (2026-11-06, #22): declined 2026-11-08 by
+  Jody's decision of 2026-11-07 (tacplus-dev/roadmap decisions/s2s-never-crosses-tenants-2026-10-31.md, addendum (2)):
+  no NetworkPolicies for isolation, so #24 removed the `gateway-edge` policy it would have narrowed. cloud's node
+  firewall still admits only Google's proxies.

@@ -204,95 +204,6 @@ func decodePolicy(t *testing.T, o renderedObject) networkingv1.NetworkPolicy {
 	return np
 }
 
-// admitsFromEverywhere reports whether rule admits any source on any port.
-func admitsFromEverywhere(rule networkingv1.NetworkPolicyIngressRule) bool {
-	return len(rule.From) == 0 && len(rule.Ports) == 0
-}
-
-func TestPlatformNamespaceAdmitsOnlyItsOwnDeployment(t *testing.T) {
-	objs := renderedObjects(t, generateDeployment(t, deploymentConfig("prod")))
-	np := decodePolicy(t, findObject(t, objs, "NetworkPolicy", "tac-prod", "deployment-isolation"))
-	// Every pod but kernel's, which kernel-raft isolates (TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment).
-	for _, app := range []string{"gateway0", "stratum", "docmanager-acme0", ""} {
-		if !selects(t, &np.Spec.PodSelector, map[string]string{"app": app}) {
-			t.Errorf("isolation policy must select app %q: %+v", app, np.Spec.PodSelector)
-		}
-	}
-	if !selects(t, &np.Spec.PodSelector, map[string]string{}) {
-		t.Errorf("isolation policy must select a pod without an app label: %+v", np.Spec.PodSelector)
-	}
-	if selects(t, &np.Spec.PodSelector, kernelPod) {
-		t.Errorf("isolation policy must leave kernel to kernel-raft: %+v", np.Spec.PodSelector)
-	}
-	var ownNamespace, ownTenants bool
-	for _, rule := range np.Spec.Ingress {
-		if admitsFromEverywhere(rule) {
-			t.Fatalf("isolation policy admits everything: %+v", rule)
-		}
-		for _, peer := range rule.From {
-			if peer.IPBlock != nil {
-				t.Errorf("isolation policy admits an IP block: %+v", peer)
-			}
-			if peer.PodSelector != nil && peer.NamespaceSelector == nil {
-				ownNamespace = true
-			}
-			if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["deploymentproxy.tacplus.dev/deployment"] == "prod" {
-				ownTenants = true
-			}
-			if peer.NamespaceSelector != nil && len(peer.NamespaceSelector.MatchLabels) == 0 && len(peer.NamespaceSelector.MatchExpressions) == 0 {
-				t.Errorf("isolation policy admits every namespace: %+v", peer)
-			}
-		}
-	}
-	if !ownNamespace || !ownTenants {
-		t.Errorf("isolation policy must admit its own namespace (%v) and its tenant namespaces (%v): %+v", ownNamespace, ownTenants, np.Spec.Ingress)
-	}
-
-	// The gateway is the public door: its edge ports are open, nothing else.
-	edge := decodePolicy(t, findObject(t, objs, "NetworkPolicy", "tac-prod", "gateway-edge"))
-	if got := edge.Spec.PodSelector.MatchExpressions; len(got) != 1 || strings.Join(got[0].Values, ",") != "gateway0,gateway1" {
-		t.Errorf("edge policy must select the gateway pods: %+v", edge.Spec.PodSelector)
-	}
-	for _, rule := range edge.Spec.Ingress {
-		if len(rule.Ports) == 0 {
-			t.Errorf("edge policy opens every port: %+v", rule)
-		}
-	}
-
-	// stratum's member-port policy must not reopen its gRPC port to the cluster.
-	hz := decodePolicy(t, findObject(t, objs, "NetworkPolicy", "tac-prod", "stratum-hazelcast"))
-	for _, rule := range hz.Spec.Ingress {
-		if len(rule.From) == 0 {
-			for _, p := range rule.Ports {
-				if p.Port.IntValue() != grpcHealthProbePort {
-					t.Errorf("stratum's policy admits every source on port %s", p.Port.String())
-				}
-			}
-		}
-	}
-}
-
-func TestTenantNamespaceAdmitsItsPlatform(t *testing.T) {
-	objs := renderedObjects(t, generateDeployment(t, deploymentConfig("prod")))
-	for _, ns := range []string{"tac-prod-a1b2c3d4", "tac-prod-b1c2d3e4"} {
-		np := decodePolicy(t, findObject(t, objs, "NetworkPolicy", ns, "platform-ingress"))
-		var platform bool
-		for _, rule := range np.Spec.Ingress {
-			if admitsFromEverywhere(rule) {
-				t.Fatalf("%s: policy admits everything", ns)
-			}
-			for _, peer := range rule.From {
-				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "tac-prod" {
-					platform = true
-				}
-			}
-		}
-		if !platform {
-			t.Errorf("%s: policy does not admit tac-prod: %+v", ns, np.Spec.Ingress)
-		}
-	}
-}
-
 // Two deployments on one cluster, with the same tenants and even the same tids,
 // render no object the other also renders.
 func TestTwoDeploymentsShareNoObject(t *testing.T) {
@@ -349,5 +260,38 @@ func TestCoopPigeonsRunInTenantNamespaces(t *testing.T) {
 	legacy := &protoOperator.Config{Namespace: "schematic", Topology: &protoOperator.Topology{KernelNodes: 1, AppServices: map[string]int32{"coop": 1}}}
 	if _, err := New("test", "1.2", nil, nil, nil).Generate(legacy, 1, false); err == nil || !strings.Contains(err.Error(), "deployment") {
 		t.Errorf("coop without a deployment: Generate() = %v, want an error asking for a deployment", err)
+	}
+}
+
+// Isolation is the bearer token checked at every door, not the network
+// (tacplus-dev/roadmap decisions/s2s-never-crosses-tenants-2026-10-31.md,
+// addendum 2026-11-07 (2); #24): the charts render no NetworkPolicy but
+// kernel's Raft one, the exception for a port with no authentication of its
+// own, in either layout.
+func TestChartsRenderNoNetworkPolicyButKernelRaft(t *testing.T) {
+	for name, c := range map[string]struct {
+		charts *Charts
+		ns     string
+	}{
+		"deployment": {generateDeployment(t, deploymentConfig("prod")), "tac-prod"},
+		"one namespace": {generateTestChart(t, &protoOperator.Config{
+			Namespace: "schematic",
+			Topology:  &protoOperator.Topology{KernelNodes: 3, GatewayNodes: 1, StratumNodes: 3, StratumSearchNodes: 1},
+		}), "schematic"},
+	} {
+		var raft bool
+		for _, o := range renderedObjects(t, c.charts) {
+			if o.Kind != "NetworkPolicy" {
+				continue
+			}
+			if o.Namespace == c.ns && o.Name == "kernel-raft" {
+				raft = true
+				continue
+			}
+			t.Errorf("%s: rendered %s; the only NetworkPolicy is kernel's Raft one", name, o.key())
+		}
+		if !raft {
+			t.Errorf("%s: no kernel-raft NetworkPolicy in %s", name, c.ns)
+		}
 	}
 }
