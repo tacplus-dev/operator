@@ -1,0 +1,232 @@
+= init
+= thinking_tokens
+= thinking_tokens
+> Bash git log --oneline -3 && git diff --stat && gh issue view 29 --repo tacplus-dev/operator --comments | tail -20
+< fd4cfbc ROADMAP: #30 (Jody, 2026-11-10) 1a06230 HISTORY.md: #25 (looper) df918db Stop writing stratum's seed_members into kernel's holder (#25)  PROPOSALS.md                    |  8 ++++++++  STATE.md                        |  2 +-  pkg/bootstrap/apikey.go         |  6 +++---  pkg/bootstrap/backend_...
+= thinking_tokens
+= thinking_tokens
+> Bash git diff pkg/ STATE.md PROPOSALS.md && cat pkg/bootstrap/configmode.go pkg/bootstrap/configmode_test.go security-exceptions.yaml
+< diff --git a/PROPOSALS.md b/PROPOSALS.md index 8defba2..f627155 100644 --- a/PROPOSALS.md +++ b/PROPOSALS.md @@ -4,6 +4,14 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones  the looper then marks it `promoted` or `declined` here with the date.    ## Open +- **Bump g...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash which go gofmt; go version 2>&1; gofmt -l pkg/ 2>&1 | head; timeout 600 go vet ./pkg/bootstrap/ ./pkg/upgrade/ ./pkg/helm/ 2>&1 | tail -5
+= task_started
+= task_notification
+< /usr/local/go/bin/go /usr/local/go/bin/gofmt go: downloading go1.27.3 (linux/arm64) go version go1.27.3 linux/arm64 pkg/bootstrap/example.go:30:2: no required module provides package github.com/tacplus-dev/operator/tacplus/types/sys/tokenrequest; to add it: 	go get github.com/tacplus-dev/operator/ta...
+= thinking_tokens
+= thinking_tokens
+gofmt is clean; the package needs the generated tree, so verification goes through the build job. Committing and building.
+> Bash git add -A && git commit -q -F - <<'EOF' Make the config directory owner-only and account for #29's findings  The config directory holds keys, PKI and tokens, but the operator made it and its subdirectories 0755 and wrote most files in it 0644. Per the hub's triage of #29 it now creates every direct...
+< a090523 Make the config directory owner-only and account for #29's findings pid 775
+> Bash /usr/local/bin/looper-trace check 2>&1 | tail -15; sleep 30; cat /tmp/build29.log
+= task_started
+= task_notification
+< looper-trace: /builds/looper/operator/issues/29 verdict: pass (0 handlers, 0 findings) [2026-11-11T08:06:13Z] checkpoint of #29 (a build) pushed to looper/operator-29:  22 files changed, 532 insertions(+), 44 deletions(-) [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no g...
+= thinking_tokens
+= thinking_tokens
+> Bash which glab; for p in 3052864364 3052300803 3053327761; do curl -s "https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild/pipelines/$p" | head -c 400; echo; done
+< /usr/local/bin/glab {"message":"404 Project Not Found"} {"message":"404 Project Not Found"} {"message":"404 Project Not Found"}
+> Bash for p in 3052864364 3053327761; do glab api "projects/tacplus-dev%2Fbuild/pipelines/$p" 2>&1 | head -c 500; echo; glab api "projects/tacplus-dev%2Fbuild/pipelines/$p/jobs" 2>&1 | jq -r '.[]|"\(.name) \(.status) \(.started_at) \(.runner.description // "-")"' 2>&1 | head; done
+< {"message":"404 Project Not Found"}glab: 404 Project Not Found (HTTP 404)  jq: error (at <stdin>:1): Cannot index string with string "runner" jq: parse error: Invalid numeric literal at line 1, column 40 {"message":"404 Project Not Found"}glab: 404 Project Not Found (HTTP 404)  jq: error (at <stdin>...
+No access to the build pipeline from here; I'll wait for the build command's verdict.
+> Bash while kill -0 775 2>/dev/null; do sleep 60; done; tail -30 /tmp/build29.log
+= background_tasks_changed
+= task_started
+< Command running in background with ID: but1i302p. Output is being written to: /builds/looper/operator/homes/looper-29/tmp/claude-61000/-builds-looper-operator-issues-29/a8349f18-c2c3-4b37-b5f6-352e38c278c6/tasks/but1i302p.output. You will be notified when it completes. To check interim output, use R...
+> Bash /usr/local/bin/repo-looper --repo operator --issue 29 --checkpoint "Done: a090523 (all of #29's change in one commit, rebased on fd4cfbc; looper-trace: 0 handlers). Build job pipeline 3053327761 on a090523 started 08:06Z (the two earlier builds and the manager's gave no verdict within 3h). Left: bui...
+< [2026-11-11T08:07:02Z] checkpoint of #29 (a step) pushed to looper/operator-29:  22 files changed, 548 insertions(+), 44 deletions(-)
+> Bash git fetch -q --tags origin && git tag -l -n3 'v0.1.*' && git cat-file -p v0.1.1 | head -12; grep -n -i -A3 'release\|^gates' justfile | head -40; ls .github/workflows .gitlab-ci.yml 2>/dev/null
+< Exit code 2 v0.1.0          operator 0.1.0: first release, a source tag on green main (Jody, 2026-11-07). Fleets on tacplus 2.6 pin services by release line (fleet-seatrials#1, fleet-dev#1). Binaries, images and the GitHub release come from the build pipeline (tacplus-dev/looper#17). v0.1.1         ...
+> Bash git log --oneline v0.1.1..origin/main; git branch -r | grep release
+< fd4cfbc ROADMAP: #30 (Jody, 2026-11-10) 1a06230 HISTORY.md: #25 (looper)
+No features since v0.1.1 and no release branches, so the patch is cut from main. Waiting on the build.
+> Bash sleep 5; cat /builds/looper/operator/homes/looper-29/tmp/claude-61000/-builds-looper-operator-issues-29/a8349f18-c2c3-4b37-b5f6-352e38c278c6/tasks/but1i302p.output; tail -3 /tmp/build29.log
+= task_started
+= task_notification
+< [2026-11-11T08:06:13Z] checkpoint of #29 (a build) pushed to looper/operator-29:  22 files changed, 532 insertions(+), 44 deletions(-) [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of...
+= thinking_tokens
+= thinking_tokens
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; sleep 60; done; tail -3 /tmp/build29.log; kill -0 775 2>/dev/null && echo running
+= task_started
+= task_notification
+< [2026-11-11T08:06:13Z] checkpoint of #29 (a build) pushed to looper/operator-29:  22 files changed, 532 insertions(+), 44 deletions(-) [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+Builds have been taking up to 3h; since the manager re-runs the full gates and merges only on green, I'll queue the land now alongside the build rather than serially.
+> Bash nohup /usr/local/bin/repo-looper --repo operator --issue 29 --land > /tmp/land29.log 2>&1 & echo pid $!; sleep 20; cat /tmp/land29.log
+= task_started
+= task_notification
+< pid 2687 [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/operator-29:  23 files changed, 573 insertions(+), 44 deletions(-) [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 08:25:52 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 08:34:55 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 08:43:58 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 08:53:05 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:02:13 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+Still waiting: the build of a090523 (started 08:06Z) and the land queued with the manager (08:16Z) have no verdict yet. Polling continues.
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:11:16 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:20:19 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:29:22 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:38:27 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; tail -2 /tmp/land29.log
+= task_started
+= task_notification
+< 09:47:31 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:31Z] checkpoint of #29 (land queued) pushed to looper/oper...
+= thinking_tokens
+= thinking_tokens
+> Bash gh search issues --repo tacplus-dev/operator --sort updated --limit 5 --json number,title,updatedAt,state 2>&1; gh api "repos/tacplus-dev/build/issues?state=open&per_page=10" --jq '.[]|"\(.number) \(.title) \(.updated_at)"' 2>&1 | head
+< [{"number":29,"state":"open","title":"Security checks: 72 new non-blocking findings in operator's own code and go.mod (gosec G304/G306/G301/G104/G101/G302, semgrep text/template, GO-2026-5932) to fix or except","updatedAt":"2026-11-11T08:16:32Z"},{"number":26,"state":"open","title":"Dockerfile has n...
+= thinking_tokens
+= thinking_tokens
+Still waiting on both verdicts. Meanwhile checking sibling issues #26–28 (HIGH findings that fail the build's security checks) for whether main's gates can pass at all.
+> Bash for n in 26 27 28; do echo "== #$n"; gh issue view $n --repo tacplus-dev/operator --json labels,comments --jq '[.labels[].name]|join(","), (.comments[-3:][]|"--- \(.author.login) \(.createdAt)\n\(.body[0:700])")' ; done
+< Exit code 1 == #26 bug,approved,looper:in-progress,priority:high,looper:landing expected an object but got: array (["bug","approved","looper ...]) == #27 bug,approved,looper:landing expected an object but got: array (["bug","approved","looper ...]) == #28 bug,approved,looper:landing expected an obje...
+> Bash for n in 26 27 28; do echo "== #$n"; gh issue view $n --repo tacplus-dev/operator --json comments --jq '.comments[-2:][]|"--- \(.author.login) \(.createdAt)\n\(.body[0:900])"' ; done
+< == #26 --- tacplus-looper 2026-11-11T06:01:21Z The run ended before finishing (exit 0). Its commits are queued with the manager of operator, which merges them after the run and gives its verdict here. Its work in progress is on [`looper/operator-26`](https://github.com/tacplus-dev/operator/tree/loop...
+= thinking_tokens
+= thinking_tokens
+Found it: the 3h timeouts are infra — no build runner (tacplus-dev/looper#113), and #26–28 are stuck the same way. Checking that issue.
+> Bash gh issue view 113 --repo tacplus-dev/looper --json state,title,body,comments --jq '"\(.state) \(.title)\n\(.body[0:1200])", (.comments[-3:][]|"--- \(.author.login) \(.createdAt)\n\(.body[0:600])")'
+< OPEN Triggered tacplus-dev/build pipelines never report: no commit status, not even pending, and --build waits 3h for nothing (website 325305c, launcher 88cfeae) ## Actual (2026-11-09) `repo-looper --repo website --issue 2 --build` triggered tacplus-dev/build pipeline 3043233750 for website 325305c ...
+> Bash gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.created_at) \(.context) \(.state) \(.description)"'; gh api repos/tacplus-dev/operator/commits/fd4cfbc/statuses --jq '.[]|"\(.created_at) \(.context) \(.state) \(.description)"' | head -3
+< (Bash completed with no output)
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+No commit status on a090523 at all: the same stall looper#113 describes. I'll keep waiting for the build's 3h verdict (~11:06Z) and the land, checking the status as I go.
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 09:57:10 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 10:06:14 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_updated
+= task_notification
+= background_tasks_changed
+= task_notification
+< 10:15:19 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+(That notification was only my own background waiter hitting its time limit; the build process itself is still running, so I'm continuing the foreground polls.)
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 10:24:24 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 10:33:29 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 10:42:32 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -1 /tmp/build29.log; tail -1 /tmp/land29.log; gh api repos/tacplus-dev/operator/commits/a090523/statuses --jq '.[]|"\(.context) \(.state) \(.description)"'
+= task_started
+= task_notification
+< 10:51:36 the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc [2026-11-11T08:16:32Z] queued: the manager of operator merges looper/operator-29 after the lands queued before it, one at a time, and says on the issue what came of ...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -2 /tmp/build29.log; echo "build rc: $(kill -0 775 2>/dev/null && echo running || echo done)"; tail -1 /tmp/land29.log
+= task_started
+= task_notification
+< 11:00:41 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc build rc: running [2026-11-11T08:16:32Z] queued: the manager of operator mer...
+> Bash for i in $(seq 1 9); do kill -0 775 2>/dev/null || break; kill -0 2687 2>/dev/null || break; sleep 60; done; date -u +%T; tail -3 /tmp/build29.log; echo "build: $(kill -0 775 2>/dev/null && echo running || echo done)"; tail -1 /tmp/land29.log
+= task_started
+= task_notification
+< 11:06:48 [2026-11-11T08:06:13Z] build requested: operator a090523, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipelines/3053327761 of operator a090523, the gates full on base fd4cfbc no verdict within 3h build: done [2026-11-11T08:16:32Z] queued: the manager ...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash /usr/local/bin/repo-looper --repo operator --issue 29 --checkpoint "Done: a090523 (all of #29: config dir/subdirs 0700, files 0600 via writeConfigFile; G104s handled; security-exceptions.yaml; configmode_test.go; STATE v0.1.2; PROPOSALS), looper-trace pass (0 handlers). Build 3053327761 on a090523: ...
+= task_started
+= task_notification
+< [2026-11-11T11:07:09Z] checkpoint of #29 (a step) pushed to looper/operator-29:  23 files changed, 700 insertions(+), 44 deletions(-) https://github.com/tacplus-dev/operator/issues/29#issuecomment-6794172263 Blocked-by: tacplus-dev/looper#113
+Issue #29 isn't finished. The fix is committed but unverified and not landed, because the build system never returned a verdict. I've marked the issue blocked on tacplus-dev/looper#113.
+
+**The change:** one commit, `a090523` on `looper/operator-29`, rebased on main `fd4cfbc`.
+- **G306/G301 (37):** the config directory and every directory the operator makes in it are now created 0700. Every file written there is 0600, including `ca.pem` and the public JWK in `creds.yaml`. A file an earlier version wrote 0644 is tightened when it's rewritten.
+- **G104 (3):** each unchecked error is now handled.
+- **Exceptions in `security-exceptions.yaml`, with reasons:**
+  - G302 (the downloaded binary's `Chmod 0755`), G101, G304 and semgrep `import-text-template`, each expiring 2027-02-10.
+  - GO-2026-5932, expiring 2026-12-10.
+- **Tests:** two new tests check the 0700/0600 modes across the commands that write the config directory, and that a rewritten file gets tightened.
+- **Planning files:** STATE.md names v0.1.2. PROPOSALS.md records the x/crypto bump and tightening existing installs, since directories that already exist keep their old mode.
+
+**What's blocked:**
+- **Verification:** the build job (pipeline 3053327761, full gates) ended "no verdict within 3h", and the commit never got a `tacplus-dev/build` status. The two earlier builds of this work ended the same way. That matches tacplus-dev/looper#113, and #26, #27 and #28 are stuck like this too. Locally only `gofmt` ran (clean); the code can't compile here without the generated `tacplus/` tree, so no tests ran.
+- **Land:** queued with the manager since 08:16Z, no verdict yet. If the gates come back green it still merges after this run.
+
+**Trace check:** `looper-trace` found 0 handlers, and this change touches none.
+
+**Possible conflict:** #26, #27 and #28 also plan to release as v0.1.2 and edit the same STATE.md line. Whichever lands second will need a rebase and the next patch number.
+
+**Left for the next run:** the land's verdict, `just gates` on the landed main, the annotated patch tag cut from main (no features since v0.1.1, no release branches), then closing #29.
+
+I posted all of this on #29 and wrote `Blocked-by: tacplus-dev/looper#113` to the run's outcome file.
+= success: Issue #29 isn't finished. The fix is committed but unverified and not landed, because the build system never returned a verdict. I've marked the issue blocked on tacplus-dev/looper#113.
+
+**The change:** one commit, `a090523` on `looper/operator-29`, rebased on main `fd4cfbc`.
+- **G306/G301 (37):** the config directory and every directory the operator makes in it are now created 0700. Every file written there is 0600, including `ca.pem` and the public JWK in `creds.yaml`. A file an earlier version wrote 0644 is tightened when it's rewritten.
+- **G104 (3):** each unchecked error is now handled.
+- **Exceptions in `security-exceptions.yaml`, with reasons:**
+  - G302 (the downloaded binary's `Chmod 0755`), G101, G304 and semgrep `import-text-template`, each expiring 2027-02-10.
+  - GO-2026-5932, expiring 2026-12-10.
+- **Tests:** two new tests check the 0700/0600 modes across the commands that write the config directory, and that a rewritten file gets tightened.
+- **Planning files:** STATE.md names v0.1.2. PROPOSALS.md records the x/crypto bump and tightening existing installs, since directories that already exist keep their old mode.
+
+**What's blocked:**
+- **Verification:** the build job (pipeline 3053327761, full gates) ended "no verdict within 3h", and the commit never got a `tacplus-dev/build` status. The two earlier builds of this work ended the same way. That matches tacplus-dev/looper#113, and #26, #27 and #28 are stuck like this too. Locally only `gofmt` ran (clean); the code can't compile here without the generated `tacplus/` tree, so no tests ran.
+- **Land:** queued with the manager since 08:16Z, no verdict yet. If the gates come back green it still merges after this run.
+
+**Trace check:** `looper-trace` found 0 handlers, and this change touches none.
+
+**Possible conflict:** #26, #27 and #28 also plan to release as v0.1.2 and edit the same STATE.md line. Whichever lands second will need a rebase and the next patch number.
+
+**Left for the next run:** the land's verdict, `just gates` on the landed main, the annotated patch tag cut from main (no features since v0.1.1, no release branches), then closing #29.
+
+I posted all of this on #29 and wrote `Blocked-by: tacplus-dev/looper#113` to the run's outcome file.
