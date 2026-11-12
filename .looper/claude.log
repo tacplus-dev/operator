@@ -1,0 +1,82 @@
+= init
+> Bash git status --short && git log --oneline -3 && git diff --stat && git diff && gh issue view 28 --repo tacplus-dev/operator --comments | tail -20
+<  M STATE.md  M pkg/helm/generator.go  M pkg/helm/generator_test.go fd4cfbc ROADMAP: #30 (Jody, 2026-11-10) 1a06230 HISTORY.md: #25 (looper) df918db Stop writing stratum's seed_members into kernel's holder (#25)  STATE.md                   |  2 +-  pkg/helm/generator.go      |  6 ++++++  pkg/helm/gen...
+= thinking_tokens
+= thinking_tokens
+> Bash for i in 128 113; do gh issue view $i --repo tacplus-dev/looper --json state,title,updatedAt,comments --jq '{state,title,updatedAt,last:(.comments[-2:]|map({a:.author.login,b:.body[0:600]}))}'; done; curl -s https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild/pipelines/3058317794 | head -c 800
+< {"last":[{"a":"tacplus-looper","b":"The looper of looper starts this issue with its limit 4h capped at 4h by this job (https://gitlab.com/tacplus-dev/looper/-/jobs/17937643816), which ends sooner: the run stops by itself before then, its work checkpointed, and the next run resumes it."},{"a":"tacplu...
+> Bash gh issue view 18 --repo tacplus-dev/cluster --json state,title,updatedAt --jq .; gh api repos/tacplus-dev/operator/commits/main/status --jq '{state,statuses:[.statuses[]|{context,state,updated_at}]}'
+< {"state":"OPEN","title":"Hub: register and apply the in-cluster runners and cluster's own pipeline (README, What the hub does 1–7)","updatedAt":"2026-11-10T10:40:27Z"} {"state":"pending","statuses":[]}
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash git add pkg/helm && git commit -q -F - <<'EOF' Clamp the gateway count to int32 in effectiveTopology (#28)  A gateway count left at 0 defaults to the cluster's node count, an int narrowed unchecked into the proto's int32: gosec G115 (HIGH), which fails every build's security run. Clamp it at math.Ma...
+< a59c5a5 STATE.md: v0.1.2, the patch for #28 c3e7334 Clamp the gateway count to int32 in effectiveTopology (#28) fd4cfbc ROADMAP: #30 (Jody, 2026-11-10) looper-trace: /builds/looper/operator/issues/28 verdict: pass (0 handlers, 0 findings)
+Is there a Go toolchain here to run the package tests locally (no container needed)?
+> Bash which go gosec; go version 2>&1 | head -1
+= task_started
+= task_notification
+< /usr/local/go/bin/go /usr/local/bin/gosec go: downloading go1.27.3 (linux/arm64)
+> Bash timeout 600 go test ./pkg/helm/ -run 'Topology|Gateway' -count=1 2>&1 | tail -5; timeout 300 gosec -quiet -include=G115 ./pkg/helm/... 2>&1 | tail -5
+= task_started
+= task_notification
+< # github.com/tacplus-dev/operator/pkg/helm pkg/helm/generator.go:35:2: no required module provides package github.com/tacplus-dev/operator/tacplus/types/services/kernel; to add it: 	go get github.com/tacplus-dev/operator/tacplus/types/services/kernel FAIL	github.com/tacplus-dev/operator/pkg/helm [se...
+Generated types need `tacplus` (build job only), so local tests can't run; the previous run checked the gosec form on a standalone module. Checkpoint and land.
+> Bash /usr/local/bin/repo-looper --repo operator --issue 28 --checkpoint "Fix recommitted on main fd4cfbc as c3e7334 (clamp + TestEffectiveTopologyClampsGatewayNodesToInt32) and a59c5a5 (STATE.md v0.1.2), same tree as 9807145. Four builds in a row gave no verdict within 3h: no runner (tacplus-dev/looper#1...
+= task_started
+= task_notification
+< [2026-11-12T11:36:34Z] checkpoint of #28 (a step) pushed to looper/operator-28:  5 files changed, 276 insertions(+), 1 deletion(-) pid 2386
+= thinking_tokens
+= thinking_tokens
+> Bash sleep 90; cat /tmp/land28.log
+< <tool_use_error>Blocked: sleep 90 followed by: cat /tmp/land28.log. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error...
+> Bash cat /tmp/land28.log
+< [2026-11-12T11:36:35Z] checkpoint of #28 (land queued) pushed to looper/operator-28:  6 files changed, 283 insertions(+), 1 deletion(-) [2026-11-12T11:36:37Z] queued: the manager of operator merges looper/operator-28 after the lands queued before it, one at a time, and says on the issue what came of...
+= thinking_tokens
+= thinking_tokens
+> Bash git fetch -q origin looper/operator-28 && git diff --stat HEAD FETCH_HEAD; git log --oneline -3 FETCH_HEAD; git diff --stat origin/main HEAD
+<  .looper/claude.log |  29 +++++++  .looper/land       |   4 +  .looper/prompt.md  | 225 +++++++++++++++++++++++++++++++++++++++++++++++++++++  3 files changed, 258 insertions(+) 594d3f0 looper: work in progress on #28 (land queued) a59c5a5 STATE.md: v0.1.2, the patch for #28 c3e7334 Clamp the gatewa...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash gh issue comment 28 --repo tacplus-dev/operator --body-file - <<'EOF' Run status (2026-11-12, 11:40Z). The fix itself has not changed. The gates have not run on it once.  - **Committed, land queued 11:36Z:** c3e7334 clamps `nodeCount` at `math.MaxInt32` before the `int32` conversion in `effectiveTop...
+< https://github.com/tacplus-dev/operator/issues/28#issuecomment-6822522426 Blocked-by: tacplus-dev/cluster#18
+Issue #28 isn't done: the fix is committed and queued to land, but none of the four build jobs run on it has ever reported a result. So it hasn't landed, and v0.1.2 isn't tagged.
+
+- **Commits:** the earlier run's changes, recommitted on main fd4cfbc.
+  - `c3e7334` caps the node count at `math.MaxInt32` before converting it to `int32` in `effectiveTopology`. It uses an explicit `if` because gosec's G115 check doesn't accept `min()`. It also adds `TestEffectiveTopologyClampsGatewayNodesToInt32`, which skips on 32-bit platforms.
+  - `a59c5a5` updates STATE.md for v0.1.2.
+- **Land:** queued with the manager at 11:36Z; if it goes green, the manager lands it after this run.
+- **Why it waits:** four full-gates builds in a row (pipelines 3052476142, 3055187408, 3055929672 and 3058317794) each ended "no verdict within 3h". The manager's two red verdicts on the issue were these timeouts, not test failures. tacplus-dev/looper#113 traces such builds to having no runner. It in turn waits on tacplus-dev/cluster#18 (registering the in-cluster runners), which is still open.
+- **Not verified:** I couldn't run the Go tests or gosec here, because the package needs generated types that only the build job can produce. The earlier run checked that gosec accepts this form of the clamp, on a separate small module. The trace check passed with 0 handlers; this change touches none.
+
+I posted this status on the issue and wrote `Blocked-by: tacplus-dev/cluster#18` to the outcome file, which ends this run. Once the land goes green and `just gates` passes on main, the next run tags `v0.1.2` and closes #28; there are no release branches, so no backports.
+= success: Issue #28 isn't done: the fix is committed and queued to land, but none of the four build jobs run on it has ever reported a result. So it hasn't landed, and v0.1.2 isn't tagged.
+
+- **Commits:** the earlier run's changes, recommitted on main fd4cfbc.
+  - `c3e7334` caps the node count at `math.MaxInt32` before converting it to `int32` in `effectiveTopology`. It uses an explicit `if` because gosec's G115 check doesn't accept `min()`. It also adds `TestEffectiveTopologyClampsGatewayNodesToInt32`, which skips on 32-bit platforms.
+  - `a59c5a5` updates STATE.md for v0.1.2.
+- **Land:** queued with the manager at 11:36Z; if it goes green, the manager lands it after this run.
+- **Why it waits:** four full-gates builds in a row (pipelines 3052476142, 3055187408, 3055929672 and 3058317794) each ended "no verdict within 3h". The manager's two red verdicts on the issue were these timeouts, not test failures. tacplus-dev/looper#113 traces such builds to having no runner. It in turn waits on tacplus-dev/cluster#18 (registering the in-cluster runners), which is still open.
+- **Not verified:** I couldn't run the Go tests or gosec here, because the package needs generated types that only the build job can produce. The earlier run checked that gosec accepts this form of the clamp, on a separate small module. The trace check passed with 0 handlers; this change touches none.
+
+I posted this status on the issue and wrote `Blocked-by: tacplus-dev/cluster#18` to the outcome file, which ends this run. Once the land goes green and `just gates` passes on main, the next run tags `v0.1.2` and closes #28; there are no release branches, so no backports.
