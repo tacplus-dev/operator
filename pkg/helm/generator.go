@@ -552,10 +552,8 @@ type serviceSpec struct {
 	// pod that can open a TCP connection to it is effectively inside the cluster;
 	// the network is the only control there is.
 	//
-	// Set on stratum only, for now. Kernel has the same open member port on
-	// stratumHazelcastPort and wants the same treatment, but its policy has not
-	// been verified against a live kernel cluster yet — see
-	// decisions/stratum-hazelcast-networkpolicy-2026-09-12.md.
+	// Set on stratum only. Kernel's member port gets the same treatment in its
+	// kernel-raft policy (kernelRaftNetworkPolicy, #30).
 	HazelcastNetworkPolicy bool
 	// HazelcastPeerApps names the OTHER workloads whose pods are members of this
 	// service's Hazelcast cluster, as `app` label values, so HazelcastNetworkPolicy
@@ -2178,7 +2176,8 @@ func KernelRaftPort(k *protoKernel.Config) int32 {
 	return defaults.GetRatisListener().GetPort()
 }
 
-// kernelRaftNetworkPolicy admits only kernel's own pods to its Raft port.
+// kernelRaftNetworkPolicy admits only kernel's own pods to its Raft port and
+// its Hazelcast member port.
 //
 // Interim (tacplus-dev/roadmap:items/fenced-lock-consensus.md, "Decided: the
 // network layer"): kernel's FencedLock runs Ratis's stock gRPC on that port
@@ -2187,23 +2186,29 @@ func KernelRaftPort(k *protoKernel.Config) int32 {
 // deploymentIsolation's selector, when tacplus-dev/kernel#42 moves the Raft
 // traffic into the authenticated member port and retires the port.
 //
+// Kernel's Hazelcast member port (5001) is the same case (#30; tacplus-dev/roadmap
+// decisions/s2s-never-crosses-tenants-2026-10-31.md, addendum 2026-11-10): its
+// member protocol has no authentication of its own and kernel's state lives
+// there, so it too admits only kernel's own pods, until kernel's member
+// traffic moves behind the member port as stratum's has.
+//
 // A bare podSelector peer means this namespace, which is kernel's own: the
 // platform namespace in a deployment, so only the same deployment's kernel.
 // Selecting kernel turns on default-deny for every port this policy does not
-// name, so it names the rest of what kernel serves: its gRPC port and its
-// Hazelcast member port to whom they reach today (the deployment's own
-// namespaces in a deployment, as the isolation policy kernel is left out of
-// admits them; every source without one), and the health port to the kubelet.
+// name, so it names the rest of what kernel serves: its gRPC port to whom it
+// reaches today (the deployment's own namespaces in a deployment, as the
+// isolation policy kernel is left out of admits them; every source without
+// one), and the health port to the kubelet.
 func kernelRaftNetworkPolicy(svc serviceSpec, dep string, raftPort int32) []byte {
 	listenPort := svc.ListenPort
 	if listenPort == 0 {
 		listenPort = 5000
 	}
-	served := fmt.Sprintf(`    - protocol: TCP
+	kernelOnly := fmt.Sprintf(`    - protocol: TCP
       port: %d
-`, listenPort)
+`, raftPort)
 	if svc.HasHazelcast {
-		served += fmt.Sprintf(`    - protocol: TCP
+		kernelOnly += fmt.Sprintf(`    - protocol: TCP
       port: %d
 `, stratumHazelcastPort)
 	}
@@ -2227,19 +2232,19 @@ spec:
   policyTypes:
   - Ingress
   ingress:
-  # Raft (FencedLock): kernel's own pods only.
+  # Raft (FencedLock) and the Hazelcast member port: kernel's own pods only.
   - from:
     - podSelector:
         matchLabels:
           app: %s
     ports:
+%s  # What kernel serves, reachable as it is without this policy.
+%s    - protocol: TCP
+      port: %d
+  - ports:
     - protocol: TCP
       port: %d
-  # What kernel serves, reachable as it is without this policy.
-%s%s  - ports:
-    - protocol: TCP
-      port: %d
-`, svc.Name, nsRef(svc), svc.Name, svc.Name, raftPort, from, served, grpcHealthProbePort))
+`, svc.Name, nsRef(svc), svc.Name, svc.Name, kernelOnly, from, listenPort, grpcHealthProbePort))
 }
 
 // deploymentPeers is the NetworkPolicy peer list of deployment dep, seen from

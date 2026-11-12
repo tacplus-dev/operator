@@ -73,9 +73,7 @@ the looper then marks it `promoted` or `declined` here with the date.
   selector for it, because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves that traffic into
   the authenticated member port and retires the port: then the policy, kernel's exclusion from the isolation selector
   and `helm.KernelRaftPort` go, and kernel is isolated like every other platform pod.
-- **Confine kernel's Hazelcast member port to kernel's pods too** (2026-11-03, #20): the kernel-raft policy keeps kernel's
-  Hazelcast port (5001) open to the whole deployment (to every source without one), as it was. Its member protocol is as
-  unauthenticated as Raft (see `HazelcastNetworkPolicy`, stratum's), and admitting it only from `app: kernel` is now one
-  line in the same policy; it was held back until verified against a live kernel cluster.
 
 ## Promoted / declined
+- **Confine kernel's Hazelcast member port to kernel's pods too** (2026-11-03, #20): promoted 2026-11-10 (Jody, roadmap
+  suggestion 2026-11-10, decision addendum), done in #30; the live-cluster check is the hub's on dev (#20).
