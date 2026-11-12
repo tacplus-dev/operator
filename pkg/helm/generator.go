@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1070,6 +1071,11 @@ func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.
 	}
 	if t.GatewayNodes == 0 && nodeCount > 0 {
 		t = cloneTopology(t)
+		// Clamped so the conversion cannot wrap; gosec's range analysis
+		// recognises this form (not min()) as bounding the value.
+		if nodeCount > math.MaxInt32 {
+			nodeCount = math.MaxInt32
+		}
 		t.GatewayNodes = int32(nodeCount)
 	}
 	return t

@@ -2,6 +2,8 @@ package helm
 
 import (
 	"fmt"
+	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +16,22 @@ import (
 
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
 )
+
+// A gateway count left at 0 defaults to the cluster's node count, which is
+// clamped to the proto's int32 rather than wrapping (#28).
+func TestEffectiveTopologyClampsGatewayNodesToInt32(t *testing.T) {
+	if bits.UintSize < 64 {
+		t.Skip("int is 32 bits: a node count cannot exceed math.MaxInt32")
+	}
+	nodeCount := math.MaxInt32
+	nodeCount++
+	if got := effectiveTopology(&protoOperator.Config{}, nodeCount).GetGatewayNodes(); got != math.MaxInt32 {
+		t.Fatalf("GatewayNodes = %d, want %d", got, int32(math.MaxInt32))
+	}
+	if got := effectiveTopology(&protoOperator.Config{}, 3).GetGatewayNodes(); got != 3 {
+		t.Fatalf("GatewayNodes = %d, want 3", got)
+	}
+}
 
 func TestGenerateKernelProjectedTokens(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
