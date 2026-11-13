@@ -1,0 +1,212 @@
+= init
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/operator/issues/30; gh issue view 30 --repo tacplus-dev/operator --comments | tail -30; for i in looper/128 looper/113 cluster/18; do gh issue view ${i#*/} --repo tacplus-dev/${i%/*} --json state,title,updatedAt -q '"\(.state) \(.title) \(.updatedAt)"'; done; git status --short; gi...
+< -- This issue was `looper:in-progress`, but it has no looper job created, pending, waiting or running in tacplus-dev/looper: the run that held it is gone (killed with its runner, say). The label is removed, so the next run takes it, resuming from its branch if it left one (looper#20). -- author:	tac...
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/operator/issues/30; git diff; git log --oneline -1 origin/main; git log --oneline origin/looper/operator-30 -3 2>/dev/null
+< diff --git a/PROPOSALS.md b/PROPOSALS.md index 8defba2..13ab342 100644 --- a/PROPOSALS.md +++ b/PROPOSALS.md @@ -73,9 +73,7 @@ the looper then marks it `promoted` or `declined` here with the date.    selector for it, because the port carries Ratis's unauthenticated gRPC. tacplus-dev/kernel#42 moves ...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/operator/issues/30; gh issue view 128 --repo tacplus-dev/looper --comments | tail -25; gh issue view 18 --repo tacplus-dev/cluster --comments | tail -10; which go && timeout 600 go test ./pkg/helm/ 2>&1 | tail -5
+= task_started
+= task_notification
+< edited:	false status:	none -- Hub, 2026-11-11: unstuck. The run went quiet waiting on its own build in the queue this issue is about. The work is checkpointed (640430d on looper/looper-128). The next run resumes. Land it on the local gates if the build hasn't started: the manager's build job gives t...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/operator/issues/30; git log -1 --format=%B 08b3d25
+< kernel-raft admits Hazelcast 5001 only from kernel pods (#30)  Kernel's Hazelcast member protocol on 5001 has no authentication and holds kernel's state, and #24 removes every NetworkPolicy but kernel-raft. Move 5001 into kernel-raft's kernel-only rule, beside Raft, in both layouts: the decision's s...
+> Bash cd /builds/looper/operator/issues/30; git log -1 --format=%B 08b3d25 > /tmp/msg30; git add -A && git commit -q -F /tmp/msg30 && git log --oneline -1 && /usr/local/bin/looper-trace check 2>&1 | tail -3; /usr/local/bin/repo-looper --repo operator --issue 30 --checkpoint "DONE: commit $(git rev-parse -...
+< 42f0b46 kernel-raft admits Hazelcast 5001 only from kernel pods (#30) looper-trace: /builds/looper/operator/issues/30 verdict: pass (0 handlers, 0 findings) [2026-11-12T23:41:40Z] checkpoint of #30 (a step) pushed to looper/operator-30:  6 files changed, 274 insertions(+), 30 deletions(-)
+Committed 42f0b46 (the finished change) and checkpointed; now queuing the land with the manager and polling its verdict.
+> Bash cd /builds/looper/operator/issues/30; nohup /usr/local/bin/repo-looper --repo operator --issue 30 --land > /tmp/land30.log 2>&1 & echo $! > /tmp/land30.pid; cat /tmp/land30.pid
+< 959
+> ToolSearch {"query":"select:Monitor","max_results":1}
+< 
+> Bash until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null; do sleep 30; done; tail -15 /tmp/land30.log
+= background_tasks_changed
+= task_started
+< Command running in background with ID: beu0flmpq. Output is being written to: /builds/looper/operator/homes/looper-30/tmp/claude-61000/-builds-looper-operator-issues-30/f45147cd-1234-4398-a017-52955320239e/tasks/beu0flmpq.output. You will be notified when it completes. To check interim output, use R...
+> Bash sleep 60; cat /tmp/land30.log | tail -5
+< <tool_use_error>Blocked: sleep 60 followed by: cat /tmp/land30.log tail -5. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_u...
+> Read /tmp/land30.log
+< 1	[2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) 2	[2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue what c...
+= thinking_tokens
+= thinking_tokens
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -3 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 23:51:54 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+Land queued at 23:41Z, no verdict yet; the build typically takes up to 3h, so I'm waiting in 10‑minute polls.
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:02:01 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:12:04 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:22:07 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:32:10 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:42:13 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 00:52:16 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+Still waiting on the manager's verdict (queued 23:41Z, now 00:52Z); polling continues.
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 01:02:19 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 01:12:22 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+= thinking_tokens
+= thinking_tokens
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+= task_updated
+= task_notification
+= background_tasks_changed
+< 01:22:26 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+590)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= background_tasks_changed
+= task_updated
+< Command did not complete within its 600s timeout and was moved to the background (ID: b9v55adfr). Output is being written to: /builds/looper/operator/homes/looper-30/tmp/claude-61000/-builds-looper-operator-issues-30/f45147cd-1234-4398-a017-52955320239e/tasks/b9v55adfr.output. You will be notified w...
+= task_updated
+= task_notification
+= background_tasks_changed
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 01:41:31 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_updated
+= task_notification
+= background_tasks_changed
+= task_notification
+< 01:50:34 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+Still waiting on the land's verdict (the stopped task was only my watcher, not the land itself).
+> Bash kill -0 $(cat /tmp/land30.pid) && echo land alive; end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< land alive 01:59:38 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on ...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 02:08:41 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 02:17:44 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 02:26:49 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 02:35:52 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 02:44:54 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+= thinking_tokens
+= thinking_tokens
+Still no verdict at 02:45Z; one more wait, then I'll record the blockers before my time runs out.
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log; gh issue view 30 --repo tacplus-dev/operator --json comments -q '.comments[-1] | "\(.author.login) \(.createdAt)"'
+= task_started
+= task_notification
+< 02:53:58 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+> Bash end=$((SECONDS+540)); until ! kill -0 $(cat /tmp/land30.pid) 2>/dev/null || [ $SECONDS -ge $end ]; do sleep 20; done; date -u +%T; tail -2 /tmp/land30.log
+= task_started
+= task_notification
+< 03:03:01 [2026-11-12T23:41:45Z] checkpoint of #30 (land queued) pushed to looper/operator-30:  7 files changed, 282 insertions(+), 30 deletions(-) [2026-11-12T23:41:46Z] queued: the manager of operator merges looper/operator-30 after the lands queued before it, one at a time, and says on the issue w...
+= thinking_tokens
+= thinking_tokens
+No verdict by 03:03Z, and my run stops around 03:30Z. Checkpointing, commenting, and recording the blockers.
+> Bash cd /builds/looper/operator/issues/30; for i in looper/128 cluster/18; do gh issue view ${i#*/} --repo tacplus-dev/${i%/*} --json state -q .state; done /usr/local/bin/repo-looper --repo operator --issue 30 --checkpoint "DONE: commit 42f0b46 (kernel-raft admits Hazelcast 5001 only from app: kernel pod...
+= task_started
+= task_notification
+< OPEN OPEN [2026-11-13T03:03:17Z] checkpoint of #30 (a step) pushed to looper/operator-30:  7 files changed, 441 insertions(+), 30 deletions(-) https://github.com/tacplus-dev/operator/issues/30#issuecomment-6842534940 Blocked-by: tacplus-dev/looper#128 Blocked-by: tacplus-dev/cluster#18
+Issue #30's change is committed and queued to land, but it isn't on main yet. The manager had given no verdict by 03:03Z, so the issue stays open.
+
+- **Change (commit 42f0b46):** the `kernel-raft` NetworkPolicy now admits kernel's Hazelcast port 5001 only from `app: kernel` pods in kernel's own namespace, in both layouts. Kernel's gRPC port stays open as before, and the kubelet keeps its health port. It's the same change as the earlier 08b3d25.
+- **Tests:** `pkg/helm/kernel_raft_test.go` checks that 5001 is refused to another deployment's pods (its kernel included), to non-kernel pods of the same deployment (gateway, tenant), and to the node, and admitted from kernel.
+- **Planning files:** STATE.md is updated, and the proposal in PROPOSALS.md is marked promoted.
+- **Gates:** none have run. I couldn't run the chart tests here because they need the generated `tacplus/` code. The land was queued with the manager at 23:41Z (full gate set). The four earlier lands were all turned red only because the build gave no verdict within 3 hours. None of them reported a failing test.
+- **Trace check:** `looper-trace check` passes with 0 handlers and 0 findings, because the change touches no handler.
+- **Not verified:** the check against a live cluster, which the hub does on dev (#20).
+
+I posted this status on #30 and wrote `Blocked-by: tacplus-dev/looper#128` and `Blocked-by: tacplus-dev/cluster#18` to the outcome file. Those are the build-queue timeout and the missing in-cluster runners, and both are still open. The manager will post its verdict on #30 when the queued land finishes. If it lands green, the next run only has to post the outcome comment and close the issue.
+= success: Issue #30's change is committed and queued to land, but it isn't on main yet. The manager had given no verdict by 03:03Z, so the issue stays open.
+
+- **Change (commit 42f0b46):** the `kernel-raft` NetworkPolicy now admits kernel's Hazelcast port 5001 only from `app: kernel` pods in kernel's own namespace, in both layouts. Kernel's gRPC port stays open as before, and the kubelet keeps its health port. It's the same change as the earlier 08b3d25.
+- **Tests:** `pkg/helm/kernel_raft_test.go` checks that 5001 is refused to another deployment's pods (its kernel included), to non-kernel pods of the same deployment (gateway, tenant), and to the node, and admitted from kernel.
+- **Planning files:** STATE.md is updated, and the proposal in PROPOSALS.md is marked promoted.
+- **Gates:** none have run. I couldn't run the chart tests here because they need the generated `tacplus/` code. The land was queued with the manager at 23:41Z (full gate set). The four earlier lands were all turned red only because the build gave no verdict within 3 hours. None of them reported a failing test.
+- **Trace check:** `looper-trace check` passes with 0 handlers and 0 findings, because the change touches no handler.
+- **Not verified:** the check against a live cluster, which the hub does on dev (#20).
+
+I posted this status on #30 and wrote `Blocked-by: tacplus-dev/looper#128` and `Blocked-by: tacplus-dev/cluster#18` to the outcome file. Those are the build-queue timeout and the missing in-cluster runners, and both are still open. The manager will post its verdict on #30 when the queued land finishes. If it lands green, the next run only has to post the outcome comment and close the issue.
