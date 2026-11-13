@@ -4,6 +4,11 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Set the operator's metrics bind address on purpose** (2026-11-11, #31): `manager.New` in `pkg/bootstrap/init.go`
+  sets no `Metrics`, so controller-runtime's metrics server serves HTTP/1 on its default address, which is how
+  GO-2026-6859 (net/http server crash, fixed by Go 1.27.4 in #31) reached the operator's pod. Binding it to what the chart
+  scrapes (its `metrics` port), or turning it off if nothing scrapes it, keeps the next net/http server advisory off a
+  listener nobody chose.
 - **Admit the gateway's edge port only from Google's proxy ranges on GKE** (2026-11-06, #22): the `gateway-edge`
   NetworkPolicy (`addDeploymentNetworkPolicies`) admits the gateway's TLS port from anywhere, which was the
   LoadBalancer's need. Behind the standalone NEG the connections come from Google's proxies and health checks
