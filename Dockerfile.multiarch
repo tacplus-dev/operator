@@ -1,4 +1,7 @@
 FROM gcr.io/distroless/static:nonroot
 ARG TARGETARCH
 COPY schematic-operator-linux-${TARGETARCH} /schematic-operator
+# The base's nonroot user, said here so the image stays non-root whatever the
+# base (#26). The operator writes nothing in the image: /config is mounted.
+USER 65532:65532
 ENTRYPOINT ["/schematic-operator"]

@@ -30,6 +30,8 @@ gates: generate
   # tacplus-dev works without its upstream (#8): no reference to it outside the provenance
   # and the dated records (the brackets keep this line from matching itself).
   upstream="$(git grep -n -I -i -E 'sea[b]eam|sona[r]|scott[y]' -- . ':!PROVENANCE.md' ':!decisions' ':!ROADMAP.md' ':!HISTORY.md' ':!STATE.md' ':!PROPOSALS.md' ':!QUESTIONS.md' || true)"; test -z "$upstream" || { echo "upstream references:" >&2; echo "$upstream" >&2; exit 1; }
+  # The release images run as the fixed non-root UID/GID of their distroless nonroot base, said explicitly (#26).
+  for f in Dockerfile Dockerfile.multiarch; do user="$(grep -E '^USER ' "$f" | tail -n1 | awk '{print $2}' || true)"; test "$user" = "65532:65532" || { echo "$f: the last USER must be 65532:65532, not '${user:-root}'" >&2; exit 1; }; done
   test -z "$(gofmt -l $(git ls-files '*.go'))"
   go vet ./...
   go build ./...
