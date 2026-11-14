@@ -21,3 +21,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-14 looper release v0.1.2 (https://github.com/tacplus-dev/operator/releases/tag/v0.1.2)
 - 2026-11-14 looper issue Dockerfile has no USER: semgrep missing-user-entrypoint (HIGH) on Dockerfile:5 fails the build's security checks (#26, 2749787)
 - 2026-11-14 looper issue STATE.md Blocked on names closed issues tacplus-dev/operator#23 and tacplus-dev/tacplus#188 (#32, 11fd449)
+- 2026-11-14 looper release v0.1.3 (https://github.com/tacplus-dev/operator/releases/tag/v0.1.3)
