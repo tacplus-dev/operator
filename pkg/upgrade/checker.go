@@ -59,7 +59,7 @@ type Checker struct {
 	series       string // "MAJOR-MINOR", e.g. "1-2"
 	protoPatch   int    // pinned PROTO_PATCH; 0 = any (use highest found)
 	branch       string // e.g. "main"
-	localPatch   int    // pinned LOCAL_PATCH; 0 = auto (use latest)
+	localPatch   int32  // pinned LOCAL_PATCH; 0 = auto (use latest)
 	fallbackTag  string // operator's own version tag, used when resolution fails
 	services     []ServiceRef
 	k8sClient    client.Client
@@ -88,7 +88,7 @@ type resolvedVersion struct {
 //   - fallbackTag: operator's own version tag (e.g. "v1.2.27-main.1"), used as fallback when resolution fails
 //   - services: list of service images to monitor
 //   - interval: how often to poll the registry (use DevPollInterval in dev mode)
-func New(versionLock, series string, protoPatch int, branch string, localPatch int, fallbackTag string, services []ServiceRef, k8sClient client.Client, operatorNS string, log *zap.Logger, interval time.Duration) *Checker {
+func New(versionLock, series string, protoPatch int, branch string, localPatch int32, fallbackTag string, services []ServiceRef, k8sClient client.Client, operatorNS string, log *zap.Logger, interval time.Duration) *Checker {
 	return &Checker{
 		versionLock:  versionLock,
 		series:       series,
@@ -132,7 +132,7 @@ func (c *Checker) Resolve(ctx context.Context) (map[string]resolvedVersion, erro
 // Returns the pinned version if localPatch > 0. Returns zero value if not yet resolved.
 func (c *Checker) latestVersion(key string) resolvedVersion {
 	if c.localPatch > 0 {
-		return resolvedVersion{protoPatch: c.protoPatch, localPatch: int32(c.localPatch)}
+		return resolvedVersion{protoPatch: c.protoPatch, localPatch: c.localPatch}
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -157,7 +157,7 @@ func (c *Checker) Run(ctx context.Context) {
 		c.log.Info("version pinned, auto-upgrade disabled",
 			zap.String("branch", c.branch),
 			zap.Int("proto_patch", c.protoPatch),
-			zap.Int("local_patch", c.localPatch),
+			zap.Int32("local_patch", c.localPatch),
 		)
 		return
 	}
@@ -423,13 +423,16 @@ func selectLatest(tags []string, versionLock string, maxProtoPatch int, branch s
 		if err != nil || (maxProtoPatch > 0 && pp > maxProtoPatch) {
 			continue
 		}
-		lp, err := strconv.Atoi(m[2])
+		// The tag comes from the registry: a LOCAL_PATCH beyond int32 is
+		// ignored, not wrapped into a small one.
+		lp64, err := strconv.ParseInt(m[2], 10, 32)
 		if err != nil {
 			continue
 		}
+		lp := int32(lp64)
 		// Higher proto_patch wins; equal proto_patch: higher local_patch wins.
-		if pp > best.protoPatch || (pp == best.protoPatch && int32(lp) > best.localPatch) {
-			best = resolvedVersion{protoPatch: pp, localPatch: int32(lp)}
+		if pp > best.protoPatch || (pp == best.protoPatch && lp > best.localPatch) {
+			best = resolvedVersion{protoPatch: pp, localPatch: lp}
 		}
 	}
 	return best
