@@ -23,3 +23,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-14 looper issue STATE.md Blocked on names closed issues tacplus-dev/operator#23 and tacplus-dev/tacplus#188 (#32, 11fd449)
 - 2026-11-14 looper release v0.1.3 (https://github.com/tacplus-dev/operator/releases/tag/v0.1.3)
 - 2026-11-15 looper issue kernel-raft admits Hazelcast 5001 only from kernel pods (before #24 lands) (#30, 41f828a)
+- 2026-11-15 looper issue Remove NetworkPolicy-based isolation (deployment and tenant): bearer tokens isolate; keep only kernel's Raft policy until it is behind the member port (#24, 1cd80f9)
