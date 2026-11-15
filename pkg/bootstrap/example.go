@@ -202,7 +202,7 @@ func AddDelegate(kernelPath, service, targetService string, claims map[string]st
 	if err != nil {
 		return fmt.Errorf("marshaling kernel config: %w", err)
 	}
-	return os.WriteFile(kernelPath, data, 0644)
+	return writeConfigFile(kernelPath, data)
 }
 
 // WriteServices creates the services/ directory with skeleton config files.
@@ -210,7 +210,7 @@ func AddDelegate(kernelPath, service, targetService string, claims map[string]st
 // provider's allowed_redirect_uri_prefixes.
 func WriteServices(cfgDir, redirectPrefix string) error {
 	servicesDir := filepath.Join(cfgDir, "services")
-	if err := os.MkdirAll(servicesDir, 0755); err != nil {
+	if err := os.MkdirAll(servicesDir, configDirMode); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
 
@@ -244,7 +244,7 @@ func WriteServices(cfgDir, redirectPrefix string) error {
 			fmt.Printf("  (exists, skipped) %s\n", relPath)
 			continue
 		}
-		if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+		if err := writeConfigFile(absPath, []byte(content)); err != nil {
 			return fmt.Errorf("writing %s: %w", relPath, err)
 		}
 	}
@@ -767,7 +767,7 @@ func EnsureServiceDelegates(cfgDir string, cfg *protoOperator.Config) error {
 	if err != nil {
 		return fmt.Errorf("marshaling kernel config: %w", err)
 	}
-	return os.WriteFile(kernelPath, data, 0644)
+	return writeConfigFile(kernelPath, data)
 }
 
 // newServiceDelegate is the delegate a service instance gets when kernel.yaml

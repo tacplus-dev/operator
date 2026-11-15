@@ -4,6 +4,14 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Bump golang.org/x/crypto past GO-2026-5932** (2026-11-11, #29): x/crypto v0.58.0's unmaintained `openpgp` is
+  excepted in security-exceptions.yaml until 2026-12-10 (nothing here imports it; its only fix is the pseudo-version
+  `v0.58.1-0.20261009181718-2f1f834330b2`). Bump as soon as a tagged x/crypto release carries the fix, and drop the
+  exception; if none has by 2026-12-10 the exception expires and the scan reports it again.
+- **Tighten existing config directories' modes** (2026-11-11, #29): the operator now creates the config directory and
+  every directory in it 0700 and writes its files 0600 (rewritten files are tightened too), but `os.MkdirAll` leaves a
+  directory an earlier version made 0755 as it was. A one-shot `chmod` of the config tree in `generate`, or a note in
+  the release notes (`chmod -R go-rwx <config>`), would close that for existing installs.
 - **Set the operator's metrics bind address on purpose** (2026-11-11, #31): `manager.New` in `pkg/bootstrap/init.go`
   sets no `Metrics`, so controller-runtime's metrics server serves HTTP/1 on its default address, which is how
   GO-2026-6859 (net/http server crash, fixed by Go 1.27.4 in #31) reached the operator's pod. Binding it to what the chart
