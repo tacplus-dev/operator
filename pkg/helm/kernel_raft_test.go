@@ -98,12 +98,14 @@ func ruleAdmits(t *testing.T, ns string, rule networkingv1.NetworkPolicyIngressR
 
 var kernelPod = map[string]string{"app": "kernel"}
 
-// Kernel's Raft port carries unauthenticated gRPC until kernel#42: in a
-// deployment only kernel's own pods reach it, while the deployment keeps
-// reaching kernel's served ports and the kubelet its health port.
+// Kernel's Raft port carries unauthenticated gRPC until kernel#42, and its
+// Hazelcast member port an unauthenticated member protocol holding kernel's
+// state (#30): in a deployment only kernel's own pods reach either, while the
+// deployment keeps reaching kernel's gRPC port and the kubelet its health port.
 func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 	objs := renderedObjects(t, generateDeployment(t, deploymentConfig("prod")))
 	raft := int(protoKernel.DefaultRatisListenerPort)
+	hz := int(protoKernel.DefaultHazelcastListenerPort)
 
 	np := decodePolicy(t, findObject(t, objs, "NetworkPolicy", "tac-prod", "kernel-raft"))
 	if !selects(t, &np.Spec.PodSelector, kernelPod) || selects(t, &np.Spec.PodSelector, map[string]string{"app": "gateway0"}) {
@@ -124,7 +126,12 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 		{"gateway to grpc", platformPod("tac-prod", "gateway0"), 5000, true},
 		{"tenant to grpc", tenantPod("prod", "tac-prod-a1b2c3d4"), 5000, true},
 		{"other deployment to grpc", platformPod("tac-dev", "gateway0"), 5000, false},
-		{"kernel to hazelcast", platformPod("tac-prod", "kernel"), 5001, true},
+		{"kernel to hazelcast", platformPod("tac-prod", "kernel"), hz, true},
+		{"gateway to hazelcast", platformPod("tac-prod", "gateway0"), hz, false},
+		{"tenant to hazelcast", tenantPod("prod", "tac-prod-a1b2c3d4"), hz, false},
+		{"other deployment's kernel to hazelcast", platformPod("tac-dev", "kernel"), hz, false},
+		{"other deployment to hazelcast", platformPod("tac-dev", "gateway0"), hz, false},
+		{"node to hazelcast", node, hz, false},
 		{"node to health", node, grpcHealthProbePort, true},
 	} {
 		if got := admitted(t, objs, "tac-prod", kernelPod, c.from, c.port); got != c.want {
@@ -141,8 +148,8 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 	}
 }
 
-// Without a deployment (one namespace) the same port is kernel's alone; what
-// kernel serves stays open as it was.
+// Without a deployment (one namespace) the same ports are kernel's alone; its
+// gRPC port stays open as it was.
 func TestKernelRaftPortAdmitsOnlyKernelPodsInOneNamespace(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
@@ -150,6 +157,7 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInOneNamespace(t *testing.T) {
 	})
 	objs := renderedObjects(t, charts)
 	raft := int(protoKernel.DefaultRatisListenerPort)
+	hz := int(protoKernel.DefaultHazelcastListenerPort)
 	for _, c := range []struct {
 		name string
 		from source
@@ -160,7 +168,9 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInOneNamespace(t *testing.T) {
 		{"gateway to raft", platformPod("schematic", "gateway0"), raft, false},
 		{"other namespace's kernel to raft", platformPod("elsewhere", "kernel"), raft, false},
 		{"gateway to grpc", platformPod("schematic", "gateway0"), 5000, true},
-		{"gateway to hazelcast", platformPod("schematic", "gateway0"), 5001, true},
+		{"kernel to hazelcast", platformPod("schematic", "kernel"), hz, true},
+		{"gateway to hazelcast", platformPod("schematic", "gateway0"), hz, false},
+		{"other namespace's kernel to hazelcast", platformPod("elsewhere", "kernel"), hz, false},
 		{"node to health", node, grpcHealthProbePort, true},
 	} {
 		if got := admitted(t, objs, "schematic", kernelPod, c.from, c.port); got != c.want {
