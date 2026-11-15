@@ -14,6 +14,7 @@ Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked
 - `GetConfig`: the deployment uni-config's redacted twin, for the Admiral only (#19). Agent, at Jody's request, 2026-11-02 (`tacplus-dev/roadmap:decisions/skipper-and-admiral-2026-11-01.md`, addendum 2026-11-02).
 - The fleet gateway's Service is a standalone-NEG ClusterIP backend for the TCP proxy LB, not a LoadBalancer (#22). Agent, at Jody's request, 2026-11-05 (`tacplus-dev/roadmap:decisions/network-exposure-2026-11-03.md`, addendum: we terminate TLS).
 - kernel-raft admits Hazelcast 5001 only from kernel pods, before #24 lands (#30). Agent, at Jody's request, 2026-11-10.
+- Product layer: one namespace per product, `tac-<deployment>-<name>`, from `(spec.service).product` (#33; for tacplus#475). Agent, at Jody's request, 2026-11-15; starts after the tacplus landing backlog clears.
 
 ## Later
 - Declare the tacplus floor 2.4 (#1), after tacplus#188
