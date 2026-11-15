@@ -1,0 +1,89 @@
+= init
+> Bash gh issue view 33 --repo tacplus-dev/operator --comments | tail -40; gh issue view 33 --repo tacplus-dev/operator --json labels; ls; cat ROADMAP.md | head -60
+< author:	jodydadescott association:	member edited:	false status:	none -- **Hub, 12:00Z Nov 15.** Triage: a feature, so it needs Jody's approval and a ROADMAP.md line here first. Hub's recommendation: approve, but start only after the tacplus landing backlog (46 on Nov 14) is cleared, so it does not t...
+= thinking_tokens
+= thinking_tokens
+> Bash cat STATE.md; ls decisions pkg pkg/* cmd; cat justfile; git log --oneline | head -30
+< # State: operator  Overwritten to stay current (loopers and agents). Last updated: 2026-11-15 by the looper (#24).  - **Version / line:** the 0.1 line on main (no release branches): v0.1.0, v0.1.1 (#25), v0.1.2 (#26, #27, #28, #31: the build's security findings), v0.1.3 (#32); tacplus floor 2.6 in `...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /tmp && gh api repos/tacplus-dev/roadmap/contents/decisions/s2s-never-crosses-tenants-2026-10-31.md -H 'Accept: application/vnd.github.raw' | tail -60; echo ======; gh api repos/tacplus-dev/roadmap/contents/decisions/products-layer-2026-11-08.md -H 'Accept: application/vnd.github.raw'
+<   the target's policy authorizes it (`tenant-routing-2026-10-26.md`). - **S2S** is one service calling another, and it is fixed **at build time**: the fleet's protos declare every edge   (`(spec.grpc_s2s_client)`). The allowed edges are:   - **tenant → `/system`**: a tenant's instances call platform...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /tmp && gh issue view 475 --repo tacplus-dev/tacplus --json state,title,labels -q '.state+" "+.title'; gh issue view 258 --repo tacplus-dev/tacplus --json state,title -q '.state+" "+.title'; gh api repos/tacplus-dev/tacplus/contents/roadmap/PRODUCTS_LAYER.md -H 'Accept: application/vnd.github.raw...
+< OPEN Product layer: /products/<name> between /system and the tenants (design first) OPEN Enforce: S2S never crosses tenants (door refuses other tenants' service tokens even on ANY_TENANT; S2S client stamps its own tid) # Product layer: `/products/<name>` (design, #475)  Status: **approved** (Jody, 2...
+= thinking_tokens
+= thinking_tokens
+> Bash grep -rn -i "tenant_owned\|TenantOwned" pkg --include=*.go | grep -v _test | head -20; sed -n 1,80p pkg/reconciler/tenantnamespaces.go; grep deploymentproxy go.mod
+< pkg/helm/generator.go:98:	// tenantOwned is the set of service names registry.json marks pkg/helm/generator.go:99:	// (spec.service).tenant_owned. Those services are deployed once per entry pkg/helm/generator.go:102:	tenantOwned map[string]bool pkg/helm/generator.go:126:// tenantOwned names the serv...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /tmp && gh api repos/tacplus-dev/deploymentproxy/contents/api/v1/tenantnamespace_types.go -H 'Accept: application/vnd.github.raw' 2>/dev/null | grep -n -i -B2 -A6 "tid\b\|Tid " | head -50; gh issue list --repo tacplus-dev/deploymentproxy --state all --search product --json number,title,state; gh ...
+< [] [{"number":63,"state":"OPEN","title":"Product layer: mint /products/<name>/services/<svc> identity, namespace claim /products/<name>, no tid (for tacplus#475)"},{"number":10,"state":"CLOSED","title":"Work without SeaBeam: no gitlab.com/seabeam module paths, sources or registries"},{"number":9,"st...
+> Bash cd /tmp && gh api repos/tacplus-dev/deploymentproxy/git/trees/main?recursive=1 -q '.tree[].path' | grep -i -E "api/|README|decision" | head; gh issue view 63 --repo tacplus-dev/kernel --json body,labels -q '.body' | head -40
+< README.md api/v1 api/v1/groupversion.go api/v1/podfault_types.go api/v1/types.go Asks that the product layer's kernel part be prioritized onto this roadmap. It is on tacplus's ROADMAP.md (Next: "Product layer: `/products/<name>` between `/system` and the tenants", tacplus-dev/tacplus#475, Jody 2026-...
+> Bash cd /tmp && gh api repos/tacplus-dev/deploymentproxy/contents/api/v1/types.go -H 'Accept: application/vnd.github.raw' | sed -n 1,120p; gh api repos/tacplus-dev/deploymentproxy/contents/README.md -H 'Accept: application/vnd.github.raw' | grep -n -i -E "tid|name|product" | head -30
+< package v1  import ( 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1" 	"k8s.io/apimachinery/pkg/runtime" )  // TenantNamespace asks deploymentproxy for the tenant namespace tac-<deployment>-<tid>. It lives in a deployment // namespace (labelled tacplus.dev/deployment); deleting it deletes the tenant n...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /tmp && gh api repos/tacplus-dev/deploymentproxy/contents/ROADMAP.md -H 'Accept: application/vnd.github.raw' 2>&1 | grep -n -i -E "product|^## " ; gh api repos/tacplus-dev/roadmap/contents/ROADMAP.md -H 'Accept: application/vnd.github.raw' | grep -n -i product; gh issue view 475 --repo tacplus-de...
+< 5:## Now 9:## Next 13:## Later 16:## Not doing 41:      (cross-deployment, Later). `/system` stays the platform only (`decisions/products-layer-2026-11-08.md`). 79:- **Automatic security remediation with canary rollout** (Jody, 2026-11-01, "eventually"): any security vulnerability whose fix doesn't ...
+= thinking_tokens
+= thinking_tokens
+> Bash cat > /tmp/c33.md <<'EOF' **Looper, 2026-11-15: stopped before changing anything. Two acceptance points need a decision, and the work is blocked on two other repositories.**  ### 1. "NetworkPolicies per the edge table, with a test per refused edge" contradicts a standing decision (question for Jody)...
+< https://github.com/tacplus-dev/operator/issues/33#issuecomment-6902006047 https://github.com/tacplus-dev/operator/issues/33
+> Bash /usr/local/bin/repo-looper --repo operator --issue 33 --checkpoint "Nothing committed. Stopped under rule 1 with needs-decision (issue comment 6902006047). (1) The NetworkPolicy acceptance criterion contradicts the s2s-never-crosses-tenants 2026-11-07 (2) decision and #24; recommend dropping it. (2)...
+< remote:  remote: Create a pull request for 'looper/operator-33' on GitHub by visiting:         remote:      https://github.com/tacplus-dev/operator/pull/new/looper/operator-33         remote:  [2026-11-15T21:56:40Z] checkpoint of #33 (a step) pushed to looper/operator-33:  2 files changed, 205 inser...
+= thinking_tokens
+= thinking_tokens
+> Bash git status --short; git log --oneline -1 origin/looper/operator-33; git show --stat origin/looper/operator-33 | tail -5
+< 32f6011 looper: work in progress on #33 (a step)     Nothing committed. Stopped under rule 1 with needs-decision (issue comment 6902006047). (1) The NetworkPolicy acceptance criterion contradicts the s2s-never-crosses-tenants 2026-11-07 (2) decision and #24; recommend dropping it. (2) deploymentprox...
+I stopped issue #33 without committing anything. The issue can't be finished as written: one acceptance criterion contradicts a standing decision, and the work depends on changes in three other repositories. I posted the questions and my recommendations on the issue (https://github.com/tacplus-dev/operator/issues/33#issuecomment-6902006047), added the `needs-decision` label, and saved a checkpoint. That checkpoint pushed only the looper's own run files (`.looper/claude.log`, `.looper/prompt.md`), not code.
+
+1. **The NetworkPolicy criterion conflicts with Jody's decision.** The 2026-11-07 decision says no NetworkPolicies for isolation: callers are checked by bearer token instead. Only kernel's Raft and Hazelcast ports are exceptions. This repo applied that last week (#24, #30). The approved product-layer design doesn't ask for NetworkPolicies; it enforces the allowed-calls table in tacplus's generated code, with a test for each refused call. The tacplus looper added the criterion when it opened this issue. I recommended dropping it: render no NetworkPolicy in a product namespace, as for tenant namespaces, and test that none is rendered.
+2. **Nothing can create the product namespace yet.** The operator has no rights outside `tac-<deployment>`, so it asks deploymentproxy (formerly nsproxy) for each namespace through a `TenantNamespace` object. That object accepts only an 8-character tid, and product names never have that shape. I recommended a new `ProductNamespace` kind in deploymentproxy. Its label, together with a product list the operator writes into kernel's config, would also let kernel#63 tell a product namespace from a tenant's. That needs a feature issue on deploymentproxy, which needs Jody's approval and a roadmap line there. I asked whether I or the hub should open it.
+3. **The field the operator would read doesn't exist yet.** `(spec.service).product` comes with tacplus#475, which is still open and waiting on tacplus#258. The pinned tacplus 2.6.8 has no product field in `registry.json`, where the operator reads `tenant_owned` today. Kernel#63, which gives product services their identity, is also open.
+
+Once these are settled, the operator's part is small:
+- Read `product` from `registry.json` beside `tenant_owned`.
+- Refuse tid-shaped and reserved product names at render.
+- Render each product's services once into `tac-<deployment>-<name>`, with full endpoint names.
+- Keep one `ProductNamespace` per product, removed with the product's last service, the way tenant namespaces are handled now.
+
+No build, trace check or gates were run, since nothing changed.
+= success: I stopped issue #33 without committing anything. The issue can't be finished as written: one acceptance criterion contradicts a standing decision, and the work depends on changes in three other repositories. I posted the questions and my recommendations on the issue (https://github.com/tacplus-dev/operator/issues/33#issuecomment-6902006047), added the `needs-decision` label, and saved a checkpoint. That checkpoint pushed only the looper's own run files (`.looper/claude.log`, `.looper/prompt.md`), not code.
+
+1. **The NetworkPolicy criterion conflicts with Jody's decision.** The 2026-11-07 decision says no NetworkPolicies for isolation: callers are checked by bearer token instead. Only kernel's Raft and Hazelcast ports are exceptions. This repo applied that last week (#24, #30). The approved product-layer design doesn't ask for NetworkPolicies; it enforces the allowed-calls table in tacplus's generated code, with a test for each refused call. The tacplus looper added the criterion when it opened this issue. I recommended dropping it: render no NetworkPolicy in a product namespace, as for tenant namespaces, and test that none is rendered.
+2. **Nothing can create the product namespace yet.** The operator has no rights outside `tac-<deployment>`, so it asks deploymentproxy (formerly nsproxy) for each namespace through a `TenantNamespace` object. That object accepts only an 8-character tid, and product names never have that shape. I recommended a new `ProductNamespace` kind in deploymentproxy. Its label, together with a product list the operator writes into kernel's config, would also let kernel#63 tell a product namespace from a tenant's. That needs a feature issue on deploymentproxy, which needs Jody's approval and a roadmap line there. I asked whether I or the hub should open it.
+3. **The field the operator would read doesn't exist yet.** `(spec.service).product` comes with tacplus#475, which is still open and waiting on tacplus#258. The pinned tacplus 2.6.8 has no product field in `registry.json`, where the operator reads `tenant_owned` today. Kernel#63, which gives product services their identity, is also open.
+
+Once these are settled, the operator's part is small:
+- Read `product` from `registry.json` beside `tenant_owned`.
+- Refuse tid-shaped and reserved product names at render.
+- Render each product's services once into `tac-<deployment>-<name>`, with full endpoint names.
+- Keep one `ProductNamespace` per product, removed with the product's last service, the way tenant namespaces are handled now.
+
+No build, trace check or gates were run, since nothing changed.
+= usage: {"claude-opus-5-5":{"inputTokens":26,"outputTokens":7104,"cacheReadInputTokens":544887,"cacheCreationInputTokens":45259,"webSearchRequests":0,"costUSD":0.6132334,"contextWindow":1000000,"maxOutputTokens":128000,"thinkingTokens":2219,"canonicalModel":"claude-opus-5-5","provider":"firstParty","costBasis":"list"}}
