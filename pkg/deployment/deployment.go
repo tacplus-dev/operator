@@ -45,8 +45,9 @@ var reservedTids = map[string]string{PeopleTenant: PeopleTid, RestoreTenant: Res
 const DeploymentLabel = "tacplus.dev/deployment"
 
 // deploymentproxy's labels on a tenant namespace it made (deploymentproxy
-// v0.2.0). The platform namespace's NetworkPolicy admits the deployment's
-// tenant namespaces by OwnerLabel.
+// v0.2.0). No rendered object selects by them since #24 (the deployment
+// isolation policy did); the chart tests label their tenant sources with them,
+// as a cluster would.
 const (
 	OwnerLabel = "deploymentproxy.tacplus.dev/deployment"
 	TidLabel   = "deploymentproxy.tacplus.dev/tid"

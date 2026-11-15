@@ -234,13 +234,10 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 			}
 		}
 	}
-	if cfg.GetDeployment() != "" {
-		addDeploymentNetworkPolicies(charts, cfg, services)
-	}
 	for _, svc := range services {
 		if svc.Name == "kernel" {
 			charts.Files["templates/kernel/networkpolicy-raft.yaml"] =
-				kernelRaftNetworkPolicy(svc, cfg.GetDeployment(), KernelRaftPort(g.kernel))
+				kernelRaftNetworkPolicy(svc, KernelRaftPort(g.kernel))
 		}
 	}
 	// The runtime test harness (D27) is rendered by the fleet layer, not by
@@ -547,27 +544,7 @@ type serviceSpec struct {
 	// separate cluster from the event store. Kernel has a single cluster and must
 	// keep rendering exactly one port block.
 	HasWorkingSetHazelcast bool
-	// HazelcastNetworkPolicy, if true, renders a NetworkPolicy that confines the
-	// Hazelcast member ports to this service's own pods. The member protocol has
-	// no TLS and no member authentication and carries Java serialization, so any
-	// pod that can open a TCP connection to it is effectively inside the cluster;
-	// the network is the only control there is.
-	//
-	// Set on stratum only. Kernel's member port gets the same treatment in its
-	// kernel-raft policy (kernelRaftNetworkPolicy, #30).
-	HazelcastNetworkPolicy bool
-	// HazelcastPeerApps names the OTHER workloads whose pods are members of this
-	// service's Hazelcast cluster, as `app` label values, so HazelcastNetworkPolicy
-	// admits them to the member ports.
-	//
-	// It exists because stratum is two workloads in one cluster: the writers and the
-	// volume-less search members. The policy's peer selector is the service's own
-	// `app` label, which is exactly right for a one-workload cluster and silently
-	// wrong for this one — the search members' join would be dropped, and Hazelcast
-	// answers a blocked member port by forming a separate cluster rather than by
-	// failing.
-	HazelcastPeerApps []string
-	ListenPort        int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
+	ListenPort             int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
 	NodeModes []string
@@ -1209,7 +1186,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 		// discoverable peer addresses — so several replicas would each form
 		// their OWN cluster of size one. No partition sharing, and every pod
 		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef(cfg, "stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{stratumSearchName}, ListenPort: 8443, IsStatefulSet: true,
+		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef(cfg, "stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
 			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
 				stratumMemberRoleEnv("writer"),
 			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
@@ -1238,7 +1215,6 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			Image:                     g.imageRef(cfg, "stratum"),
 			HasGRPC:                   true, ListenPort: 8443, IsStatefulSet: true,
 			HasHazelcast: true, HasWorkingSetHazelcast: true,
-			HazelcastNetworkPolicy: true, HazelcastPeerApps: []string{"stratum"},
 			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
 				stratumMemberRoleEnv("search"),
 			// The same memory as a writer and none of its disk. A search member holds
@@ -2072,104 +2048,6 @@ func configVolumeSource(svc serviceSpec, name string) string {
 	return fmt.Sprintf("        configMap:\n          name: %s-config\n", name)
 }
 
-// hazelcastNetworkPolicy confines the Hazelcast member ports of one service to
-// that service's own pods.
-//
-// The member protocol is the hole: no TLS, no member authentication, and Java
-// serialization on the wire. Anything that completes a TCP handshake to it is a
-// peer, so "who can open the socket" IS the authentication — and with no
-// NetworkPolicy in the namespace that was every pod in every namespace of the
-// cluster.
-//
-// Shape, and why it is this shape rather than a tighter one:
-//
-//   - Rule 1 names the member ports and admits only pods carrying this service's
-//     own "app" label. A bare podSelector in a NetworkPolicy peer means "in THIS
-//     namespace", which is exactly the intent — a pod called "stratum" in some
-//     other namespace is not a member.
-//   - Rule 2 has no "from" at all, so it admits every source, and names the gRPC
-//     service port and the health port. Selecting a pod turns on default-deny for
-//     everything the policy does not name, so these have to be written down or
-//     locking the member port takes the service off the network. Leaving them open
-//     to the whole cluster preserves today's trust boundary rather than inventing
-//     a new one in the same change: the gRPC port's control is S2S auth, not the
-//     network, and the health port serves grpc.health.v1 and nothing else.
-//   - policyTypes is Ingress only. Egress is left alone deliberately: the exposure
-//     is inbound, and an egress allowlist would have to enumerate DNS, object
-//     storage, the token issuer and every S2S callee — much more to get wrong, for
-//     none of this particular risk.
-//
-// In a deployment (dep set) rule 2 must not undo the namespace's isolation
-// (deploymentIsolationPolicy): policies add up, so a rule admitting every
-// source would open the gRPC port to every other deployment on the cluster.
-// The gRPC port admits what the isolation policy admits, the deployment's own
-// namespaces, and only the health port stays open to every source.
-func hazelcastNetworkPolicy(svc serviceSpec, dep string) []byte {
-	listenPort := svc.ListenPort
-	if listenPort == 0 {
-		listenPort = 5000
-	}
-	var memberPorts bytes.Buffer
-	if svc.HasHazelcast {
-		memberPorts.WriteString(fmt.Sprintf(`    - protocol: TCP
-      port: %d
-`, stratumHazelcastPort))
-	}
-	if svc.HasWorkingSetHazelcast {
-		memberPorts.WriteString(fmt.Sprintf(`    - protocol: TCP
-      port: %d
-`, stratumWorkingSetPort))
-	}
-	// This workload's own pods, plus every other workload in the same Hazelcast
-	// cluster. One selector per app label rather than one with several labels: a
-	// single matchLabels is an AND, so listing two app values there would match
-	// nothing at all.
-	var peerSelectors bytes.Buffer
-	for _, app := range append([]string{svc.Name}, svc.HazelcastPeerApps...) {
-		peerSelectors.WriteString(fmt.Sprintf(`    - podSelector:
-        matchLabels:
-          app: %s
-`, app))
-	}
-	served := fmt.Sprintf(`  # Everything this service actually serves stays reachable as it is today.
-  - ports:
-    - protocol: TCP
-      port: %d
-    - protocol: TCP
-      port: %d
-`, listenPort, grpcHealthProbePort)
-	if dep != "" {
-		served = fmt.Sprintf(`  # What it serves: to its own deployment, as the namespace's isolation policy
-  # admits it, and the health port to the kubelet.
-  - from:
-%s    ports:
-    - protocol: TCP
-      port: %d
-  - ports:
-    - protocol: TCP
-      port: %d
-`, deploymentPeers(dep), listenPort, grpcHealthProbePort)
-	}
-	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: %s-hazelcast
-  namespace: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      app: %s
-  policyTypes:
-  - Ingress
-  ingress:
-  # Hazelcast member discovery and cluster join: peers only.
-  - from:
-%s    ports:
-%s%s`, svc.Name, nsRef(svc), svc.Name, peerSelectors.String(), memberPorts.String(), served))
-}
-
 // KernelRaftPort is the port kernel's Config k binds the Ratis peer of its
 // FencedLock on: its ratis_listener, else kernel's own default for it. k may be
 // nil, which means kernel's defaults.
@@ -2183,14 +2061,18 @@ func KernelRaftPort(k *protoKernel.Config) int32 {
 }
 
 // kernelRaftNetworkPolicy admits only kernel's own pods to its Raft port and
-// its Hazelcast member port.
+// its Hazelcast member port. It is the one NetworkPolicy the charts render
+// (#24): isolation is the bearer token checked at every door, not the network
+// (tacplus-dev/roadmap decisions/s2s-never-crosses-tenants-2026-10-31.md,
+// addendum 2026-11-07 (2)), and the exception is a port with no authentication
+// of its own.
 //
 // Interim (tacplus-dev/roadmap:items/fenced-lock-consensus.md, "Decided: the
 // network layer"): kernel's FencedLock runs Ratis's stock gRPC on that port
 // with no TLS and no authentication, so who can open the socket is who can
-// speak Raft to kernel. Remove this policy, and kernel's exclusion from
-// deploymentIsolation's selector, when tacplus-dev/kernel#42 moves the Raft
-// traffic into the authenticated member port and retires the port.
+// speak Raft to kernel. Remove this policy when tacplus-dev/kernel#42 moves the
+// Raft traffic behind the authenticated member port on loopback
+// (tacplus-dev/tacplus#212) and retires the port.
 //
 // Kernel's Hazelcast member port (5001) is the same case (#30; tacplus-dev/roadmap
 // decisions/s2s-never-crosses-tenants-2026-10-31.md, addendum 2026-11-10): its
@@ -2199,13 +2081,13 @@ func KernelRaftPort(k *protoKernel.Config) int32 {
 // traffic moves behind the member port as stratum's has.
 //
 // A bare podSelector peer means this namespace, which is kernel's own: the
-// platform namespace in a deployment, so only the same deployment's kernel.
-// Selecting kernel turns on default-deny for every port this policy does not
-// name, so it names the rest of what kernel serves: its gRPC port to whom it
-// reaches today (the deployment's own namespaces in a deployment, as the
-// isolation policy kernel is left out of admits them; every source without
-// one), and the health port to the kubelet.
-func kernelRaftNetworkPolicy(svc serviceSpec, dep string, raftPort int32) []byte {
+// platform namespace tac-<deployment> in a deployment, where every kernel of
+// the deployment runs, so only the same deployment's kernel (Jody, 2026-11-07:
+// cluster-to-cluster is not supported yet). Selecting kernel turns on
+// default-deny for every port this policy does not name, so it names the rest
+// of what kernel serves, to every source: its gRPC port, which checks the
+// caller's token, and the health port the kubelet probes.
+func kernelRaftNetworkPolicy(svc serviceSpec, raftPort int32) []byte {
 	listenPort := svc.ListenPort
 	if listenPort == 0 {
 		listenPort = 5000
@@ -2217,12 +2099,6 @@ func kernelRaftNetworkPolicy(svc serviceSpec, dep string, raftPort int32) []byte
 		kernelOnly += fmt.Sprintf(`    - protocol: TCP
       port: %d
 `, stratumHazelcastPort)
-	}
-	from := ""
-	if dep != "" {
-		from = "  - from:\n" + deploymentPeers(dep) + "    ports:\n"
-	} else {
-		from = "  - ports:\n"
 	}
 	return []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -2244,145 +2120,13 @@ spec:
         matchLabels:
           app: %s
     ports:
-%s  # What kernel serves, reachable as it is without this policy.
-%s    - protocol: TCP
-      port: %d
+%s  # gRPC (the token is the door) and the kubelet's health probe: every source.
   - ports:
     - protocol: TCP
       port: %d
-`, svc.Name, nsRef(svc), svc.Name, svc.Name, kernelOnly, from, listenPort, grpcHealthProbePort))
-}
-
-// deploymentPeers is the NetworkPolicy peer list of deployment dep, seen from
-// its platform namespace: the namespace's own pods, and every pod of its
-// tenant namespaces, which deploymentproxy labels with the deployment. Indented
-// for an ingress rule's from.
-func deploymentPeers(dep string) string {
-	return fmt.Sprintf(`    - podSelector: {}
-    - namespaceSelector:
-        matchLabels:
-          %s: %s
-`, deployment.OwnerLabel, dep)
-}
-
-// addDeploymentNetworkPolicies renders a deployment's isolation (#3): a
-// tenant namespace may reach its own deployment's platform namespace and
-// nothing else, and no deployment reaches another.
-//
-// Isolation is by ingress, on every namespace a deployment owns:
-//   - tac-<deployment> (deploymentIsolationPolicy) admits its own pods and its
-//     own tenant namespaces' (by deploymentproxy's owner label, which only
-//     deploymentproxy sets), and nothing else; the gateway's edge ports are the
-//     exception, open to every source as they are to the internet;
-//   - each tenant namespace already admits only its own pods (deploymentproxy's
-//     baseline, which also limits its egress to its own deployment's namespace);
-//     what the operator adds is the one thing specific to its services: its
-//     platform namespace may call them (the gateway routes to them).
-//
-// Egress from tac-<deployment> stays open: the platform calls out to the
-// internet (identity providers, the image registry, the Kubernetes API),
-// and a pod of another deployment refuses it at ingress anyway.
-//
-// Every policy also admits the health port from any source: the kubelet's
-// probe arrives from the node's address (grpcHealthProbePort).
-func addDeploymentNetworkPolicies(charts *Charts, cfg *protoOperator.Config, services []serviceSpec) {
-	dep := cfg.GetDeployment()
-	platform := deployment.PlatformNamespace(cfg)
-	charts.Files["templates/networkpolicy/deployment-isolation.yaml"] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deployment-isolation
-  namespace: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-spec:
-  # Every pod but kernel's, which kernelRaftNetworkPolicy isolates instead:
-  # policies add up, so this one selecting kernel would open its Raft port to
-  # the whole deployment.
-  podSelector:
-    matchExpressions:
-    - key: app
-      operator: NotIn
-      values:
-      - kernel
-  policyTypes:
-  - Ingress
-  ingress:
-  - from:
-%s  - ports:
     - protocol: TCP
       port: %d
-`, platform, deploymentPeers(dep), grpcHealthProbePort))
-
-	for _, svc := range services {
-		if svc.Port == 0 {
-			continue
-		}
-		// The public door: the gateway's TLS port, which the cloud's proxy load
-		// balancer reaches through its NEG, straight to the pods.
-		var apps, ports strings.Builder
-		for i := range int(svc.Replicas) {
-			fmt.Fprintf(&apps, "\n        - %s%d", svc.Name, i)
-		}
-		listenPort := svc.ListenPort
-		if listenPort == 0 {
-			listenPort = 5000
-		}
-		fmt.Fprintf(&ports, "    - protocol: TCP\n      port: %d\n", listenPort)
-		charts.Files[fmt.Sprintf("templates/%s/networkpolicy-edge.yaml", svc.Name)] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: %s-edge
-  namespace: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchExpressions:
-    - key: app
-      operator: In
-      values:%s
-  policyTypes:
-  - Ingress
-  ingress:
-  - ports:
-%s`, svc.Name, nsRef(svc), apps.String(), ports.String()))
-	}
-
-	// Every tenant namespace that runs one of the chart's workloads.
-	tenantNamespaces := map[string]bool{}
-	for _, svc := range services {
-		if svc.Namespace != "" {
-			tenantNamespaces[svc.Namespace] = true
-		}
-	}
-	names := make([]string, 0, len(tenantNamespaces))
-	for ns := range tenantNamespaces {
-		names = append(names, ns)
-	}
-	sort.Strings(names)
-	for _, ns := range names {
-		charts.Files[fmt.Sprintf("templates/networkpolicy/platform-ingress-%s.yaml", ns)] = []byte(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: platform-ingress
-  namespace: %s
-  labels:
-    {{- include "schematic.labels" . | nindent 4 }}
-spec:
-  podSelector: {}
-  policyTypes:
-  - Ingress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: %s
-  - ports:
-    - protocol: TCP
-      port: %d
-`, ns, platform, grpcHealthProbePort))
-	}
+`, svc.Name, nsRef(svc), svc.Name, svc.Name, kernelOnly, listenPort, grpcHealthProbePort))
 }
 
 // edgeServiceYAML renders the public entry of a service with a public port
@@ -2621,10 +2365,6 @@ spec:
 %s`, svc.Name, ns, svc.Name, listenPort, listenPort, hazelcastHeadless))
 	}
 
-	if svc.HazelcastNetworkPolicy {
-		charts.Files[fmt.Sprintf("templates/%s/networkpolicy.yaml", svc.Name)] =
-			hazelcastNetworkPolicy(svc, cfg.GetDeployment())
-	}
 	if pdb := podDisruptionBudget(svc); pdb != nil {
 		charts.Files[fmt.Sprintf("templates/%s/pdb.yaml", svc.Name)] = pdb
 	}
