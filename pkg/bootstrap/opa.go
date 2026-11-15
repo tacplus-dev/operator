@@ -36,9 +36,13 @@ func BuildOPABundle(regoDir string) (*protoFilesystem.Directory, error) {
 	return protoFilesystem.DirectoryFromFileSystem(regoDir)
 }
 
-// WriteOPABundle writes a filesystem.Directory policy bundle to disk.
+// WriteOPABundle writes a filesystem.Directory policy bundle to disk, in the
+// config directory's modes (0700/0600), not the bundle's own.
 func WriteOPABundle(dir *protoFilesystem.Directory, destPath string) error {
-	return protoFilesystem.DirectoryToFileSystem(dir, destPath)
+	if err := protoFilesystem.DirectoryToFileSystem(dir, destPath); err != nil {
+		return err
+	}
+	return tightenConfigTree(destPath)
 }
 
 // BuildOpaPolicy creates an OpaPolicy proto with the given parameters.

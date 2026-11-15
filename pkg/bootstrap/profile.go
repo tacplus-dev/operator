@@ -128,7 +128,7 @@ func AddProfile(cfgDir, id string, grants map[string][]string) error {
 		return fmt.Errorf("marshaling kernel config: %w", err)
 	}
 
-	return os.WriteFile(kernelPath, outData, 0644)
+	return writeConfigFile(kernelPath, outData)
 }
 
 // parseGrantFlag parses a "service=RPC1,RPC2" string into service name and RPC list.

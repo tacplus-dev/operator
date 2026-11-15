@@ -1,0 +1,25 @@
+# The security findings operator accepts, read by the build's security checks
+# (looper-scan, tacplus-dev/looper#49). Each entry needs an id, a reason, who
+# decided and when it expires; an expired one fails the checks again. An entry
+# matches the rule id wherever it fires, so each reason names where it applies.
+exceptions:
+  - id: G302
+    reason: "schematic-operator upgrade makes the binary it downloads executable (pkg/bootstrap/upgrade.go os.Chmod 0755): an executable has to be 0755 (#29)"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: G101
+    reason: "gosec false positives in pkg/helm/generator.go: a mount path (/var/run/secrets/schematic/kernel) and a ConfigMap name (schematic-pipeline-secrets), not credentials (#29)"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: G304
+    reason: "the CLI reads the config directory and the files it is given on its command line, by design (#29)"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: go.lang.security.audit.xss.import-text-template.import-text-template
+    reason: "pkg/helm/generator.go renders YAML, not HTML: html/template's escaping would corrupt it (#29)"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2027-02-10
+  - id: GO-2026-5932
+    reason: "golang.org/x/crypto/openpgp is unmaintained; no package of operator imports it (govulncheck: affected by 0 vulnerabilities) and its only fix is an unreleased pseudo-version: bump x/crypto once a tagged release has it (#29)"
+    decided_by: "hub (Jody's delegation, 2026-11-10)"
+    expires: 2026-12-10

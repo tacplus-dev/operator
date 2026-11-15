@@ -70,7 +70,7 @@ func writeBackendTokenPolicy(dir string) (string, []string, error) {
 	}
 
 	destDir := BackendTokenPolicyDir(dir)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, configDirMode); err != nil {
 		return "", nil, fmt.Errorf("creating backend token policy directory: %w", err)
 	}
 
