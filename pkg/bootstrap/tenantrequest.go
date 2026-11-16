@@ -100,7 +100,7 @@ func ApproveTenant(cfgDir, tenant string) error {
 	// Move the request into place, then validate it exactly as every later
 	// load will — loadTenantIdps parses it and refuses an (issuer, client_id)
 	// another tenant already claims. A rejected request goes back where it was.
-	if err := os.MkdirAll(TenantConfigDir(cfgDir, tenant), 0755); err != nil {
+	if err := os.MkdirAll(TenantConfigDir(cfgDir, tenant), configDirMode); err != nil {
 		return fmt.Errorf("creating tenant directory: %w", err)
 	}
 	if err := os.Rename(reqPath, oauthPath); err != nil {
@@ -124,7 +124,7 @@ func ApproveTenant(cfgDir, tenant string) error {
 	if err := appendTenantToSettings(cfgDir, tenant); err != nil {
 		return err
 	}
-	return os.WriteFile(kernelPath, kernelYAML, 0644)
+	return writeConfigFile(kernelPath, kernelYAML)
 }
 
 var syncTenantRulesCmd = &cobra.Command{
@@ -226,11 +226,11 @@ func ApproveTenantRecords(cfgDir string, state *protoKernel.ConfigState) ([]stri
 			errs = append(errs, fmt.Errorf("tenant %q: marshaling request: %w", tenant, err))
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(reqPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(reqPath), configDirMode); err != nil {
 			errs = append(errs, fmt.Errorf("tenant %q: creating %s: %w", tenant, TenantRequestsDir, err))
 			continue
 		}
-		if err := os.WriteFile(reqPath, request, 0644); err != nil {
+		if err := writeConfigFile(reqPath, request); err != nil {
 			errs = append(errs, fmt.Errorf("tenant %q: filing request: %w", tenant, err))
 			continue
 		}
@@ -382,7 +382,7 @@ func appendTenantToSettings(cfgDir, tenant string) error {
 	if err := enc.Close(); err != nil {
 		return fmt.Errorf("marshaling %s: %w", OperatorSettingsFile, err)
 	}
-	return os.WriteFile(path, buf.Bytes(), 0644)
+	return writeConfigFile(path, buf.Bytes())
 }
 
 // validateNewTenant checks that tenant can be added to cfg. The name becomes

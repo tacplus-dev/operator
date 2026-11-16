@@ -42,7 +42,7 @@ func AddApiKey(cfgDir, name string, profiles []string, claims map[string]string)
 		return fmt.Errorf("generating cred pair: %w", err)
 	}
 
-	if err := os.MkdirAll(credDir, 0755); err != nil {
+	if err := os.MkdirAll(credDir, configDirMode); err != nil {
 		return fmt.Errorf("creating cred directory: %w", err)
 	}
 
@@ -50,7 +50,7 @@ func AddApiKey(cfgDir, name string, profiles []string, claims map[string]string)
 	if err != nil {
 		return fmt.Errorf("marshaling cred pair: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(credDir, "creds.yaml"), credBytes, 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(credDir, "creds.yaml"), credBytes); err != nil {
 		return fmt.Errorf("writing creds: %w", err)
 	}
 
@@ -156,5 +156,5 @@ func addApiKeyToOauthConfig(oauthPath, name string, profiles []string, jwk *prot
 		return fmt.Errorf("marshaling oauth config: %w", err)
 	}
 
-	return os.WriteFile(oauthPath, outData, 0644)
+	return writeConfigFile(oauthPath, outData)
 }

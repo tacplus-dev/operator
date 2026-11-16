@@ -126,7 +126,7 @@ func SaveBundle(b *Bundle, path string) error {
 	if err != nil {
 		return fmt.Errorf("serializing bundle: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), configDirMode); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 	return os.WriteFile(path, data, 0600)
@@ -206,17 +206,17 @@ func BundleServiceValues(b *Bundle) map[string]interface{} {
 //	<dir>/ca.pem            — root CA certificate
 //	<dir>/configs/<svc>.yaml — rendered service configs
 func ExpandBundle(b *Bundle, dir string) error {
-	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "configs"), configDirMode); err != nil {
 		return fmt.Errorf("creating output dirs: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "operator.yaml"), []byte(b.Config), 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(dir, "operator.yaml"), []byte(b.Config)); err != nil {
 		return fmt.Errorf("writing operator.yaml: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "crypto.yaml"), []byte(b.Crypto), 0600); err != nil {
 		return fmt.Errorf("writing crypto.yaml: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), []byte(b.CACert), 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(dir, "ca.pem"), []byte(b.CACert)); err != nil {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 

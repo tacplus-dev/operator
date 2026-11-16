@@ -205,7 +205,7 @@ Example:
 func runInitCA(cmd *cobra.Command, args []string) error {
 	dir := resolveConfigDir()
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, configDirMode); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
@@ -231,7 +231,7 @@ func runInitCA(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), caPEM, 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(dir, "ca.pem"), caPEM); err != nil {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 
@@ -288,7 +288,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 
 	dir := resolveConfigDir()
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, configDirMode); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
@@ -368,7 +368,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), caPEM, 0644); err != nil {
+	if err := writeConfigFile(filepath.Join(dir, "ca.pem"), caPEM); err != nil {
 		return fmt.Errorf("writing ca.pem: %w", err)
 	}
 
