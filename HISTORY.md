@@ -25,3 +25,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-15 looper issue kernel-raft admits Hazelcast 5001 only from kernel pods (before #24 lands) (#30, 41f828a)
 - 2026-11-15 looper issue Remove NetworkPolicy-based isolation (deployment and tenant): bearer tokens isolate; keep only kernel's Raft policy until it is behind the member port (#24, 1cd80f9)
 - 2026-11-15 looper issue Security checks: 72 new non-blocking findings in operator's own code and go.mod (gosec G304/G306/G301/G104/G101/G302, semgrep text/template, GO-2026-5932) to fix or except (#29)
+- 2026-11-16 looper issue GO-2026-5932: golang.org/x/crypto v0.59.0 is the tagged fix the exception waited for; bump x/crypto and drop the entry (#35)
