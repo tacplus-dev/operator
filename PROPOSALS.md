@@ -4,6 +4,13 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Decide what follows the Role's RBAC exceptions on 2026-12-31** (2026-11-17, #40): `security-exceptions.yaml`
+  accepts trivy KSV-0056, KSV-0048, KSV-0049 and KSV-0113 on `helm/templates/role.yaml` until 2026-12-31 (Jody's
+  decision on #40). KSV-0056 fires on the Role's `services` rule as well as its `networkpolicies` one, so dropping
+  `kernel-raft` once tacplus-dev/kernel#42 authenticates kernel's member ports does not clear it: the fleet chart's
+  Services still need the right. The other three (workloads, configmaps, secrets) are rights the operator needs for as
+  long as it applies the fleet chart. Before the expiry: renew them with a longer expiry, or narrow `networkpolicies`
+  (`resourceNames: [kernel-raft]` for all but `create`) once kernel#42 lands and renew the rest.
 - **Pin and size the extract-config init container** (2026-11-17, #39): with `config.bundle` the operator's pod runs
   `busybox:latest` to unpack the bundle, a mutable tag with no requests or limits. `trivy config --helm-set
   config.bundle=...` reports KSV-0013 (no image tag) and KSV-0011/0015/0016/0018 (no CPU or memory requests or limits)

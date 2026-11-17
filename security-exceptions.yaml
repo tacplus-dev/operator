@@ -23,3 +23,19 @@ exceptions:
     reason: "Dockerfile and Dockerfile.multiarch: the distroless static:nonroot base has no shell for a HEALTHCHECK, and Kubernetes ignores the instruction and runs the pod's probes instead (#41)"
     decided_by: "hub (Jody, 2026-11-17, #41)"
     expires: 2027-05-17
+  - id: KSV-0056
+    reason: "helm/templates/role.yaml, the schematic-operator Role of the one-namespace layout (operator.deployment unset): the rights the operator needs to apply the generated fleet chart, here its services and networkpolicies rules; networkpolicies is kernel's kernel-raft NetworkPolicy (#20, #24, #30), until kernel's Raft and Hazelcast member ports are authenticated (tacplus-dev/kernel#42) (#40)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
+  - id: KSV-0048
+    reason: "helm/templates/role.yaml, the schematic-operator Role of the one-namespace layout: the rights the operator needs to apply the generated fleet chart, its deployments, statefulsets and cronjobs rules, and pods get/list/watch/delete (a pod stuck on an old StatefulSet revision, defect #15; the <service>-pigeons and harness-chaos Roles it mints) (#40)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
+  - id: KSV-0049
+    reason: "helm/templates/role.yaml, the schematic-operator Role of the one-namespace layout: the rights the operator needs to apply the generated fleet chart, its configmaps rule (the services' configs) (#40)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
+  - id: KSV-0113
+    reason: "helm/templates/role.yaml, the schematic-operator Role of the one-namespace layout: the rights the operator needs to apply the generated fleet chart, its secrets rule (the services' credentials) (#40)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
