@@ -28,3 +28,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-16 looper issue GO-2026-5932: golang.org/x/crypto v0.59.0 is the tagged fix the exception waited for; bump x/crypto and drop the entry (#35)
 - 2026-11-17 looper issue Backport #35 (golang.org/x/crypto v0.59.0, GO-2026-5932) to release/0.1 again: PR #36 conflicts since #34 merged (#37)
 - 2026-11-17 looper issue The operator chart's pod sets no securityContext: trivy KSV-0014 and KSV-0118 (HIGH) fail the build's security checks (#39)
+- 2026-11-17 looper issue The operator's Role grants networkpolicies, workloads, configmaps and secrets by design: trivy KSV-0056 (HIGH) fails the build's security checks (#40)
