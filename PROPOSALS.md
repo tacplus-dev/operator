@@ -4,6 +4,11 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Give the operator's own pod health probes** (2026-11-17, #41): the fleet chart that `pkg/helm/generator.go` renders gives
+  every service a liveness and readiness probe, but `helm/templates/deployment.yaml` gives the operator none. `manager.New` in
+  `pkg/bootstrap/init.go` also sets no `HealthProbeBindAddress`. A wedged reconciler therefore keeps running unnoticed.
+  controller-runtime's `healthz`/`readyz` (`AddHealthzCheck`, `AddReadyzCheck`) behind a probe port the chart names would
+  cover it. It would also answer, in Kubernetes terms, what DS-0026 (no Dockerfile `HEALTHCHECK`) is asking for.
 - **Tighten existing config directories' modes** (2026-11-11, #29): the operator now creates the config directory and
   every directory in it 0700 and writes its files 0600 (rewritten files are tightened too), but `os.MkdirAll` leaves a
   directory an earlier version made 0755 as it was. A one-shot `chmod` of the config tree in `generate`, or a note in
