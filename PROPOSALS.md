@@ -4,6 +4,12 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Pin and size the extract-config init container** (2026-11-17, #39): with `config.bundle` the operator's pod runs
+  `busybox:latest` to unpack the bundle, a mutable tag with no requests or limits. `trivy config --helm-set
+  config.bundle=...` reports KSV-0013 (no image tag) and KSV-0011/0015/0016/0018 (no CPU or memory requests or limits)
+  on it. The nightly scan renders the defaults, without a bundle, so it does not see them yet. A pinned busybox digest
+  (or the operator image itself unpacking the bundle, which needs no second image) and small requests and limits would
+  close them.
 - **Give the operator's own pod health probes** (2026-11-17, #41): the fleet chart that `pkg/helm/generator.go` renders gives
   every service a liveness and readiness probe, but `helm/templates/deployment.yaml` gives the operator none. `manager.New` in
   `pkg/bootstrap/init.go` also sets no `HealthProbeBindAddress`. A wedged reconciler therefore keeps running unnoticed.
