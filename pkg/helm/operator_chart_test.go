@@ -173,3 +173,95 @@ func TestOperatorChartForADeployment(t *testing.T) {
 		t.Errorf("default render: Deployment runs as %q, want schematic-operator", got)
 	}
 }
+
+// TestOperatorChartHardensThePod (#39): the operator's pod runs as the release
+// image's non-root user with the runtime's seccomp profile, and each of its
+// containers cannot escalate, holds no capability and has a read-only root
+// filesystem. Everything the operator writes is a volume: /config (its config
+// directory, in either layout) and /tmp (os.MkdirTemp, the helm SDK's homes).
+func TestOperatorChartHardensThePod(t *testing.T) {
+	bundle := map[string]interface{}{"bundle": "c2VydmljZXMK"}
+	for _, tc := range []struct {
+		name string
+		vals map[string]interface{}
+		init bool
+	}{
+		{"default", map[string]interface{}{}, false},
+		{"bundle", map[string]interface{}{"config": bundle}, true},
+		{"deployment", map[string]interface{}{"operator": map[string]interface{}{"deployment": "prod"}}, false},
+		{"deployment and bundle", map[string]interface{}{"operator": map[string]interface{}{"deployment": "prod"}, "config": bundle}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, dep := renderOperatorChart(t, tc.vals)
+			pod := dep.Spec.Template.Spec
+			psc := pod.SecurityContext
+			if psc == nil {
+				t.Fatal("pod has no securityContext")
+			}
+			if psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
+				t.Error("pod securityContext: runAsNonRoot is not true")
+			}
+			for field, got := range map[string]*int64{"runAsUser": psc.RunAsUser, "runAsGroup": psc.RunAsGroup, "fsGroup": psc.FSGroup} {
+				if got == nil || *got != 65532 {
+					t.Errorf("pod securityContext: %s = %v, want 65532", field, got)
+				}
+			}
+			if psc.SeccompProfile == nil || psc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+				t.Errorf("pod securityContext: seccompProfile = %+v, want RuntimeDefault", psc.SeccompProfile)
+			}
+
+			containers := append(slices.Clone(pod.InitContainers), pod.Containers...)
+			if got := len(pod.InitContainers) == 1; got != tc.init {
+				t.Errorf("init containers = %d, want the extract-config one: %v", len(pod.InitContainers), tc.init)
+			}
+			for _, c := range containers {
+				sc := c.SecurityContext
+				if sc == nil {
+					t.Errorf("container %s has no securityContext", c.Name)
+					continue
+				}
+				if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+					t.Errorf("container %s: allowPrivilegeEscalation is not false", c.Name)
+				}
+				if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+					t.Errorf("container %s: readOnlyRootFilesystem is not true", c.Name)
+				}
+				if sc.Capabilities == nil || !slices.Equal(sc.Capabilities.Drop, []corev1.Capability{"ALL"}) || len(sc.Capabilities.Add) != 0 {
+					t.Errorf("container %s: capabilities = %+v, want drop [ALL] and no add", c.Name, sc.Capabilities)
+				}
+			}
+
+			emptyDirs := map[string]bool{}
+			for _, v := range pod.Volumes {
+				if v.EmptyDir != nil {
+					emptyDirs[v.Name] = true
+				}
+			}
+			var op corev1.Container
+			for _, c := range pod.Containers {
+				if c.Name == "schematic-operator" {
+					op = c
+				}
+			}
+			mounts := map[string]corev1.VolumeMount{}
+			for _, m := range op.VolumeMounts {
+				mounts[m.MountPath] = m
+			}
+			for _, path := range []string{"/config", "/tmp"} {
+				m, ok := mounts[path]
+				if !ok || !emptyDirs[m.Name] || m.SubPath != "" || m.ReadOnly {
+					t.Errorf("operator container: %s is not a writable emptyDir mount: %+v", path, m)
+				}
+			}
+			env := map[string]string{}
+			for _, e := range op.Env {
+				env[e.Name] = e.Value
+			}
+			for _, name := range []string{"HOME", "HELM_CACHE_HOME", "HELM_CONFIG_HOME", "HELM_DATA_HOME"} {
+				if !strings.HasPrefix(env[name], "/tmp") {
+					t.Errorf("operator container: %s = %q, want a path under /tmp", name, env[name])
+				}
+			}
+		})
+	}
+}

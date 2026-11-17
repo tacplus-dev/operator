@@ -28,6 +28,15 @@ spec:
       serviceAccountName: schematic-operator
       {{- end }}
       automountServiceAccountToken: false
+      # The release image's non-root user (#26), said here too, so no container
+      # of this pod runs as root (#39).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       tolerations:
       - key: kubernetes.io/arch
         operator: Equal
@@ -47,6 +56,8 @@ spec:
           chmod -R a+rX /config
           echo "Extracted:"
           find /config/services /config/creds -type f 2>/dev/null | sort
+        securityContext:
+          {{- include "schematic-operator.containerSecurityContext" . | nindent 10 }}
         volumeMounts:
         - name: config-mutable
           mountPath: /config
@@ -63,6 +74,16 @@ spec:
         env:
         - name: SCHEMATIC_OPERATOR_DIR
           value: /config
+        # The root filesystem is read-only: whatever the operator or the helm
+        # SDK keeps under a home goes to the /tmp emptyDir instead.
+        - name: HOME
+          value: /tmp
+        - name: HELM_CACHE_HOME
+          value: /tmp/helm/cache
+        - name: HELM_CONFIG_HOME
+          value: /tmp/helm/config
+        - name: HELM_DATA_HOME
+          value: /tmp/helm/data
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
@@ -87,6 +108,8 @@ spec:
           name: metrics
         resources:
           {{- toYaml .Values.operator.resources | nindent 10 }}
+        securityContext:
+          {{- include "schematic-operator.containerSecurityContext" . | nindent 10 }}
         volumeMounts:
         - name: kubernetes-api-token
           mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -94,10 +117,13 @@ spec:
         - name: kernel-token
           mountPath: /var/run/secrets/schematic/kernel
           readOnly: true
-        {{- if .Values.config.bundle }}
+        # The config directory the operator writes, in either layout: the
+        # extracted bundle, or empty without one.
         - name: config-mutable
           mountPath: /config
-        {{- else }}
+        - name: tmp
+          mountPath: /tmp
+        {{- if not .Values.config.bundle }}
         - name: config
           mountPath: /config/operator.yaml
           subPath: operator.yaml
@@ -106,8 +132,7 @@ spec:
           mountPath: /config/crypto.yaml
           subPath: crypto.yaml
           readOnly: true
-        {{- end }}
-        {{- if .Values.config.bundle }}
+        {{- else }}
         # operator.yaml and crypto.yaml overlaid on top of the extracted bundle
         - name: config
           mountPath: /config/operator.yaml
@@ -154,9 +179,11 @@ spec:
       - name: crypto
         secret:
           secretName: schematic-operator-crypto
-      {{- if .Values.config.bundle }}
       - name: config-mutable
         emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      {{- if .Values.config.bundle }}
       - name: config-bundle
         secret:
           secretName: schematic-operator-bundle
