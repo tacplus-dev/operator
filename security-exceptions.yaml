@@ -3,6 +3,18 @@
 # decided and when it expires; an expired one fails the checks again. An entry
 # matches the rule id wherever it fires, so each reason names where it applies.
 exceptions:
+  - id: DS-0026
+    reason: "Dockerfile and Dockerfile.multiarch: the distroless static:nonroot base has no shell for a HEALTHCHECK, and Kubernetes ignores the instruction and runs the pod's probes instead (#41)"
+    decided_by: "hub (Jody, 2026-11-17, #41)"
+    expires: 2027-05-17
+  - id: KSV-0036
+    reason: "helm/templates/deployment.yaml, the schematic-operator Deployment: automountServiceAccountToken is false, and the operator's API token is a projected serviceAccountToken (3600 s) mounted at the default /var/run/secrets/kubernetes.io/serviceaccount, the path controller-runtime's in-cluster config reads: the operator applies the fleet chart through the API server, so it needs the token (#41, with #40's decision)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
+  - id: KSV-0125
+    reason: "helm/templates/deployment.yaml, the schematic-operator container: its image (operator.image) is ghcr.io/tacplus-dev/operator, the platform's own registry, which is not on trivy's trusted list; the extract-config init container's busybox is pinned by digest (#41, with #40's decision)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
   - id: G302
     reason: "schematic-operator upgrade makes the binary it downloads executable (pkg/bootstrap/upgrade.go os.Chmod 0755): an executable has to be 0755 (#29)"
     decided_by: "hub (Jody's delegation, 2026-11-10)"
