@@ -39,3 +39,11 @@ exceptions:
     reason: "helm/templates/role.yaml, the schematic-operator Role of the one-namespace layout: the rights the operator needs to apply the generated fleet chart, its secrets rule (the services' credentials) (#40)"
     decided_by: "jodydadescott"
     expires: 2026-12-31
+  - id: KSV-0036
+    reason: "helm/templates/deployment.yaml, the schematic-operator Deployment: automountServiceAccountToken is false, and the operator's API token is a projected serviceAccountToken (3600 s) mounted at the default /var/run/secrets/kubernetes.io/serviceaccount, the path controller-runtime's in-cluster config reads: the operator applies the fleet chart through the API server, so it needs the token (#41, with #40's decision)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
+  - id: KSV-0125
+    reason: "helm/templates/deployment.yaml, the schematic-operator container: its image (operator.image) is ghcr.io/tacplus-dev/operator, the platform's own registry, which is not on trivy's trusted list; the extract-config init container's busybox is pinned by digest (#41, with #40's decision)"
+    decided_by: "jodydadescott"
+    expires: 2026-12-31
