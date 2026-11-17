@@ -19,3 +19,7 @@ exceptions:
     reason: "pkg/helm/generator.go renders YAML, not HTML: html/template's escaping would corrupt it (#29)"
     decided_by: "hub (Jody's delegation, 2026-11-10)"
     expires: 2027-02-10
+  - id: DS-0026
+    reason: "Dockerfile and Dockerfile.multiarch: the distroless static:nonroot base has no shell for a HEALTHCHECK, and Kubernetes ignores the instruction and runs the pod's probes instead (#41)"
+    decided_by: "hub (Jody, 2026-11-17, #41)"
+    expires: 2027-05-17

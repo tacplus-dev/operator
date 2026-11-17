@@ -265,3 +265,22 @@ func TestOperatorChartHardensThePod(t *testing.T) {
 		})
 	}
 }
+
+// TestOperatorChartPinsTheInitImage (#41, trivy KSV-0125): the extract-config
+// init container runs a busybox image pinned by digest, not the mutable
+// busybox:latest, so what extracts the operator's config bundle cannot change
+// under the chart.
+func TestOperatorChartPinsTheInitImage(t *testing.T) {
+	_, dep := renderOperatorChart(t, map[string]interface{}{"config": map[string]interface{}{"bundle": "c2VydmljZXMK"}})
+	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("init containers = %d, want the extract-config one", len(dep.Spec.Template.Spec.InitContainers))
+	}
+	image := dep.Spec.Template.Spec.InitContainers[0].Image
+	name, digest, pinned := strings.Cut(image, "@sha256:")
+	if !pinned || len(digest) != 64 {
+		t.Errorf("extract-config image %q is not pinned by a sha256 digest", image)
+	}
+	if !strings.HasPrefix(name, "busybox:") || strings.HasSuffix(name, ":latest") {
+		t.Errorf("extract-config image %q, want busybox at a release tag", image)
+	}
+}
