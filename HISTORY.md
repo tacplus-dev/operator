@@ -31,3 +31,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-17 looper issue The operator's Role grants networkpolicies, workloads, configmaps and secrets by design: trivy KSV-0056 (HIGH) fails the build's security checks (#40)
 - 2026-11-17 looper issue Security checks: 4 new non-blocking trivy findings (KSV-0036, KSV-0125, DS-0026 on both Dockerfiles) to fix or except (#41)
 - 2026-11-22 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.8 → 2.6.13, and 1 more) (#45)
+- 2026-11-23 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.13 → 2.6.14, and 1 more) (#48)
