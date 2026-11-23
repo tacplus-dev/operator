@@ -4,6 +4,13 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Render the coop's pigeons namespace per tenant** (2026-11-23, #47): with a deployment, `addPigeonsRBAC` grants the
+  coop a Role in each tenant namespace, `tac-<deployment>-<tid>`, but the coop's config still takes its one
+  `pigeons_namespace` from `services/coop.yaml` (seatrials: `schematic-pigeons`, which nothing creates). Once
+  tacplus-dev/coop#17's per-tenant `pigeons_namespaces` is in the pinned contract, `generate` fills it, tenant path →
+  namespace, from the same set the RBAC uses (record tenants included). It refuses a coop.yaml that names a namespace
+  of its own beside a deployment. Open questions: the key form (`/tenants/<name>` or `/tenants/<tid>`), and whether a
+  tenant-owned coop gets only its own entry. Design on #47.
 - **Decide what follows the Role's RBAC exceptions on 2026-12-31** (2026-11-17, #40): `security-exceptions.yaml`
   accepts trivy KSV-0056, KSV-0048, KSV-0049 and KSV-0113 on `helm/templates/role.yaml` until 2026-12-31 (Jody's
   decision on #40). KSV-0056 fires on the Role's `services` rule as well as its `networkpolicies` one, so dropping
