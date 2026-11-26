@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/tacplus-dev/operator/pkg/deployment"
+	"github.com/tacplus-dev/operator/pkg/helm"
 	protoHazelcast "github.com/tacplus-dev/operator/tacplus/types/common/hazelcast"
 	protoEntitlements "github.com/tacplus-dev/operator/tacplus/types/generated/entitlements"
 	protoServices "github.com/tacplus-dev/operator/tacplus/types/generated/services"
@@ -547,6 +548,13 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string, recordTids ma
 				// marshals to JSON null and protojson refuses. Empty is empty.
 				svcMap = make(map[string]any)
 			}
+			if name == helm.CoopServiceName && opCfg.GetDeployment() != "" {
+				for _, field := range []string{"pigeons_namespace", "pigeons_namespaces"} {
+					if _, set := svcMap[field]; set {
+						return nil, fmt.Errorf("services/%s.yaml sets %s, but with a deployment the operator renders the coop's pigeons namespaces from its tenants: remove %s from services/%s.yaml", name, field, field, name)
+					}
+				}
+			}
 			fd := holder.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name + "_config"))
 			if fd == nil || fd.Message() == nil {
 				return nil, fmt.Errorf("services/%s.yaml exists, but kernel's services holder has no %s_config entry", name, name)
@@ -557,6 +565,16 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string, recordTids ma
 			}
 			hasHolder = true
 		}
+	}
+
+	// The coop's pigeons run in their tenants' namespaces (#3), and it reads
+	// which from its typed Config here (#47). matcherCfg carries kernel's
+	// record tenants too, as the chart's config does, so a tenant created at
+	// run time gets its entry beside its Role.
+	if set, err := setCoopPigeonsNamespaces(holder, matcherCfg); err != nil {
+		return nil, err
+	} else if set {
+		hasHolder = true
 	}
 
 	// 5. Load operator-derived FQDN/issuer.
@@ -598,6 +616,34 @@ func buildKernelConfigProto(cfgDir string, recordTenants []string, recordTids ma
 	}
 
 	return kernelConfig, nil
+}
+
+// setCoopPigeonsNamespaces fills holder's coop_config.pigeons_namespaces
+// (tacplus-dev/coop#17) when cfg names a deployment and runs the coop: each
+// tenant's authorization namespace (/tenants/<t>, what the coop compares a
+// dog's token against) to its tenant namespace. The namespaces are
+// deployment.PigeonsNamespaces, the set the chart's pigeons RBAC grants the
+// coop's Roles in, so the coop is told no namespace it cannot use. The coop
+// is shared, so its one holder entry names every tenant. It reports whether
+// it set anything.
+func setCoopPigeonsNamespaces(holder *protoServicesConfig.Services, cfg *protoOperator.Config) (bool, error) {
+	if cfg.GetDeployment() == "" || cfg.GetTopology().GetAppServices()[helm.CoopServiceName] <= 0 {
+		return false, nil
+	}
+	fd := holder.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(helm.CoopServiceName + "_config"))
+	if fd == nil || fd.Message() == nil {
+		return false, fmt.Errorf("app_services runs %s, but kernel's services holder has no %s_config entry", helm.CoopServiceName, helm.CoopServiceName)
+	}
+	coop := holder.ProtoReflect().Mutable(fd).Message()
+	mapFd := coop.Descriptor().Fields().ByName("pigeons_namespaces")
+	if mapFd == nil || !mapFd.IsMap() {
+		return false, fmt.Errorf("the %s Config declares no pigeons_namespaces map (tacplus-dev/coop#17), which a deployment's tenant namespaces need", helm.CoopServiceName)
+	}
+	namespaces := coop.Mutable(mapFd).Map()
+	for tenant, ns := range deployment.PigeonsNamespaces(cfg, "") {
+		namespaces.Set(protoreflect.ValueOfString(tenantNamespacePrefix+tenant).MapKey(), protoreflect.ValueOfString(ns))
+	}
+	return true, nil
 }
 
 func operatorKubernetesNamespace(cfg *protoOperator.Config) string {

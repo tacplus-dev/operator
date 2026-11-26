@@ -1368,7 +1368,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			HasGRPC: true, ListenPort: 8443,
 			ConfigHasKeyMaterial: llmCredentialServices[name],
 			MemRequest:           "64Mi", MemLimit: "256Mi", CpuRequest: "25m"}
-		if name == coopServiceName {
+		if name == CoopServiceName {
 			// The coop runs pigeons as Kubernetes Jobs in its tenants'
 			// namespaces (A30: one pigeon = one Job), so it talks to the API
 			// server with its own projected token.
@@ -1803,12 +1803,12 @@ metadata:
 	return nil
 }
 
-// coopServiceName is the platform service that runs pigeons (tacplus registry
+// CoopServiceName is the platform service that runs pigeons (tacplus registry
 // id 106). Listing it in app_services makes the chart grant it the tenant
 // namespaces its pigeons run in; the library knows this one service by name,
 // because where pigeons run is part of the coop's contract
 // (A30 §3.3, §3.7), not a deployment's choice.
-const coopServiceName = "coop"
+const CoopServiceName = "coop"
 
 // pigeonsRBACYAML grants the coop's service account svc, in namespace ns
 // where pigeons run, what the coop's Job lifecycle needs and nothing else:
