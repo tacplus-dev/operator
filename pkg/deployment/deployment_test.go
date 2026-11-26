@@ -162,3 +162,28 @@ func TestTenantNamespacesIncludeTheReservedTenants(t *testing.T) {
 		t.Errorf("without a deployment there are no tenant namespaces, got %v", got)
 	}
 }
+
+func TestPigeonsNamespaces(t *testing.T) {
+	cfg := cfgWith("prod", []string{"acme", "globex"}, map[string]string{"acme": "a1b2c3d4", "globex": "e5f6g7h8"})
+	// A shared coop: every listed tenant's namespace, and no reserved tenant's
+	// it does not list.
+	got := PigeonsNamespaces(cfg, "")
+	want := map[string]string{"acme": "tac-prod-a1b2c3d4", "globex": "tac-prod-e5f6g7h8"}
+	if len(got) != len(want) {
+		t.Fatalf("PigeonsNamespaces(shared) = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("PigeonsNamespaces(shared)[%s] = %q, want %q", k, got[k], v)
+		}
+	}
+	// A tenant-owned coop: its own tenant's alone.
+	got = PigeonsNamespaces(cfg, "globex")
+	if len(got) != 1 || got["globex"] != "tac-prod-e5f6g7h8" {
+		t.Errorf("PigeonsNamespaces(globex) = %v, want only globex's", got)
+	}
+	// Without a deployment there are no tenant namespaces to run pigeons in.
+	if got := PigeonsNamespaces(&protoOperator.Config{Tenants: []string{"acme"}}, ""); len(got) != 0 {
+		t.Errorf("without a deployment, PigeonsNamespaces = %v, want none", got)
+	}
+}

@@ -121,6 +121,26 @@ func TenantNamespaceOf(cfg *protoOperator.Config, tenant string) string {
 	return TenantNamespace(d, TenantTids(cfg)[tenant])
 }
 
+// PigeonsNamespaces is, by tenant name, the tenant namespace each tenant's
+// pigeons run in (#3, #47): for a tenant-owned coop, its own tenant's alone;
+// for a shared coop (tenant ""), every tenant cfg lists. The chart grants the
+// coop a Role in exactly these, so the coop is told no namespace it cannot
+// use. Empty without a deployment: there are no tenant namespaces then.
+func PigeonsNamespaces(cfg *protoOperator.Config, tenant string) map[string]string {
+	out := map[string]string{}
+	if cfg.GetDeployment() == "" {
+		return out
+	}
+	tenants := cfg.GetTenants()
+	if tenant != "" {
+		tenants = []string{tenant}
+	}
+	for _, t := range tenants {
+		out[t] = TenantNamespaceOf(cfg, t)
+	}
+	return out
+}
+
 // TenantTids returns, by tenant name, the tid of every tenant that gets a
 // tenant namespace: each of cfg's tenants and the reserved people and
 // restore. Empty when cfg names no deployment: there are no tenant namespaces

@@ -1870,14 +1870,22 @@ func (g *Generator) addPigeonsRBAC(charts *Charts, cfg *protoOperator.Config, sv
 	if svc.ServiceAccountName == "" || svc.SharesServiceIdentityWith != "" {
 		return nil
 	}
-	tenants := cfg.GetTenants()
+	owner := ""
 	if svc.TenantInstance {
-		tenants = []string{svc.Tenant}
+		owner = svc.Tenant
 	}
+	// The coop's config names the same set (#47): one source, so the Roles
+	// and the namespaces the coop is told cannot drift apart.
+	namespaces := deployment.PigeonsNamespaces(cfg, owner)
+	tenants := make([]string, 0, len(namespaces))
+	for tenant := range namespaces {
+		tenants = append(tenants, tenant)
+	}
+	sort.Strings(tenants)
 	var buf bytes.Buffer
 	for _, tenant := range tenants {
 		buf.WriteString("---\n")
-		buf.Write(pigeonsRBACYAML(svc, deployment.TenantNamespaceOf(cfg, tenant)))
+		buf.Write(pigeonsRBACYAML(svc, namespaces[tenant]))
 	}
 	charts.Files[fmt.Sprintf("templates/%s/pigeons-rbac.yaml", svc.Name)] = buf.Bytes()
 	return nil
