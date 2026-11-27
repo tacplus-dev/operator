@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -787,6 +788,55 @@ func TestReconcileImmutableStatefulSetFieldsExpandsGrownPVC(t *testing.T) {
 	}
 	if deletePolicy == nil || *deletePolicy != metav1.DeletePropagationOrphan {
 		t.Fatalf("expected an orphan delete so pods keep running, got %v", deletePolicy)
+	}
+}
+
+// TestReconcileImmutableStatefulSetFieldsReadsStorageClassFromTheAPI is
+// seatrials' first volume grow (2026-11-27): a deployment's operator has a
+// namespaced Role and a cache confined to its namespaces, so a cached Get of
+// the cluster-scoped StorageClass waited for good on an informer that could
+// never list, and the reconcile never returned: nothing was applied and
+// nothing was logged. The StorageClass is read from the API server, where the
+// refusal is an answer: the PVC is not expanded, and the StatefulSet is still
+// recreated.
+func TestReconcileImmutableStatefulSetFieldsReadsStorageClassFromTheAPI(t *testing.T) {
+	scheme := immutableTestScheme(t)
+	ctx := context.Background()
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		immutableTestStatefulSet(),
+		immutableTestPVC("2Gi"),
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*storagev1.StorageClass); ok {
+				t.Errorf("the StorageClass %s was read through the cache, which never answers for a cluster-scoped object", key.Name)
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+	api := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "storage.k8s.io", Resource: "storageclasses"}, key.Name, errors.New("no cluster-wide rights"))
+		},
+	}).Build()
+
+	r := &Reconciler{client: cl, apiReader: api, log: zap.NewNop()}
+
+	vals := map[string]interface{}{"kernel": map[string]interface{}{"storage": "8Gi"}}
+	if err := r.reconcileImmutableStatefulSetFields(ctx, "schematic", immutableTestChart(t), vals); err != nil {
+		t.Fatalf("a StorageClass the operator may not read must not fail the reconcile: %v", err)
+	}
+
+	var pvc corev1.PersistentVolumeClaim
+	if err := r.client.Get(ctx, types.NamespacedName{Namespace: "schematic", Name: "data-kernel-0"}, &pvc); err != nil {
+		t.Fatalf("getting pvc: %v", err)
+	}
+	if got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; got.String() != "2Gi" {
+		t.Fatalf("expected the pvc left at 2Gi when its StorageClass cannot be read, got %s", got.String())
+	}
+	var st appsv1.StatefulSet
+	if err := r.client.Get(ctx, types.NamespacedName{Namespace: "schematic", Name: "kernel"}, &st); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected the statefulset orphan-deleted so the upgrade recreates it, got err=%v", err)
 	}
 }
 

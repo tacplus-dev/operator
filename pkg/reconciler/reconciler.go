@@ -120,12 +120,19 @@ type Reconciler struct {
 	checker        *upgrade.Checker
 	generator      *helm.Generator
 	client         client.Client
-	log            *zap.Logger
-	restCfg        *rest.Config
-	mapper         apimeta.RESTMapper
-	operatorNS     string
-	series         string // image series from operator binary, e.g. "1-2"
-	versionLock    string // MAJOR.MINOR from operator binary, e.g. "1.2"
+	// apiReader reads straight from the API server, for the one cluster-scoped
+	// object read here (a PVC's StorageClass). The manager's cache is confined
+	// to the operator's namespaces and a deployment's operator holds no
+	// cluster-wide rights: a cached Get of a StorageClass starts an informer
+	// that can never list, and waits on it for good. Nil in tests that read
+	// through client.
+	apiReader   client.Reader
+	log         *zap.Logger
+	restCfg     *rest.Config
+	mapper      apimeta.RESTMapper
+	operatorNS  string
+	series      string // image series from operator binary, e.g. "1-2"
+	versionLock string // MAJOR.MINOR from operator binary, e.g. "1.2"
 
 	// tenantNamespaceTimeout and tenantNamespacePoll bound the wait for
 	// deploymentproxy's tenant namespaces; zero means
@@ -151,6 +158,7 @@ func New(cfg *protoOperator.Config, configProvider ServiceConfigProvider, checke
 		checker:        checker,
 		generator:      helm.New(series, versionLock, checker, tenantOwned, pinnedTenant),
 		client:         mgr.GetClient(),
+		apiReader:      mgr.GetAPIReader(),
 		log:            log,
 		restCfg:        mgr.GetConfig(),
 		mapper:         mgr.GetRESTMapper(),
@@ -1017,8 +1025,12 @@ func (r *Reconciler) storageClassAllowsExpansion(ctx context.Context, pvc *corev
 		return false
 	}
 
+	var reader client.Reader = r.client
+	if r.apiReader != nil {
+		reader = r.apiReader
+	}
 	var sc storagev1.StorageClass
-	if err := r.client.Get(ctx, types.NamespacedName{Name: name}, &sc); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Name: name}, &sc); err != nil {
 		r.log.Warn("not expanding PVC: its StorageClass could not be read",
 			zap.String("pvc", pvc.Name),
 			zap.String("storage_class", name),
