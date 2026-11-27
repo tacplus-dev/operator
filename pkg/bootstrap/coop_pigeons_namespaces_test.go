@@ -22,6 +22,17 @@ func coopDeploymentConfig() *protoOperator.Config {
 	return cfg
 }
 
+// writeCoopDeploymentFixture writes coopDeploymentConfig's config dir with a
+// services/coop.yaml of body after the mode every coop Config must define.
+func writeCoopDeploymentFixture(t *testing.T, body string) string {
+	t.Helper()
+	dir := writeDeploymentFixture(t, coopDeploymentConfig())
+	if err := os.WriteFile(filepath.Join(dir, "services", "coop.yaml"), []byte("mode: MODE_JOBS\n"+body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func coopPigeonsNamespaces(t *testing.T, dc *DeployConfigs) map[string]string {
 	t.Helper()
 	kernel, err := protoKernel.ConfigFromBytes(dc.BootstrapYAMLs[0])
@@ -39,7 +50,7 @@ func TestCoopConfigNamesEachTenantsPigeonsNamespace(t *testing.T) {
 	RegisterAppServices([]string{"coop"})
 	t.Cleanup(func() { RegisterAppServices(nil) })
 	cfg := coopDeploymentConfig()
-	dc, err := BuildDeployConfigs(writeDeploymentFixture(t, cfg))
+	dc, err := BuildDeployConfigs(writeCoopDeploymentFixture(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +77,7 @@ func TestCoopConfigNamesEachTenantsPigeonsNamespace(t *testing.T) {
 func TestCoopConfigNamesRecordTenantsPigeonsNamespace(t *testing.T) {
 	RegisterAppServices([]string{"coop"})
 	t.Cleanup(func() { RegisterAppServices(nil) })
-	dir := writeDeploymentFixture(t, coopDeploymentConfig())
+	dir := writeCoopDeploymentFixture(t, "")
 	dc, err := buildDeployConfigs(dir, nil, []string{"zeta"}, map[string]string{"zeta": "z1y2x3w4"})
 	if err != nil {
 		t.Fatal(err)
@@ -80,11 +91,7 @@ func TestCoopConfigNamesRecordTenantsPigeonsNamespace(t *testing.T) {
 func TestCoopConfigKeepsCoopYAMLBesideThePigeonsNamespaces(t *testing.T) {
 	RegisterAppServices([]string{"coop"})
 	t.Cleanup(func() { RegisterAppServices(nil) })
-	dir := writeDeploymentFixture(t, coopDeploymentConfig())
-	if err := os.WriteFile(filepath.Join(dir, "services", "coop.yaml"), []byte("max_live_runs: 5\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	dc, err := BuildDeployConfigs(dir)
+	dc, err := BuildDeployConfigs(writeCoopDeploymentFixture(t, "max_live_runs: 5\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +116,7 @@ func TestCoopYAMLPigeonsNamespaceBesideADeploymentIsRefused(t *testing.T) {
 		"pigeons_namespace":  "pigeons_namespace: schematic-pigeons\n",
 		"pigeons_namespaces": "pigeons_namespaces:\n  /tenants/acme: somewhere\n",
 	} {
-		dir := writeDeploymentFixture(t, coopDeploymentConfig())
-		if err := os.WriteFile(filepath.Join(dir, "services", "coop.yaml"), []byte(yaml), 0644); err != nil {
-			t.Fatal(err)
-		}
-		_, err := BuildDeployConfigs(dir)
+		_, err := BuildDeployConfigs(writeCoopDeploymentFixture(t, yaml))
 		if err == nil {
 			t.Errorf("services/coop.yaml setting %s beside a deployment built", field)
 			continue
