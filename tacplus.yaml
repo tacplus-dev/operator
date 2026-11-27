@@ -33,6 +33,10 @@ depends:
   - redo
   # pkg/bootstrap tests exercise the app-service config path with llmproxy.
   - llmproxy
+  # coop: its Config in the holder, whose pigeons_namespaces the operator
+  # fills per tenant beside a deployment (#47; the field is coop v0.2.0's,
+  # tacplus-dev/coop#17).
+  - coop
 header: |
   Copyright (c) 2026 Jody Scott
   SPDX-License-Identifier: Apache-2.0
