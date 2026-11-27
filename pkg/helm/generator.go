@@ -1176,8 +1176,12 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	//     with event volume; today's 2Gi limit is the starting point.
 	//   - eventbus: embedded Kafka broker — heap usage scales with topic
 	//     count + replication settings.
+	// No volume below 4Gi: Hyperdisk Balanced, the only disk C4A (Axion) nodes
+	// attach, has that minimum, and a smaller claim is never provisioned
+	// (seatrials, 2026-11-26: kernel's and eventbus's 2Gi claims waited for good
+	// while stratum's 5Gi bound). TestNoVolumeBelowHyperdiskMinimum holds it.
 	svcs := []serviceSpec{
-		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef(cfg, "kernel"), HasGRPC: true, HasPVC: true, Storage: "2Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
+		{Name: "kernel", Replicas: topo.KernelNodes, Image: g.imageRef(cfg, "kernel"), HasGRPC: true, HasPVC: true, Storage: "4Gi", HasHazelcast: true, ListenPort: 5000, IsStatefulSet: true, OrderedReady: true, PerReplicaConfig: true, ConfigHasKeyMaterial: true,
 			ConfigOverrideMount:          true,
 			ServiceAccountName:           "kernel",
 			AutomountServiceAccountToken: falsePtr(),
@@ -1195,7 +1199,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
           value: %s
 `, kernelTokenAudience()),
 			MemRequest: "384Mi", MemLimit: "1Gi", CpuRequest: "250m", JavaHeap: "512m", JavaHeapMin: "128m"},
-		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef(cfg, "eventbus"), HasGRPC: true, HasPVC: true, Storage: "2Gi", ListenPort: 8443,
+		withKernelServiceAuth(serviceSpec{Name: "eventbus", Replicas: topo.EventbusNodes, Image: g.imageRef(cfg, "eventbus"), HasGRPC: true, HasPVC: true, Storage: "4Gi", ListenPort: 8443,
 			// Measured 2026-09-19 on the live fleet: ~30m steady. 250m reserved
 			// 8x what it used and, with three fleets' worth of 250m Java pods,
 			// left the 2-vCPU nodes at 99% requested while 6% busy.
