@@ -357,6 +357,16 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 // convention), so stratum must bind that rather than Hazelcast's 5701 default.
 const stratumHazelcastPort = 5001
 
+// StratumMemberPort is where a stratum member's generated member port listens
+// (grpcconfig.member_port.listen_address): the port the chart exposes and the
+// seed_members name. StratumMemberTargetPort is where Hazelcast binds on
+// loopback behind it (target_address): another port than the member port's,
+// which is taken on every address, and the same on every member.
+const (
+	StratumMemberPort       = stratumHazelcastPort
+	StratumMemberTargetPort = 5701
+)
+
 // stratumWorkingSetPort is the second Hazelcast cluster in stratum's JVM: the
 // working-set maps ("stratum-ws"), kept separate from the event store because
 // they have their own lifecycle — idle-TTL eviction, caller-chosen map ids.
