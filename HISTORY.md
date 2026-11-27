@@ -33,3 +33,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-22 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.8 → 2.6.13, and 1 more) (#45)
 - 2026-11-23 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.13 → 2.6.14, and 1 more) (#48)
 - 2026-11-25 looper issue Pinned images behind their lines: relock (Dockerfile: gcr.io/distroless/static:nonroot → gcr.io/distroless/static:nonroot, and 1 more) (#50)
+- 2026-11-27 looper issue generate: render the coop's pigeons namespace per tenant (tac-<deployment>-<tid>), as the pigeons RBAC already is (#47)
