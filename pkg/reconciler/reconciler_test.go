@@ -964,27 +964,35 @@ func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
 		t.Fatal("generated chart rendered no kernel StatefulSet")
 	}
 
+	// A live StatefulSet at the size kernel's chart asks for: 4Gi, Hyperdisk
+	// Balanced's minimum (no smaller volume is ever provisioned on a C4A node).
+	chartSized := func() *appsv1.StatefulSet {
+		st := immutableTestStatefulSet()
+		st.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("4Gi")
+		return st
+	}
+
 	// In sync: the live PVC already matches kernel's chart size.
-	live := immutableTestStatefulSet()
+	live := chartSized()
 	if fields, grown := immutableStatefulSetDiff(live, desired); len(fields) != 0 || len(grown) != 0 {
 		t.Fatalf("expected no drift against the generated chart, got fields=%v grown=%v", fields, grown)
 	}
 
 	// The production failure: live is still on a smaller size than the chart.
-	live = immutableTestStatefulSet()
+	live = chartSized()
 	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("1Gi")
 	fields, grown := immutableStatefulSetDiff(live, desired)
 	if len(fields) != 0 {
 		t.Fatalf("a pure size grow must not be a forbidden-field change, got %v", fields)
 	}
-	if got, ok := grown["data"]; !ok || got.String() != "2Gi" {
-		t.Fatalf("expected the data template recorded as grown to 2Gi, got %v", grown)
+	if got, ok := grown["data"]; !ok || got.String() != "4Gi" {
+		t.Fatalf("expected the data template recorded as grown to 4Gi, got %v", grown)
 	}
 
 	// The org-rename roll: live was created at 8Gi by f980a22's chart, and the
-	// chart has since been reverted to 2Gi. A PVC cannot shrink, so this is a
+	// chart has since been reverted to a smaller size. A PVC cannot shrink, so this is a
 	// forbidden change that only a recreate can clear, never a PVC expansion.
-	live = immutableTestStatefulSet()
+	live = chartSized()
 	live.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("8Gi")
 	fields, grown = immutableStatefulSetDiff(live, desired)
 	if !slices.Equal(fields, []string{"spec.volumeClaimTemplates[data].spec.resources.requests.storage"}) || len(grown) != 0 {
@@ -993,7 +1001,7 @@ func TestImmutableStatefulSetDiffAgainstTheGeneratedChart(t *testing.T) {
 
 	// Kernel moved from Parallel to OrderedReady pod management, which
 	// Kubernetes will not patch either.
-	live = immutableTestStatefulSet()
+	live = chartSized()
 	live.Spec.PodManagementPolicy = appsv1.ParallelPodManagement
 	fields, grown = immutableStatefulSetDiff(live, desired)
 	if !slices.Equal(fields, []string{"spec.podManagementPolicy"}) || len(grown) != 0 {
