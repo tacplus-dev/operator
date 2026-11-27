@@ -445,7 +445,20 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 
 	// disk_persistence (and with it the archive) is a bootstrap setting, so the
 	// writers get it here, verbatim from operator.yaml, when it is set.
-	var stratumExtra func(map[string]any)
+	//
+	// member_port is a bootstrap setting too, and stratum's generated
+	// ServiceManager refuses to start without it (stratum declares
+	// spec.member_port, tacplus#212; seatrials, 2026-11-27: every stratum pod
+	// ended "grpcconfig.member_port.listen_address and target_address are
+	// required"). The member port listens where the chart already sends the
+	// members (the seed_members' port) and forwards to Hazelcast on loopback.
+	stratumMemberPort := func(f map[string]any) {
+		f["member_port"] = map[string]any{
+			"listen_address": map[string]any{"host": "0.0.0.0", "port": int64(helm.StratumMemberPort)},
+			"target_address": map[string]any{"host": "127.0.0.1", "port": int64(helm.StratumMemberTargetPort)},
+		}
+	}
+	stratumExtra := stratumMemberPort
 	if dp := cfg.GetStratumDiskPersistence(); dp != nil {
 		dpYAML, err := protoDiskstore.DiskPersistenceConfigToYAML(dp)
 		if err != nil {
@@ -455,7 +468,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		if err := yaml.Unmarshal(dpYAML, &dpMap); err != nil {
 			return nil, fmt.Errorf("unmarshaling stratum disk_persistence YAML: %w", err)
 		}
-		stratumExtra = func(f map[string]any) { f["disk_persistence"] = dpMap }
+		stratumExtra = func(f map[string]any) { stratumMemberPort(f); f["disk_persistence"] = dpMap }
 	}
 	stratumConfigYAML, err := buildSvc("stratum", stratumExtra)
 	if err != nil {
@@ -466,7 +479,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	// they have no volume for disk_persistence.dir to point at.
 	var stratumSearchConfigYAML []byte
 	if cfg.GetTopology().GetStratumSearchNodes() > 0 {
-		stratumSearchConfigYAML, err = buildSvc("stratum", nil)
+		stratumSearchConfigYAML, err = buildSvc("stratum", stratumMemberPort)
 		if err != nil {
 			return nil, err
 		}

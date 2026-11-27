@@ -148,3 +148,37 @@ func TestStratumWithoutDiskPersistenceRendersNone(t *testing.T) {
 			configs["stratum"], search)
 	}
 }
+
+// stratum declares spec.member_port (tacplus#212), so its generated
+// ServiceManager refuses to start without grpcconfig.member_port: on seatrials
+// (2026-11-27) every stratum pod ended "grpcconfig.member_port.listen_address
+// and target_address are required". Every stratum bootstrap carries it, with or
+// without disk_persistence: the member port on the port the chart exposes and
+// the seed_members name, Hazelcast behind it on loopback.
+func TestStratumBootstrapCarriesMemberPort(t *testing.T) {
+	cfg := stratumArchiveTestConfig(t)
+	check := func(name string, configs map[string]string) {
+		t.Helper()
+		for _, key := range []string{"stratum", "stratum-search"} {
+			c, ok := configs[key]
+			if !ok {
+				t.Errorf("%s: no %s bootstrap", name, key)
+				continue
+			}
+			var fields map[string]any
+			if err := yaml.Unmarshal([]byte(c), &fields); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]any{
+				"listen_address": map[string]any{"host": "0.0.0.0", "port": 5001},
+				"target_address": map[string]any{"host": "127.0.0.1", "port": 5701},
+			}
+			if got := fields["member_port"]; !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: %s member_port = %v, want %v", name, key, got, want)
+			}
+		}
+	}
+	check("without disk_persistence", stratumConfigs(t, t.TempDir(), cfg))
+	cfg.StratumDiskPersistence = &protoDiskstore.DiskPersistenceConfig{Dir: "/app/data", RollIntervalSeconds: 60}
+	check("with disk_persistence", stratumConfigs(t, t.TempDir(), cfg))
+}
