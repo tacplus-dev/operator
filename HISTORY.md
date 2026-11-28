@@ -34,3 +34,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-23 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.13 → 2.6.14, and 1 more) (#48)
 - 2026-11-25 looper issue Pinned images behind their lines: relock (Dockerfile: gcr.io/distroless/static:nonroot → gcr.io/distroless/static:nonroot, and 1 more) (#50)
 - 2026-11-27 looper issue generate: render the coop's pigeons namespace per tenant (tac-<deployment>-<tid>), as the pigeons RBAC already is (#47)
+- 2026-11-28 looper issue Release the next minor (v0.2.0) carrying #47, with hub/v0.1.0-volume-minimum's three fixes on main (for fleet-seatrials#83) (#53)
