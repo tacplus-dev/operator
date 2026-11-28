@@ -17,6 +17,7 @@ Unreleased; tacplus floor 2.4 declared in `tacplus.yaml` (#1 still open, blocked
 - Product layer: one namespace per product, `tac-<deployment>-<name>`, from `(spec.service).product` (#33; for tacplus#475). Agent, at Jody's request, 2026-11-15; starts after the tacplus landing backlog clears.
 - generate renders the coop's pigeons namespace per tenant (#47; tacplus-dev/coop#17). Hub, on its recommendation with Jody's standing agreement (tp-act-on-recommendations), 2026-11-26.
 - Release v0.2.0 from main carrying #47 and the three seatrials fixes (4Gi volume minimum, StorageClass read from the API, stratum member_port) (#53; for fleet-seatrials#83). Hub, on its recommendation with Jody's standing agreement (tp-act-on-recommendations), 2026-11-27.
+- Render redo as one `/system` instance in the platform namespace, not in the restore tenant (#57; for fleet-seatrials#3; Jody 2026-11-07). Hub, on its recommendation with Jody's standing agreement (tp-act-on-recommendations), 2026-11-27.
 
 ## Later
 - Declare the tacplus floor 2.4 (#1), after tacplus#188
