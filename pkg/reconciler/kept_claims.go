@@ -122,12 +122,3 @@ func keptClaims(ctx context.Context, reader client.Reader, ns string) (map[strin
 	}
 	return kept, nil
 }
-
-func sortedKeys(m map[string][]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
-}
