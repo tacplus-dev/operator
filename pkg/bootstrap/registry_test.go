@@ -252,3 +252,30 @@ func TestTopicSubscriberGetsBroker(t *testing.T) {
 		t.Errorf("mailbox deps %v missing 'eventbus' (it publishes there)", deps)
 	}
 }
+
+// A service that is an S2S client of a sys contract gets the contract's host in
+// its deps: stratum calls redolog.Redo (tacplus's sys/redo.proto), which
+// tacplus emits under sys/redolog with host_label "redo", the /system service
+// that serves it (#57). Without it every tenant's Stratum is refused its
+// appends.
+func TestSysContractClientGetsItsHost(t *testing.T) {
+	sd, err := loadServiceDepsFrom([]byte(`{
+  "name": "root",
+  "children": [
+    {"name": "redolog", "full_path": "sys/redolog",
+     "services": [{"name": "Redo", "package": "redolog", "grpc_service": "redolog.Redo", "host_label": "redo"}]},
+    {"name": "redo", "full_path": "services/redo",
+     "services": [{"name": "RedoSite", "package": "redo", "grpc_service": "redo.RedoSite"}]},
+    {"name": "stratum", "full_path": "services/stratum",
+     "services": [{"name": "Stratum", "package": "stratum", "grpc_service": "stratum.Stratum"}],
+     "client_dependencies": [{"source_package": "stratum", "surface_kind": "s2s",
+       "target_package": "redolog", "target_service": "Redo"}]}
+  ]
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps := sd.authorizedServicesFor("stratum"); !toSet(deps)["redo"] {
+		t.Errorf("stratum deps %v missing 'redo' (it calls redolog.Redo, which redo hosts)", deps)
+	}
+}

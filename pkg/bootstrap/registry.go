@@ -126,12 +126,14 @@ func loadServiceDepsFrom(data []byte) (*serviceDeps, error) {
 	}
 
 	// Phase 1: Build vservice grpc_service → physical service mapping from
-	// host_label and event_label on vservice ServiceInfo entries.
+	// host_label and event_label on vservice ServiceInfo entries, and on the
+	// sys contracts a service hosts by its routing label.
 	//   e.g. "agentsensor.StratumQuery" → "stratum"
 	//        "agentsensor.AgentEventBusStateService" → "eventbus"
+	//        "redolog.Redo" → "redo" (sys/redo.proto, under sys/redolog)
 	grpcToPhysical := make(map[string]string)
 	walkNodes(&root, func(node *registryNode) {
-		if !strings.HasPrefix(node.FullPath, "vservices/") {
+		if !strings.HasPrefix(node.FullPath, "vservices/") && !strings.HasPrefix(node.FullPath, "sys/") {
 			return
 		}
 		for _, svc := range node.Services {
