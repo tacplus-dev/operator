@@ -59,18 +59,28 @@ the looper then marks it `promoted` or `declined` here with the date.
   (pkg/bootstrap/settings.go) makes generate rewrite a crypto.yaml that still holds `pki.kmaker_signing_ca`, so the
   kmaker CA private key leaves existing config dirs. Once every deployment has run a generate with it (after the first
   release that carries #16), the check is dead weight and can go; the proto's `reserved 7` stays.
-- **Drop the shared-platform-service rule with per-tenant Stratum** (2026-11-01, #15): `DeployedServiceInstances`
-  (pkg/bootstrap/services.go) fans out per tenant only the app services, because the helm generator renders every
-  platform service shared, though registry.json marks stratum tenant_owned since stratum#2. When #2 renders Stratum per
-  tenant, the generator and that rule have to change together (one source for "deployed per tenant"), and
-  `helm.StratumSeedMembers` becomes per tenant. The old shape #2 removes is still rendered meanwhile:
-  `STRATUM_MEMBER_ROLE`, `STRATUM_WS_SEED_MEMBERS`, the writers' volume and `disk_persistence`, which the stratum#2 image
-  no longer reads.
+- **Prune the shared stratum delegate** (2026-11-28, #2): per-tenant Stratum gives each tenant its own `stratum`
+  delegate (`/tenants/<t>`, service account `stratum-<t>`), but a kernel.yaml written before it keeps the shared one
+  (no tenant_namespace, service account `stratum` in the platform namespace): `EnsureServiceDelegates` never touches a
+  delegate of an instance it does not deploy. Nothing runs as that account any more, so it is a /system identity
+  nobody uses. Pruning the delegates of retired instances (this one, kmaker's before it) would end the class.
+- **A tenant's Stratum member count from its own config** (2026-11-28, #2): `topology.stratum_members` is
+  deployment-wide because a tenant's configuration is not the deployment's (Jody, 2026-11-03). Once tenant uni-configs
+  exist (the huddle is open), each tenant's count comes from there and is uplifted into state, as its seeds are.
+- **Zone-aware Stratum backups** (2026-11-28, #2): each tenant's members spread across zones
+  (`topologySpreadConstraints`, ScheduleAnyway), but no member knows its zone: `STRATUM_ZONE` is not rendered, since env
+  comes from the uni-config and a pod's zone is not in it (Jody, 2026-11-03), so Hazelcast's backups are not zone-aware.
+  It matters once a cluster has more than one zone (the hub's PRODUCTION.md).
+- **Kernel takes a tenant's Stratum seeds only at boot** (2026-11-28, #2): the seeds ride in kernel's bootstrap tenants
+  (kernel#34), so a new tenant or a `stratum_members` change reaches a Stratum only through kernel's config, which rolls
+  kernel. Fine while tenants are few; a kernel that re-applies its bootstrap tenants on a config change without a
+  restart would make it free.
 - **Reconcile tenant-namespace StatefulSets' immutable fields** (2026-11-03, #2): `reconcileImmutableStatefulSetFields`
   (pkg/reconciler) lists the StatefulSets of the platform namespace only. `redo-restore` runs in the restore tenant's
   namespace, so a change to a field Kubernetes forbids patching there (its storage class, say) fails the helm upgrade
-  instead of recreating the StatefulSet. Per-tenant Stratum (#2) will be StatefulSets in tenant namespaces too; the
-  reconciler should walk every namespace the chart renders into.
+  instead of recreating the StatefulSet. Each tenant's Stratum (#2) is a StatefulSet in its tenant namespace too (with
+  no volume, so only its selector or serviceName could hit this); the reconciler should walk every namespace the chart
+  renders into.
 - **Retire the auto-upgrade checker, or make it follow release lines** (2026-11-02, #8): `pkg/upgrade` now polls
   `ghcr.io/tacplus-dev/<service>`, but it still selects SeaBeam's tag scheme (`vMAJOR.MINOR.PROTO_PATCH-BRANCH.LOCAL_PATCH`,
   `selectLatest`), which no tacplus-dev release uses (#6: `vMAJOR.MINOR.PATCH`, line tag `MAJOR.MINOR`). Its registry
