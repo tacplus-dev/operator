@@ -31,7 +31,7 @@ longer runs`, with the namespace, the StatefulSet, its claims and the command th
 
 That one is what an upgrade to per-tenant Stratum leaves (#2): the shared `stratum` StatefulSet and its writers' volumes
 are gone, each tenant's Stratum is in memory with the redo service its durability, and nothing will bind those claims
-again. redo's claim is `data-redo-restore-0` in the restore tenant's namespace, `tac-<deployment>-00000002`. Kept claims cost
+again. redo's claim is `data-redo-0` in the platform namespace, `tac-<deployment>`. Kept claims cost
 what their disks cost while unused, and a component scaled back up binds them again with whatever they hold: right for
 a restart, wrong after a version or key change. Run the command before scaling back up when the data must not come
 back, and once the component is gone for good.

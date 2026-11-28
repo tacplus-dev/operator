@@ -369,16 +369,16 @@ const grpcHealthProbePort = 8444
 // redoServiceName is the redo service, rendered with Stratum.
 const redoServiceName = "redo"
 
-// RedoDataDir is where redo-restore's volume is mounted, and so its
+// RedoDataDir is where redo's volume is mounted, and so its
 // Config.data_dir in kernel's services holder (pkg/bootstrap): one constant,
 // so the two cannot disagree. It is redo's own default.
 const RedoDataDir = "/var/lib/redo"
 
 // StratumTenants are the tenants that get a Stratum of their own, in order:
 // every tenant cfg lists, once, but the reserved restore tenant, and then the
-// reserved people tenant when cfg does not list it. restore has none: the redo
-// service there keeps its own disk, and a Stratum in it would depend on itself
-// for durability (Jody, 2026-10-26). people always has one.
+// reserved people tenant when cfg does not list it. restore has none: nothing
+// runs in it since redo left it for /system (Jody, 2026-11-07). people always
+// has one.
 func StratumTenants(cfg *protoOperator.Config) []string {
 	seen := map[string]bool{deployment.RestoreTenant: true}
 	var out []string
@@ -1209,11 +1209,11 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 
 	// redo: Stratum's durability (decisions/stratum-per-tenant-2026-10-25.md in
 	// tacplus-dev/roadmap), so it is rendered whenever Stratum is: always, as
-	// the people tenant always has a Stratum. Its proto
-	// pins it to the reserved restore tenant ((spec.service).pinned_tenant):
-	// one instance, redo-restore, in that tenant's namespace, never replicated
-	// and never in the platform namespace (Jody, 2026-10-26). restore has no
-	// Stratum: redo keeps its own disk.
+	// the people tenant always has a Stratum. One /system instance, redo, in
+	// the platform namespace, never replicated: every tenant's Stratum calls it
+	// (tenant -> /system), and it keeps their logs apart by the caller's tid
+	// (Jody, 2026-11-07, decisions/s2s-never-crosses-tenants-2026-10-31.md,
+	// addendum: "It leaves the restore tenant"; tacplus-dev/redo#19).
 	//
 	// A StatefulSet for its volumeClaimTemplate: the logs live on that volume,
 	// mounted at redo.Config.data_dir, and a local ack is durable once it is on
@@ -1225,8 +1225,7 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// compacted into each tenant's snapshot (redo.Config.compact_after), so
 	// they grow with the tenants' data, not with time.
 	svcs = append(svcs, withKernelServiceAuth(serviceSpec{
-		Name: TenantInstanceName(redoServiceName, deployment.RestoreTenant), Replicas: 1, Image: g.imageRef(cfg, redoServiceName),
-		TenantInstance: true, Tenant: deployment.RestoreTenant, Namespace: tenantNamespace(deployment.RestoreTenant),
+		Name: redoServiceName, Replicas: 1, Image: g.imageRef(cfg, redoServiceName),
 		HasGRPC: true, ListenPort: 8443, IsStatefulSet: true,
 		HasPVC: true, Storage: "10Gi", StorageClass: cfg.GetRedoStorageClass(), DataMountPath: RedoDataDir,
 		// Measured nowhere yet: sized like the other small Go services.
@@ -1428,7 +1427,7 @@ func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount
 // this chart renders with a kernel identity for cfg's topology — the specs
 // withKernelServiceAuth stamps a projected kernel token onto.
 //
-// A tenant's instance (stratum-<tenant>, redo-restore) reports its service's
+// A tenant's instance (stratum-<tenant>) reports its service's
 // identity, not its workload name: the identity is what kernel authenticates
 // and what the operator has to know about.
 //

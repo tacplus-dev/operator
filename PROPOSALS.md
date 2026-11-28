@@ -4,13 +4,6 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
-- **Render redo as one `/system` instance in the platform namespace** (2026-11-28, #57): #2 renders `redo-restore`
-  in the restore tenant's namespace, but on tacplus 2.6.16 `redolog.Redo` is a `/system` contract and a tenant's S2S
-  client never reaches another tenant (tacplus#258), so no tenant's Stratum could append. Render `redo` (StatefulSet,
-  its volume on `redo_storage_class` at `helm.RedoDataDir`) in `tac-<deployment>` under a `/system` delegate, drop the
-  restore pin in `DeployedServiceInstances`, and keep every `stratum-<t>` delegate authorized for `redo` from the
-  registry's edge. It needs #56 (tacplus 2.6.16) and redo#19's release first. Open questions: whether the restore
-  tenant keeps its now-empty namespace, the instance's name, and a ROADMAP.md entry under item 1.2. Design on #57.
 - **Keep eventbus's volumes when it scales down, as a StatefulSet's are** (2026-11-28, #54): eventbus is rendered as
   one Deployment per replica with a chart-templated PVC, `eventbus<i>-data`, so `eventbus_nodes` going down makes
   Helm delete the claims past the new count with their data, while a StatefulSet's claims are kept and named in the
@@ -70,7 +63,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   delegate (`/tenants/<t>`, service account `stratum-<t>`), but a kernel.yaml written before it keeps the shared one
   (no tenant_namespace, service account `stratum` in the platform namespace): `EnsureServiceDelegates` never touches a
   delegate of an instance it does not deploy. Nothing runs as that account any more, so it is a /system identity
-  nobody uses. Pruning the delegates of retired instances (this one, kmaker's before it) would end the class.
+  nobody uses. #57 adds one more: a kernel.yaml written since #2 keeps restore's `redo` delegate (`/tenants/restore`,
+  service account `redo-restore`) beside the new `/system` one. Pruning the delegates of retired instances (these,
+  kmaker's before them) would end the class.
 - **A tenant's Stratum member count from its own config** (2026-11-28, #2): `topology.stratum_members` is
   deployment-wide because a tenant's configuration is not the deployment's (Jody, 2026-11-03). Once tenant uni-configs
   exist (the huddle is open), each tenant's count comes from there and is uplifted into state, as its seeds are.
@@ -83,11 +78,10 @@ the looper then marks it `promoted` or `declined` here with the date.
   kernel. Fine while tenants are few; a kernel that re-applies its bootstrap tenants on a config change without a
   restart would make it free.
 - **Reconcile tenant-namespace StatefulSets' immutable fields** (2026-11-03, #2): `reconcileImmutableStatefulSetFields`
-  (pkg/reconciler) lists the StatefulSets of the platform namespace only. `redo-restore` runs in the restore tenant's
-  namespace, so a change to a field Kubernetes forbids patching there (its storage class, say) fails the helm upgrade
-  instead of recreating the StatefulSet. Each tenant's Stratum (#2) is a StatefulSet in its tenant namespace too (with
-  no volume, so only its selector or serviceName could hit this); the reconciler should walk every namespace the chart
-  renders into.
+  (pkg/reconciler) lists the StatefulSets of the platform namespace only. Each tenant's Stratum (#2) is a StatefulSet in
+  its tenant namespace (with no volume, so only its selector or serviceName could hit this), where a change to a field
+  Kubernetes forbids patching fails the helm upgrade instead of recreating the StatefulSet; the reconciler should walk
+  every namespace the chart renders into. (redo was the case with a volume; since #57 it is in the platform namespace.)
 - **Retire the auto-upgrade checker, or make it follow release lines** (2026-11-02, #8): `pkg/upgrade` now polls
   `ghcr.io/tacplus-dev/<service>`, but it still selects SeaBeam's tag scheme (`vMAJOR.MINOR.PROTO_PATCH-BRANCH.LOCAL_PATCH`,
   `selectLatest`), which no tacplus-dev release uses (#6: `vMAJOR.MINOR.PATCH`, line tag `MAJOR.MINOR`). Its registry
@@ -135,6 +129,9 @@ the looper then marks it `promoted` or `declined` here with the date.
   `helm.KernelRaftPort` go, and the charts render no NetworkPolicy at all.
 
 ## Promoted / declined
+- **Render redo as one `/system` instance in the platform namespace** (2026-11-28, #57): promoted 2026-11-27 (hub, with
+  Jody's standing agreement; ROADMAP.md), done in #57: `redo` in `tac-<deployment>` under the `/system` delegate; the
+  restore tenant stays reserved with its now-empty namespace.
 - **Confine kernel's Hazelcast member port to kernel's pods too** (2026-11-03, #20): promoted 2026-11-10 (Jody, roadmap
   suggestion 2026-11-10, decision addendum), done in #30; the live-cluster check is the hub's on dev (#20).
 - **Admit the gateway's edge port only from Google's proxy ranges on GKE** (2026-11-06, #22): declined 2026-11-15 by

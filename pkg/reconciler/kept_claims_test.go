@@ -45,7 +45,7 @@ func keptClaimsTestChart(t *testing.T, cfg *protoOperator.Config) *helmchart.Cha
 // StatefulSet whose writers had volumes, and their PersistentVolumeClaims stay,
 // on purpose. The operator deletes none of them and says so: one warning
 // naming the kept claims and the command that removes them. What the chart
-// still runs with a volume (kernel, redo-restore) is not named.
+// still runs with a volume (kernel, redo) is not named.
 func TestTheSharedStratumsClaimsAreKept(t *testing.T) {
 	ctx := context.Background()
 	cfg := &protoOperator.Config{
@@ -60,8 +60,8 @@ func TestTheSharedStratumsClaimsAreKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rendering the chart: %v", err)
 	}
-	if rendered["stratum"] != nil || rendered["stratum-acme"] == nil || rendered["redo-restore"] == nil {
-		t.Fatalf("guard: want stratum-acme and redo-restore and no shared stratum, got %v", rendered)
+	if rendered["stratum"] != nil || rendered["stratum-acme"] == nil || rendered["redo"] == nil {
+		t.Fatalf("guard: want stratum-acme and redo and no shared stratum, got %v", rendered)
 	}
 	var claims []client.Object
 	for _, st := range rendered {

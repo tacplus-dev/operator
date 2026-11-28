@@ -115,11 +115,11 @@ func TestDeployedServiceInstancesExpandsOnlyTenantOwnedServices(t *testing.T) {
 		}
 	}
 
-	// Every other deployed service is unchanged: one instance, no tenant. redo
-	// is restore's one instance (TestEnsureServiceDelegatesGivesRedoTheRestoreTenant)
-	// and stratum one per tenant (TestEnsureServiceDelegatesGivesEachTenantItsStratum).
+	// Every other deployed service is unchanged: one instance, no tenant, redo
+	// too (TestEnsureServiceDelegatesGivesRedoTheSystemDelegate); stratum is one
+	// per tenant (TestEnsureServiceDelegatesGivesEachTenantItsStratum).
 	for svc, insts := range byService {
-		if svc == "docmanager" || svc == redoServiceName || svc == stratumServiceName {
+		if svc == "docmanager" || svc == stratumServiceName {
 			continue
 		}
 		if len(insts) != 1 {
@@ -180,10 +180,9 @@ func TestEnsureServiceDelegatesOnePerTenantForTenantOwnedService(t *testing.T) {
 
 // TestEnsureServiceDelegatesLeavesSharedServicesAlone is criterion 3: a service
 // registry.json does NOT mark tenant_owned keeps exactly the single shared
-// delegate it gets today, even in a cluster that lists tenants. Stratum and
-// redo are the platform's tenant instances
-// (TestEnsureServiceDelegatesGivesEachTenantItsStratum,
-// TestEnsureServiceDelegatesGivesRedoTheRestoreTenant).
+// delegate it gets today, even in a cluster that lists tenants, redo among
+// them. Stratum is the platform's tenant instance
+// (TestEnsureServiceDelegatesGivesEachTenantItsStratum).
 func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 	withRegistry(t, registryMarking([]string{"docmanager"}, []string{"tasks"}))
 	dir := t.TempDir()
@@ -197,7 +196,7 @@ func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 	counts := map[string]int{}
 	for _, d := range loadDelegates(t, kernelPath) {
 		counts[d.Name]++
-		if d.Name == "docmanager" || d.Name == redoServiceName || d.Name == stratumServiceName {
+		if d.Name == "docmanager" || d.Name == stratumServiceName {
 			continue
 		}
 		if d.TenantNamespace != "" {

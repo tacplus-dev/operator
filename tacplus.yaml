@@ -29,7 +29,7 @@ depends:
   # letsencrypt's depends, retired here (#21).
   - stratum
   # redo, the durability of every tenant's Stratum: its registry entry
-  # (tenant_owned, pinned_tenant: restore) and its Config in the holder.
+  # (a /system service since redo#19, #57) and its Config in the holder.
   - redo
   # pkg/bootstrap tests exercise the app-service config path with llmproxy.
   - llmproxy

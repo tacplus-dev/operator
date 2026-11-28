@@ -860,7 +860,7 @@ func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 // the case that was missing fsGroup: the Deployment path called
 // pvcFsGroupLines and the StatefulSet path did not, so kernel and stratum (then
 // the shared one, with volumes) were the only two services that could not write
-// to their own disk. redo-restore is the other StatefulSet with a volume now.
+// to their own disk. redo is the other StatefulSet with a volume now.
 //
 // It failed silently for as long as it existed. Kernel's persistence layer logs
 // a WARN and returns -- "Failed to persist kernel disk snapshot to
@@ -878,7 +878,7 @@ func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
 
 	for _, path := range []string{
 		"templates/kernel/statefulset.yaml",
-		"templates/redo-restore/statefulset.yaml",
+		"templates/redo/statefulset.yaml",
 	} {
 		body := chartFile(t, charts, path)
 		if !strings.Contains(body, "volumeClaimTemplates") {

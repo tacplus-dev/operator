@@ -81,7 +81,7 @@ func TestGeneratedOutputSatisfiesConsumerProtos(t *testing.T) {
 	// just whichever ones happen to be non-nil.
 	want := []string{
 		"bootstrap0", "bootstrap1", "bootstrap2", "echo",
-		"gateway", "eventbus", "oauth", "opa", "stratum-people", "redo-restore",
+		"gateway", "eventbus", "oauth", "opa", "stratum-people", "redo",
 		"tasks",
 	}
 	got := map[string]bool{}

@@ -28,7 +28,7 @@ var kernelAuthenticatedServiceNames = map[string]bool{
 	"mailbox":      true,
 	"personalauth": true,
 	"blobstore":    true,
-	// redo, deployed with stratum: one instance in the reserved restore tenant.
+	// redo, deployed with stratum: one /system instance.
 	"redo": true,
 }
 
@@ -91,9 +91,9 @@ const redoServiceName = "redo"
 // (helm.StratumTenants): stratum-<tenant>.
 const stratumServiceName = "stratum"
 
-// redoInstanceName names redo's one instance, in the restore tenant: its
-// workload, its service account and its values key.
-var redoInstanceName = helm.TenantInstanceName(redoServiceName, deployment.RestoreTenant)
+// redoInstanceName names redo's one /system instance: its workload, its
+// service account and its values key.
+const redoInstanceName = redoServiceName
 
 // operatorServiceAccountName is the Kubernetes ServiceAccount the operator pod
 // runs as, from the operator's own chart (helm/templates/serviceaccount.yaml).
@@ -166,18 +166,13 @@ func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, err
 		return nil, err
 	}
 	// The helm generator deploys the app's own services per tenant as
-	// registry.json says, and the platform's once, shared, but for the two it
-	// renders as tenant instances below. The delegates have to match the pods
+	// registry.json says, and the platform's once, shared, but for Stratum,
+	// which it renders per tenant below. The delegates have to match the pods
 	// that run.
 	perTenant := map[string]bool{}
 	for _, svc := range AppServiceNames(cfg) {
 		perTenant[svc] = tenantOwned[svc]
 	}
-	// redo is rendered as a tenant instance, in the reserved restore tenant, as
-	// the generator renders it. Its proto pins it there too
-	// (TestEmbeddedRegistryPinsRedoToRestore).
-	perTenant[redoServiceName] = true
-	pinnedTenant[redoServiceName] = deployment.RestoreTenant
 	var out []ServiceInstance
 	for _, svc := range DeployedKernelAuthServices(cfg) {
 		// Stratum is per tenant (#2), and its tenants are its own: every listed
