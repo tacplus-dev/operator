@@ -4,6 +4,12 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Decide what the restore tenant is for now that redo has left it** (2026-11-28, #57): nothing runs in
+  `tac-<deployment>-00000002` since redo became one `/system` instance, yet the operator still reserves restore (tid
+  `00000002`), lists it in kernel's `Config.tenants` and asks deploymentproxy for its namespace. Retiring it changes
+  kernel's tenants and, on a pruning reconcile, deletes the `TenantNamespace` and so the namespace (with a kept
+  `data-redo-restore-0` claim, if #2's render ever ran). Whether it stays reserved, gives up its namespace, or retires
+  with its tid still reserved is Jody's decision (tacplus-dev/roadmap decisions/s2s-never-crosses-tenants-2026-10-31.md).
 - **Keep eventbus's volumes when it scales down, as a StatefulSet's are** (2026-11-28, #54): eventbus is rendered as
   one Deployment per replica with a chart-templated PVC, `eventbus<i>-data`, so `eventbus_nodes` going down makes
   Helm delete the claims past the new count with their data, while a StatefulSet's claims are kept and named in the
