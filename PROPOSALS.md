@@ -4,6 +4,12 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Keep eventbus's volumes when it scales down, as a StatefulSet's are** (2026-11-28, #54): eventbus is rendered as
+  one Deployment per replica with a chart-templated PVC, `eventbus<i>-data`, so `eventbus_nodes` going down makes
+  Helm delete the claims past the new count with their data, while a StatefulSet's claims are kept and named in the
+  operator's log (#54, README). Either annotate that PVC `helm.sh/resource-policy: keep` and have `reportKeptClaims`
+  name it too, or move eventbus to a StatefulSet. Open question: whether eventbus's data is meant to outlive a
+  replica.
 - **Release v0.2.0 from main, with the hub's three fixes landed first** (2026-11-28, #53): fleet-seatrials#83 pins
   the release that carries #47, but the fleet runs `hub/v0.1.0-volume-minimum` (`d213b89`), v0.1.0 plus fixes main
   lacks: kernel's and eventbus's volumes at 4Gi, Hyperdisk Balanced's minimum (`e6f620b`, `370c702`), the PVC's

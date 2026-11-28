@@ -139,6 +139,10 @@ type Reconciler struct {
 	// TenantNamespaceReadyTimeout and tenantNamespacePollInterval.
 	tenantNamespaceTimeout time.Duration
 	tenantNamespacePoll    time.Duration
+
+	// keptReported is what reportKeptClaims last logged, the kept claims by
+	// <namespace>/<statefulset>, so an unchanged set is not logged every pass.
+	keptReported map[string]string
 }
 
 // New creates a Reconciler. Call Run to start the reconciliation loop.
@@ -357,6 +361,9 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 	if err := r.apply(ctx, charts, svcValues); err != nil {
 		return fmt.Errorf("applying charts: %w", err)
 	}
+
+	// The claims of a StatefulSet scaled away are kept, never deleted (#54).
+	r.reportKeptClaims(ctx, chartCfg)
 
 	// Prune deployments that are no longer in the chart (e.g. after topology scale-down).
 	if err := r.pruneStaleDeployments(ctx, nodeCount); err != nil {
