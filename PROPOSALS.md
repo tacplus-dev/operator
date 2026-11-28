@@ -4,6 +4,13 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Render redo as one `/system` instance in the platform namespace** (2026-11-28, #57): #2 renders `redo-restore`
+  in the restore tenant's namespace, but on tacplus 2.6.16 `redolog.Redo` is a `/system` contract and a tenant's S2S
+  client never reaches another tenant (tacplus#258), so no tenant's Stratum could append. Render `redo` (StatefulSet,
+  its volume on `redo_storage_class` at `helm.RedoDataDir`) in `tac-<deployment>` under a `/system` delegate, drop the
+  restore pin in `DeployedServiceInstances`, and keep every `stratum-<t>` delegate authorized for `redo` from the
+  registry's edge. It needs #56 (tacplus 2.6.16) and redo#19's release first. Open questions: whether the restore
+  tenant keeps its now-empty namespace, the instance's name, and a ROADMAP.md entry under item 1.2. Design on #57.
 - **Keep eventbus's volumes when it scales down, as a StatefulSet's are** (2026-11-28, #54): eventbus is rendered as
   one Deployment per replica with a chart-templated PVC, `eventbus<i>-data`, so `eventbus_nodes` going down makes
   Helm delete the claims past the new count with their data, while a StatefulSet's claims are kept and named in the
