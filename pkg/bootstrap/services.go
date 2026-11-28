@@ -79,12 +79,17 @@ var alwaysOnKernelAuthServices = []string{
 	"oauth",
 	"opa",
 	"operator",
+	"redo",
 	"stratum",
 }
 
 // redoServiceName is the redo service, deployed with stratum (helm's
 // enabledServices).
 const redoServiceName = "redo"
+
+// stratumServiceName is Stratum, deployed once per tenant
+// (helm.StratumTenants): stratum-<tenant>.
+const stratumServiceName = "stratum"
 
 // redoInstanceName names redo's one instance, in the restore tenant: its
 // workload, its service account and its values key.
@@ -160,21 +165,29 @@ func DeployedServiceInstances(cfg *protoOperator.Config) ([]ServiceInstance, err
 	if err != nil {
 		return nil, err
 	}
-	// The helm generator deploys only the app's own services per tenant; every
-	// platform service is rendered once, shared, whatever registry.json says
-	// (stratum is tenant_owned since stratum#2, but per-tenant Stratum is
-	// operator#2). The delegates have to match the pods that run.
+	// The helm generator deploys the app's own services per tenant as
+	// registry.json says, and the platform's once, shared, but for the two it
+	// renders as tenant instances below. The delegates have to match the pods
+	// that run.
 	perTenant := map[string]bool{}
 	for _, svc := range AppServiceNames(cfg) {
 		perTenant[svc] = tenantOwned[svc]
 	}
-	// redo is the one platform service rendered as a tenant instance, in the
-	// reserved restore tenant, as the generator renders it. Its proto pins it
-	// there too (TestEmbeddedRegistryPinsRedoToRestore).
+	// redo is rendered as a tenant instance, in the reserved restore tenant, as
+	// the generator renders it. Its proto pins it there too
+	// (TestEmbeddedRegistryPinsRedoToRestore).
 	perTenant[redoServiceName] = true
 	pinnedTenant[redoServiceName] = deployment.RestoreTenant
 	var out []ServiceInstance
 	for _, svc := range DeployedKernelAuthServices(cfg) {
+		// Stratum is per tenant (#2), and its tenants are its own: every listed
+		// one but restore, and people (helm.StratumTenants).
+		if svc == stratumServiceName {
+			for _, tenant := range helm.StratumTenants(cfg) {
+				out = append(out, ServiceInstance{Service: svc, Tenant: tenant})
+			}
+			continue
+		}
 		out = append(out, serviceInstances(cfg, svc, perTenant, pinnedTenant)...)
 	}
 	return out, nil
@@ -250,9 +263,6 @@ func DeployedKernelAuthServices(cfg *protoOperator.Config) []string {
 	}
 	if opt.GetBlobstore() && topo.GetBlobstoreNodes() > 0 {
 		out = append(out, "blobstore")
-	}
-	if topo.GetStratumNodes() > 0 {
-		out = append(out, redoServiceName)
 	}
 	// The application's own services, declared by name rather than by a proto
 	// field the platform had to add for them.

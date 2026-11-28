@@ -388,10 +388,7 @@ func runInitCluster(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  eventbus:   %d\n", topo.EventbusNodes)
 	fmt.Printf("  oauth:  %s\n", oauthStatus)
 	fmt.Printf("  opa:   %d\n", topo.OpaNodes)
-	fmt.Printf("  stratum:    %d (writers)\n", topo.StratumNodes)
-	if topo.GetStratumSearchNodes() > 0 {
-		fmt.Printf("  stratum:    %d (search)\n", topo.GetStratumSearchNodes())
-	}
+	fmt.Printf("  stratum:    %d member(s) per tenant\n", helm.StratumMembers(cfg))
 	fmt.Printf("  services/   editable service configs\n")
 	fmt.Printf("  ca.pem      CA cert for host trust\n")
 	fmt.Printf("\nEdit services/*.yaml, then run:\n")

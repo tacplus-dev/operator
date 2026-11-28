@@ -31,7 +31,6 @@ func generatedOutputFixture(t *testing.T) string {
 			GatewayNodes:  1,
 			OauthNodes:    1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			EchoNodes:     1,
 			AppServices:   map[string]int32{"tasks": 1},
 		},
@@ -82,7 +81,7 @@ func TestGeneratedOutputSatisfiesConsumerProtos(t *testing.T) {
 	// just whichever ones happen to be non-nil.
 	want := []string{
 		"bootstrap0", "bootstrap1", "bootstrap2", "echo",
-		"gateway", "eventbus", "oauth", "opa", "stratum",
+		"gateway", "eventbus", "oauth", "opa", "stratum-people", "redo-restore",
 		"tasks",
 	}
 	got := map[string]bool{}
@@ -204,8 +203,7 @@ func TestEveryDeployArtifactIsClassified(t *testing.T) {
 		"PersonalauthConfig": true,
 		"AppConfigs":         true, "GatewayConfig": true,
 		"EventbusConfig": true, "OauthConfig": true, "OpaConfig": true,
-		"StratumConfig":           true,
-		"StratumSearchConfig":     true,
+		"StratumConfigs":          true,
 		"RedoConfig":              true,
 		"BlobstoreConfig":         true,
 		"OperatorBootstrapConfig": true,

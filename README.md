@@ -20,8 +20,8 @@ policy goes when tacplus-dev/kernel#42 moves Raft behind the authenticated membe
 
 ## A StatefulSet scaled to 0 keeps its volumes
 
-Setting a StatefulSet component's count to 0 (`stratum_nodes: 0` in operator.yaml, which removes stratum's writers, its
-search members and redo; `kernel_nodes`) removes its StatefulSets, and their PersistentVolumeClaims stay, on purpose (#54): so do the claims
+Setting a StatefulSet component's count to 0 (`kernel_nodes` in operator.yaml) removes its StatefulSet, and its
+PersistentVolumeClaims stay, on purpose (#54): so do the claims
 past a StatefulSet's replicas after a scale-down. A count of 0 is also what a missing topology field or a services
 filter gives, and deleting the record store's volumes on that would lose its data for good. The operator deletes none
 of them: on each change in what it keeps it logs the warning `kept the volume claims of a StatefulSet the chart no
@@ -29,7 +29,9 @@ longer runs`, with the namespace, the StatefulSet, its claims and the command th
 
     kubectl delete pvc -n tac-<deployment> data-stratum-0 data-stratum-1 data-stratum-2
 
-(redo's is `data-redo-restore-0` in the restore tenant's namespace, `tac-<deployment>-00000002`). Kept claims cost
+That one is what an upgrade to per-tenant Stratum leaves (#2): the shared `stratum` StatefulSet and its writers' volumes
+are gone, each tenant's Stratum is in memory with the redo service its durability, and nothing will bind those claims
+again. redo's claim is `data-redo-restore-0` in the restore tenant's namespace, `tac-<deployment>-00000002`. Kept claims cost
 what their disks cost while unused, and a component scaled back up binds them again with whatever they hold: right for
 a restart, wrong after a version or key change. Run the command before scaling back up when the data must not come
 back, and once the component is gone for good.

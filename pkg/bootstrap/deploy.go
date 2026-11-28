@@ -19,7 +19,6 @@ import (
 	protoGateway "github.com/tacplus-dev/operator/tacplus/types/services/gateway"
 	protoKernel "github.com/tacplus-dev/operator/tacplus/types/services/kernel"
 	protoOperator "github.com/tacplus-dev/operator/tacplus/types/services/operator"
-	protoDiskstore "github.com/tacplus-dev/operator/tacplus/types/sys/diskstore"
 	protoHost "github.com/tacplus-dev/operator/tacplus/types/sys/host"
 	protoX509 "github.com/tacplus-dev/operator/tacplus/types/sys/x509"
 )
@@ -37,17 +36,20 @@ type DeployConfigs struct {
 	// by service name. Platform services each have a named field above because
 	// the platform's service set is fixed; an app's is not known until its
 	// config declares it, so those cannot be fields.
-	AppConfigs          map[string][]byte
-	GatewayConfig       []byte
-	EventbusConfig      []byte
-	OauthConfig         []byte
-	OpaConfig           []byte
-	StratumConfig       []byte
-	StratumSearchConfig []byte
-	RedoConfig          []byte
-	BlobstoreConfig     []byte
-	GatewayOpts         GatewayOptions
-	Cfg                 *protoOperator.Config
+	AppConfigs     map[string][]byte
+	GatewayConfig  []byte
+	EventbusConfig []byte
+	OauthConfig    []byte
+	OpaConfig      []byte
+	// StratumConfigs holds each tenant's Stratum bootstrap YAML, keyed by its
+	// instance, stratum-<tenant> (helm.StratumTenants). The bytes are the same
+	// for every tenant: nothing in it names the tenant, which kernel derives
+	// from the delegate, and its seeds are state kernel delivers.
+	StratumConfigs  map[string][]byte
+	RedoConfig      []byte
+	BlobstoreConfig []byte
+	GatewayOpts     GatewayOptions
+	Cfg             *protoOperator.Config
 	// Kernel is the kernel Config every node's bootstrap is built from, its
 	// defaults applied: what the chart must agree with kernel on (its Raft
 	// port, helm.KernelRaftPort) comes from here.
@@ -76,6 +78,9 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 	if err := deployment.Validate(cfg); err != nil {
+		return nil, err
+	}
+	if err := helm.ValidateStratumMembers(cfg); err != nil {
 		return nil, err
 	}
 	// Where the platform runs; every endpoint below names it in full.
@@ -117,10 +122,9 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	if err := ApplyServicesHolderDefaults(kernelConfig.Configs, DeployedKernelAuthServices(cfg)); err != nil {
 		return nil, err
 	}
-	// stratum's seed_members is not in its holder entry: it moved to the
-	// tenant-scope StratumTenantConfig (stratum#26), which reaches stratum
-	// through TenantConfig.stratum once kernel fills it from its bootstrap
-	// tenants (kernel#34) and #2 renders each tenant's list.
+	// stratum's seed_members is not in its holder entry: each tenant's are in
+	// its tenant-scope StratumTenantConfig (stratum#26), which kernel fills
+	// from its bootstrap tenants (kernel#34; addBootstrapTenants below).
 	// redo's data_dir is where the chart mounts its volume.
 	if rc := kernelConfig.Configs.RedoConfig; rc != nil {
 		rc.DataDir = helm.RedoDataDir
@@ -180,9 +184,14 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		kernelConfig.RootCredPairs = cfg.RootCredPairs
 	}
 
+	// The tenants the chart renders for: operator.yaml's, and those only
+	// kernel's records hold, with their tids (the reconciler's chartConfig).
+	chartCfg := withRecordTenants(cfg, recordTenants, recordTids)
+
 	// operator.yaml's tenants with their tids, so kernel keeps as each
-	// tenant's id the one its namespace was rendered with (kernel#3).
-	if err := addBootstrapTenants(kernelConfig, cfg); err != nil {
+	// tenant's id the one its namespace was rendered with (kernel#3), and every
+	// tenant's Stratum seed members.
+	if err := addBootstrapTenants(kernelConfig, chartCfg); err != nil {
 		return nil, err
 	}
 
@@ -443,58 +452,34 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		return nil, err
 	}
 
-	// disk_persistence (and with it the archive) is a bootstrap setting, so the
-	// writers get it here, verbatim from operator.yaml, when it is set.
-	//
-	// member_port is a bootstrap setting too, and stratum's generated
+	// member_port is a bootstrap setting, and stratum's generated
 	// ServiceManager refuses to start without it (stratum declares
 	// spec.member_port, tacplus#212; seatrials, 2026-11-27: every stratum pod
 	// ended "grpcconfig.member_port.listen_address and target_address are
-	// required"). The member port listens where the chart already sends the
-	// members (the seed_members' port) and forwards to Hazelcast on loopback.
-	stratumMemberPort := func(f map[string]any) {
+	// required"). The member port listens where the chart sends the members
+	// (the seed_members' port) and forwards to Hazelcast on loopback.
+	stratumConfigYAML, err := buildSvc(stratumServiceName, func(f map[string]any) {
 		f["member_port"] = map[string]any{
 			"listen_address": map[string]any{"host": "0.0.0.0", "port": int64(helm.StratumMemberPort)},
 			"target_address": map[string]any{"host": "127.0.0.1", "port": int64(helm.StratumMemberTargetPort)},
 		}
-	}
-	stratumExtra := stratumMemberPort
-	if dp := cfg.GetStratumDiskPersistence(); dp != nil {
-		dpYAML, err := protoDiskstore.DiskPersistenceConfigToYAML(dp)
-		if err != nil {
-			return nil, fmt.Errorf("marshaling stratum disk_persistence: %w", err)
-		}
-		var dpMap map[string]any
-		if err := yaml.Unmarshal(dpYAML, &dpMap); err != nil {
-			return nil, fmt.Errorf("unmarshaling stratum disk_persistence YAML: %w", err)
-		}
-		stratumExtra = func(f map[string]any) { stratumMemberPort(f); f["disk_persistence"] = dpMap }
-	}
-	stratumConfigYAML, err := buildSvc("stratum", stratumExtra)
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	// The search members get the plain stratum bootstrap, never the writers':
-	// they have no volume for disk_persistence.dir to point at.
-	var stratumSearchConfigYAML []byte
-	if cfg.GetTopology().GetStratumSearchNodes() > 0 {
-		stratumSearchConfigYAML, err = buildSvc("stratum", stratumMemberPort)
-		if err != nil {
-			return nil, err
-		}
+	// One per tenant's Stratum, as the chart renders them.
+	stratumConfigs := map[string][]byte{}
+	for _, tenant := range helm.StratumTenants(chartCfg) {
+		stratumConfigs[helm.TenantInstanceName(stratumServiceName, tenant)] = stratumConfigYAML
 	}
 
 	// timedb and graphdb went to the boneyard 2026-08-25 (BIG GOAL 3, first
 	// move #1): out of the fleet build, protos deleted, no image published.
 
 	// redo takes the plain shape: its typed Config comes from the holder.
-	var redoConfigYAML []byte
-	if cfg.GetTopology().GetStratumNodes() > 0 {
-		redoConfigYAML, err = buildSvc(redoServiceName, nil)
-		if err != nil {
-			return nil, err
-		}
+	redoConfigYAML, err := buildSvc(redoServiceName, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	// blobstore is a StatefulSet on the generic chassis: its per-ordinal
@@ -553,8 +538,7 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 		EventbusConfig:          eventbusConfigYAML,
 		OauthConfig:             oauthConfigYAML,
 		OpaConfig:               opaConfigYAML,
-		StratumConfig:           stratumConfigYAML,
-		StratumSearchConfig:     stratumSearchConfigYAML,
+		StratumConfigs:          stratumConfigs,
 		RedoConfig:              redoConfigYAML,
 		BlobstoreConfig:         blobstoreConfigYAML,
 		GatewayOpts:             gatewayOpts,
@@ -573,27 +557,52 @@ func buildDeployConfigs(cfgDir string, pkiOverride *protoOperator.PKI, recordTen
 	return dc, nil
 }
 
-// addBootstrapTenants lists in kernel's Config.tenants every tenant of cfg
-// that tenant_ids gives a tid, other than the reserved ones (kernel has
-// those). A tenant kernel.yaml already lists keeps its entry; the same name
-// with another tid is refused, since a tid is immutable.
-func addBootstrapTenants(kernelConfig *protoKernel.Config, cfg *protoOperator.Config) error {
-	listed := make(map[string]string, len(kernelConfig.GetTenants()))
-	for _, t := range kernelConfig.GetTenants() {
-		listed[t.GetName()] = t.GetTid()
+// withRecordTenants is cfg with recordTenants appended to its tenants and
+// recordTids added to its tenant_ids: the config the chart renders, its
+// record tenants' instances included. cfg itself is not changed.
+func withRecordTenants(cfg *protoOperator.Config, recordTenants []string, recordTids map[string]string) *protoOperator.Config {
+	if len(recordTenants) == 0 && len(recordTids) == 0 {
+		return cfg
 	}
-	for _, name := range cfg.GetTenants() {
-		tid, ok := cfg.GetTenantIds()[name]
-		if !ok || name == deployment.PeopleTenant || name == deployment.RestoreTenant {
-			continue
+	out := proto.Clone(cfg).(*protoOperator.Config)
+	out.Tenants = append(out.Tenants, recordTenants...)
+	if len(recordTids) > 0 && out.TenantIds == nil {
+		out.TenantIds = map[string]string{}
+	}
+	for tenant, tid := range recordTids {
+		out.TenantIds[tenant] = tid
+	}
+	return out
+}
+
+// addBootstrapTenants lists in kernel's Config.tenants every tenant of cfg
+// that has a Stratum (helm.StratumTenants), with that Stratum's seed members
+// (kernel#34): kernel writes them into the tenant's TenantConfig.stratum at
+// every boot. An entry carries the tenant's tid when tenant_ids gives it one,
+// so kernel keeps as its id the one its namespace was rendered with (kernel#3),
+// and none otherwise (kernel mints one, or keeps the tenant's). The reserved
+// people tenant is listed for its seeds alone, with no tid: kernel has its
+// record. A tenant kernel.yaml already lists keeps its entry and takes the
+// seeds; the same name with another tid is refused, since a tid is immutable.
+func addBootstrapTenants(kernelConfig *protoKernel.Config, cfg *protoOperator.Config) error {
+	listed := make(map[string]*protoKernel.BootstrapTenant, len(kernelConfig.GetTenants()))
+	for _, t := range kernelConfig.GetTenants() {
+		listed[t.GetName()] = t
+	}
+	for _, name := range helm.StratumTenants(cfg) {
+		tid := cfg.GetTenantIds()[name]
+		if name == deployment.PeopleTenant {
+			tid = ""
 		}
+		seeds := helm.StratumSeedMembers(cfg, name)
 		if have, ok := listed[name]; ok {
-			if have != "" && have != tid {
-				return fmt.Errorf("tenant %q: kernel.yaml lists tid %s, operator.yaml %s", name, have, tid)
+			if have.GetTid() != "" && tid != "" && have.GetTid() != tid {
+				return fmt.Errorf("tenant %q: kernel.yaml lists tid %s, operator.yaml %s", name, have.GetTid(), tid)
 			}
+			have.StratumSeedMembers = seeds
 			continue
 		}
-		kernelConfig.Tenants = append(kernelConfig.Tenants, &protoKernel.BootstrapTenant{Name: name, Tid: tid})
+		kernelConfig.Tenants = append(kernelConfig.Tenants, &protoKernel.BootstrapTenant{Name: name, Tid: tid, StratumSeedMembers: seeds})
 	}
 	return nil
 }
@@ -626,10 +635,6 @@ func FilterTopology(t *protoOperator.Topology, allowed map[string]bool) {
 	check("gateway", &t.GatewayNodes)
 	check("oauth", &t.OauthNodes)
 	check("opa", &t.OpaNodes)
-	check("stratum", &t.StratumNodes)
-	// The search members are the same service, so they are filtered by the same
-	// name: a fleet that does not deploy stratum does not deploy half of it.
-	check("stratum", &t.StratumSearchNodes)
 	check("echo", &t.EchoNodes)
 	check("messaging", &t.MessagingNodes)
 	check("mailbox", &t.MailboxNodes)
@@ -659,13 +664,18 @@ func ServiceConfigValues(dc *DeployConfigs) map[string]interface{} {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"stratum", dc.StratumConfig},
-		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {
 		if len(pair.data) > 0 {
 			vals[pair.name] = map[string]interface{}{"config": string(pair.data)}
+		}
+	}
+
+	// Each tenant's Stratum, keyed by its instance.
+	for name, data := range dc.StratumConfigs {
+		if len(data) > 0 {
+			vals[name] = map[string]interface{}{"config": string(data)}
 		}
 	}
 

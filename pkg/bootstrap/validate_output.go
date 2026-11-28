@@ -88,8 +88,6 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"stratum", dc.StratumConfig},
-		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
 		{"blobstore", dc.BlobstoreConfig},
 		{"operator", dc.OperatorBootstrapConfig},
@@ -99,6 +97,15 @@ func deployArtifacts(dc *DeployConfigs) []generatedArtifact {
 			continue
 		}
 		out = append(out, generatedArtifact{s.name, "grpcconfig.Config", s.data, validateServiceBootstrap})
+	}
+
+	stratumNames := make([]string, 0, len(dc.StratumConfigs))
+	for name := range dc.StratumConfigs {
+		stratumNames = append(stratumNames, name)
+	}
+	sort.Strings(stratumNames)
+	for _, name := range stratumNames {
+		out = append(out, generatedArtifact{name, "grpcconfig.Config", dc.StratumConfigs[name], validateServiceBootstrap})
 	}
 
 	appNames := make([]string, 0, len(dc.AppConfigs))

@@ -79,13 +79,13 @@ func TestRedoInTheOneNamespaceLayout(t *testing.T) {
 	findObject(t, objs, "StatefulSet", "schematic", "redo-restore")
 }
 
-// redo exists for Stratum: a fleet that renders no Stratum renders no redo.
-func TestNoRedoWithoutStratum(t *testing.T) {
+// redo exists for Stratum, which every fleet renders (people always has one):
+// a fleet with no tenant of its own still renders redo.
+func TestRedoWithOnlyThePeopleStratum(t *testing.T) {
 	cfg := deploymentConfig("prod")
-	cfg.Topology.StratumNodes = 0
-	for _, o := range renderedObjects(t, generateDeployment(t, cfg)) {
-		if strings.HasPrefix(o.Name, "redo") {
-			t.Errorf("%s rendered with no Stratum", o.key())
-		}
-	}
+	cfg.Tenants, cfg.TenantIds = nil, nil
+	cfg.Topology.AppServices = nil
+	objs := renderedObjects(t, generateDeployment(t, cfg))
+	findObject(t, objs, "StatefulSet", "tac-prod-00000001", "stratum-people")
+	findObject(t, objs, "StatefulSet", "tac-prod-00000002", "redo-restore")
 }

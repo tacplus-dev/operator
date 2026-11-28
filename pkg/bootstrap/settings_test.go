@@ -224,3 +224,44 @@ func TestLoadConfigRefusesRetiredExternalIP(t *testing.T) {
 		}
 	}
 }
+
+// The shared Stratum's topology retired with per-tenant Stratum (#2;
+// tacplus-dev/roadmap decisions/stratum-per-tenant-2026-10-25.md): no writers,
+// no search members, no disk persistence. Their field numbers are reserved, so
+// ConfigFromBytes would drop the keys, and a deployment that asked for three
+// writers would quietly get one member per tenant. LoadConfig refuses them,
+// naming the key and stratum_members, which replaces them.
+func TestLoadConfigRefusesRetiredStratumTopology(t *testing.T) {
+	for _, tc := range []struct{ settings, key string }{
+		{"fqdn: cluster.example.com\ntopology:\n  kernel_nodes: 3\n  stratum_nodes: 3\n", "stratum_nodes"},
+		{"fqdn: cluster.example.com\ntopology:\n  stratum_nodes: 0\n", "stratum_nodes"},
+		{"fqdn: cluster.example.com\ntopology:\n  stratum_search_nodes: 2\n", "stratum_search_nodes"},
+		{`{"fqdn": "cluster.example.com", "topology": {"stratumNodes": 3}}`, "stratum_nodes"},
+		{"fqdn: cluster.example.com\nstratum_disk_persistence:\n  dir: /app/data\n", "stratum_disk_persistence"},
+		{`{"fqdn": "cluster.example.com", "stratumDiskPersistence": {}}`, "stratum_disk_persistence"},
+	} {
+		dir := t.TempDir()
+		writeFileString(t, filepath.Join(dir, OperatorSettingsFile), tc.settings)
+
+		_, err := LoadConfig(dir)
+		if err == nil {
+			t.Fatalf("LoadConfig accepted an operator.yaml that sets %s:\n%s", tc.key, tc.settings)
+		}
+		for _, want := range []string{OperatorSettingsFile, tc.key, "stratum_members"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want it to name %q", err, want)
+			}
+		}
+	}
+
+	// stratum_members loads.
+	dir := t.TempDir()
+	writeFileString(t, filepath.Join(dir, OperatorSettingsFile), "fqdn: cluster.example.com\ntopology:\n  stratum_members: 3\n")
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.GetTopology().GetStratumMembers(); got != 3 {
+		t.Errorf("topology.stratum_members = %d, want 3", got)
+	}
+}

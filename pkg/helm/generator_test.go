@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -79,7 +80,6 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 			OauthNodes:    1,
 			EchoNodes:     1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 		},
 		OptionalServices: &protoOperator.OptionalServices{
 			Oauth: true,
@@ -91,15 +91,15 @@ func TestGeneratedServiceWorkloadsUseProjectedKernelToken(t *testing.T) {
 		"eventbus",
 		"gateway",
 		"opa",
-		"stratum",
+		"stratum-people",
 		"oauth",
 		"echo",
 	}
 	for _, service := range services {
 		t.Run(service, func(t *testing.T) {
-			// stratum is a StatefulSet (its Hazelcast members need stable
-			// per-pod DNS), so its workload file is named differently. The
-			// projected-token assertions below apply to either shape.
+			// A tenant's stratum is a StatefulSet (its Hazelcast members need
+			// stable per-pod DNS), so its workload file is named differently.
+			// The projected-token assertions below apply to either shape.
 			path := "templates/" + service + "/deployment.yaml"
 			if _, ok := charts.Files[path]; !ok {
 				path = "templates/" + service + "/statefulset.yaml"
@@ -298,236 +298,229 @@ func TestSingleNodeKernelValuesAndTemplates(t *testing.T) {
 // per-replica config keys belong to kernel (distinct TLS cert per replica), not
 // to StatefulSets in general.
 //
-// stratum is a multi-replica StatefulSet whose replicas all read ONE config, and
-// the bundle supplies exactly one entry under "stratum". When the key was chosen
-// by IsStatefulSet, its configmaps referenced .Values.stratum0.config — which
-// nothing populates — and all three pods died at startup with
-// "data is null or empty".
+// A tenant's stratum is a multi-replica StatefulSet whose replicas all read ONE
+// config, and the bundle supplies exactly one entry under its instance,
+// "stratum-<tenant>". When the key was chosen by IsStatefulSet, its configmaps
+// referenced .Values.stratum0.config — which nothing populates — and all three
+// pods died at startup with "data is null or empty".
 func TestStatefulServiceWithoutPerReplicaConfigUsesTheSharedKey(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
+		Tenants:   []string{"acme"},
 		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			StratumNodes: 3,
+			KernelNodes:    1,
+			StratumMembers: 3,
 		},
 	})
 
-	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
+	ss := chartFile(t, charts, "templates/stratum-acme/statefulset.yaml")
 	if !strings.Contains(ss, "replicas: 3") {
-		t.Fatalf("guard: expected a 3-replica stratum StatefulSet\n--- statefulset ---\n%s", ss)
+		t.Fatalf("guard: expected a 3-replica stratum-acme StatefulSet\n--- statefulset ---\n%s", ss)
 	}
 
 	for i := range 3 {
-		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum/configmap-%d.yaml", i))
-		if !strings.Contains(cm, `index .Values "stratum" "config"`) {
-			t.Errorf("stratum configmap-%d must reference the shared stratum config value\n--- configmap ---\n%s", i, cm)
+		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum-acme/configmap-%d.yaml", i))
+		if !strings.Contains(cm, `index .Values "stratum-acme" "config"`) {
+			t.Errorf("stratum-acme configmap-%d must reference the shared stratum-acme config value\n--- configmap ---\n%s", i, cm)
 		}
-		if strings.Contains(cm, fmt.Sprintf(`index .Values "stratum%d" "config"`, i)) {
-			t.Errorf("stratum configmap-%d references the stratum%d config value, which nothing populates", i, i)
+		if strings.Contains(cm, fmt.Sprintf(`index .Values "stratum-acme%d" "config"`, i)) {
+			t.Errorf("stratum-acme configmap-%d references the stratum-acme%d config value, which nothing populates", i, i)
 		}
 		// The StatefulSet's checksum annotation must name the same key.
-		if strings.Contains(ss, fmt.Sprintf(`index .Values "stratum%d" "config"`, i)) {
-			t.Errorf("stratum statefulset checksum references the stratum%d config value, which nothing populates\n--- statefulset ---\n%s", i, ss)
+		if !strings.Contains(ss, fmt.Sprintf(`checksum/config-%d: {{ index .Values "stratum-acme" "config" | sha256sum | quote }}`, i)) {
+			t.Errorf("stratum-acme statefulset checksum/config-%d must hash stratum-acme's config\n--- statefulset ---\n%s", i, ss)
 		}
 	}
 
 	// The headless Service must publish not-ready addresses, or the members
 	// cannot resolve each other at startup and split into one-member clusters.
-	hs := chartFile(t, charts, "templates/stratum/service-headless.yaml")
+	hs := chartFile(t, charts, "templates/stratum-acme/service-headless.yaml")
 	if !strings.Contains(hs, "publishNotReadyAddresses: true") {
 		t.Errorf("headless Service must set publishNotReadyAddresses\n--- service ---\n%s", hs)
 	}
 
 	// values.yaml must not carry per-replica placeholders for stratum.
 	values := chartFile(t, charts, "values.yaml")
-	if strings.Contains(values, "stratum0:") {
-		t.Errorf("values.yaml has a stratum0 placeholder; stratum shares one config\n--- values.yaml ---\n%s", values)
+	if strings.Contains(values, "stratum-acme0:") {
+		t.Errorf("values.yaml has a stratum-acme0 placeholder; a tenant's stratum shares one config\n--- values.yaml ---\n%s", values)
+	}
+	if !regexp.MustCompile(`\nstratum-acme:\n  image: [^\n]+\n  config: ""\n`).MatchString(values) {
+		t.Errorf("values.yaml has no stratum-acme entry with a config placeholder\n--- values.yaml ---\n%s", values)
 	}
 }
 
-// TestStratumRendersBothHazelcastClusters pins the wiring for stratum's SECOND
-// Hazelcast cluster — the working-set maps.
-//
-// Two clusters in one JVM cannot share a port, and the event store pins 5001
-// with auto-increment off, so the working set needs its own named port and its
-// own seed list. Without the seed list it falls back to standalone: each pod
-// holds working sets nobody else can see, and the shared Service hands the next
-// request to a pod that has never heard of the map.
-//
-// Kernel has a single cluster and must keep rendering exactly one port block.
-func TestStratumRendersBothHazelcastClusters(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			StratumNodes: 3,
-		},
-	})
-
-	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
-	for _, want := range []string{
-		`- name: STRATUM_SEED_MEMBERS`,
-		`"stratum-0.stratum.schematic.svc.cluster.local:5001,stratum-1.stratum.schematic.svc.cluster.local:5001,stratum-2.stratum.schematic.svc.cluster.local:5001"`,
-		`- name: STRATUM_WS_SEED_MEMBERS`,
-		`"stratum-0.stratum.schematic.svc.cluster.local:5701,stratum-1.stratum.schematic.svc.cluster.local:5701,stratum-2.stratum.schematic.svc.cluster.local:5701"`,
-		"containerPort: 5001",
-		"containerPort: 5701",
-	} {
-		if !strings.Contains(ss, want) {
-			t.Errorf("stratum statefulset missing %q\n--- statefulset ---\n%s", want, ss)
-		}
-	}
-
-	// Both ports must be reachable on the headless Service and on each per-pod
-	// Service, or a seed address resolves to a member nothing can connect to.
-	for _, f := range []string{
-		"templates/stratum/service-headless.yaml",
-		"templates/stratum/service-0.yaml",
-		"templates/stratum/service-1.yaml",
-		"templates/stratum/service-2.yaml",
-	} {
-		svc := chartFile(t, charts, f)
-		if !strings.Contains(svc, "name: hazelcast\n") {
-			t.Errorf("%s missing the event-store hazelcast port\n--- svc ---\n%s", f, svc)
-		}
-		if !strings.Contains(svc, "name: hazelcast-ws") || !strings.Contains(svc, "port: 5701") {
-			t.Errorf("%s missing the working-set hazelcast port\n--- svc ---\n%s", f, svc)
-		}
-	}
-
-	// Kernel is a HasHazelcast StatefulSet with ONE cluster: no ws port, no ws seeds.
-	ks := chartFile(t, charts, "templates/kernel/statefulset.yaml")
-	if strings.Contains(ks, "5701") || strings.Contains(ks, "STRATUM_WS_SEED_MEMBERS") {
-		t.Errorf("kernel must not render a working-set cluster\n--- statefulset ---\n%s", ks)
+// stratumDeploymentConfig is deployment prod with tenants acme and beta, and
+// restore listed too.
+func stratumDeploymentConfig() *protoOperator.Config {
+	return &protoOperator.Config{
+		Deployment: "prod",
+		Tenants:    []string{"acme", "beta", "restore"},
+		TenantIds:  map[string]string{"acme": "a1b2c3d4", "beta": "b1c2d3e4"},
+		Topology:   &protoOperator.Topology{KernelNodes: 1, GatewayNodes: 1},
 	}
 }
 
-// stratum_search_nodes renders a SECOND, VOLUME-LESS stratum workload: search
-// members, joining the same Hazelcast cluster as the writers with
-// STRATUM_MEMBER_ROLE=search.
-//
-// The things that make it a search member rather than a fourth writer are all
-// absences, so they are asserted as absences: no volumeClaimTemplate, no data
-// mount, no storage value, no ServiceAccount or config of its own. A writer is
-// what you get by forgetting any one of them, and a fourth writer with no volume
-// would be counted for min_durable_copies and for the restore barrier while holding
-// nothing durable at all.
-func TestStratumSearchNodesRenderAVolumeLessWorkload(t *testing.T) {
-	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes:        1,
-			StratumNodes:       2,
-			StratumSearchNodes: 3,
-		},
-	})
+// Stratum is per tenant (#2): one StatefulSet, stratum-<tenant>, for every
+// listed tenant but restore and for people, in the tenant's own namespace,
+// running as its own service account there. Nothing of the shared cluster is
+// left: no stratum in the platform namespace, no search members, no volume, no
+// env seeds or roles, no working-set port. A member's seeds are state kernel
+// delivers (StratumSeedMembers), and its member port is 5001 only.
+func TestEachTenantGetsItsOwnStratum(t *testing.T) {
+	charts := generateTestChart(t, stratumDeploymentConfig())
 
-	ss := chartFile(t, charts, "templates/stratum-search/statefulset.yaml")
-	if !strings.Contains(ss, "replicas: 3") {
-		t.Fatalf("guard: expected a 3-replica search StatefulSet\n--- statefulset ---\n%s", ss)
-	}
-	for _, want := range []string{
-		`- name: STRATUM_MEMBER_ROLE`,
-		`value: "search"`,
-		"containerPort: 5001",
-		"containerPort: 5701",
-		`image: {{ index .Values "stratum-search" "image" }}`,
+	for tenant, ns := range map[string]string{
+		"acme":   "tac-prod-a1b2c3d4",
+		"beta":   "tac-prod-b1c2d3e4",
+		"people": "tac-prod-00000001",
 	} {
-		if !strings.Contains(ss, want) {
-			t.Errorf("search statefulset missing %q\n--- statefulset ---\n%s", want, ss)
+		name := "stratum-" + tenant
+		ss := chartFile(t, charts, "templates/"+name+"/statefulset.yaml")
+		for _, want := range []string{
+			"kind: StatefulSet\nmetadata:\n  name: " + name + "\n  namespace: " + ns + "\n",
+			"serviceName: " + name + "\n",
+			"replicas: 1\n",
+			"serviceAccountName: " + name + "\n",
+			"containerPort: 5001",
+			`image: {{ index .Values "` + name + `" "image" }}`,
+			"schematic.startupProbeStratum",
+		} {
+			if !strings.Contains(ss, want) {
+				t.Errorf("%s statefulset missing %q\n--- statefulset ---\n%s", name, want, ss)
+			}
 		}
-	}
-	// The absences. A volume is the whole of what a writer has and a search member
-	// does not.
-	for _, unwanted := range []string{"volumeClaimTemplates", "mountPath: /app/data", "name: data"} {
-		if strings.Contains(ss, unwanted) {
-			t.Errorf("search statefulset carries %q; a search member has no volume\n--- statefulset ---\n%s",
-				unwanted, ss)
+		for _, unwanted := range []string{"volumeClaimTemplates", "name: data", "STRATUM_", "5701", "hazelcast-ws"} {
+			if strings.Contains(ss, unwanted) {
+				t.Errorf("%s statefulset carries %q\n--- statefulset ---\n%s", name, unwanted, ss)
+			}
+		}
+		if sa := chartFile(t, charts, "templates/"+name+"/serviceaccount.yaml"); !strings.Contains(sa, "name: "+name+"\n  namespace: "+ns+"\n") {
+			t.Errorf("%s service account not in %s\n--- serviceaccount ---\n%s", name, ns, sa)
+		}
+		hs := chartFile(t, charts, "templates/"+name+"/service-headless.yaml")
+		if !strings.Contains(hs, "name: "+name+"\n  namespace: "+ns+"\n") || !strings.Contains(hs, "port: 5001") {
+			t.Errorf("%s headless Service must be in %s and publish the member port\n--- service ---\n%s", name, ns, hs)
 		}
 	}
 
-	// The writers say writer OUT LOUD rather than leaning on the binary's default:
-	// the durability-bearing half must not be the one left to a default.
-	writers := chartFile(t, charts, "templates/stratum/statefulset.yaml")
-	if !strings.Contains(writers, `- name: STRATUM_MEMBER_ROLE`) ||
-		!strings.Contains(writers, `value: "writer"`) {
-		t.Errorf("the writers' statefulset does not declare its role\n--- statefulset ---\n%s", writers)
-	}
-
-	// Both seed lists span BOTH workloads, in both clusters. A search member that
-	// could not resolve a writer at a cold start would form its own cluster of one.
-	wantSeeds := []string{
-		`"stratum-0.stratum.schematic.svc.cluster.local:5001,stratum-1.stratum.schematic.svc.cluster.local:5001,stratum-search-0.stratum-search.schematic.svc.cluster.local:5001,` +
-			`stratum-search-1.stratum-search.schematic.svc.cluster.local:5001,stratum-search-2.stratum-search.schematic.svc.cluster.local:5001"`,
-		`"stratum-0.stratum.schematic.svc.cluster.local:5701,stratum-1.stratum.schematic.svc.cluster.local:5701,stratum-search-0.stratum-search.schematic.svc.cluster.local:5701,` +
-			`stratum-search-1.stratum-search.schematic.svc.cluster.local:5701,stratum-search-2.stratum-search.schematic.svc.cluster.local:5701"`,
-	}
-	for _, f := range []string{"templates/stratum/statefulset.yaml", "templates/stratum-search/statefulset.yaml"} {
-		body := chartFile(t, charts, f)
-		for _, want := range wantSeeds {
-			if !strings.Contains(body, want) {
-				t.Errorf("%s missing seed list %s\n--- statefulset ---\n%s", f, want, body)
+	for path := range charts.Files {
+		for _, gone := range []string{"templates/stratum/", "templates/stratum-search/", "templates/stratum-restore/"} {
+			if strings.HasPrefix(path, gone) {
+				t.Errorf("rendered %s", path)
 			}
 		}
 	}
-
-	// It IS stratum to kernel: same identity, so no ServiceAccount of its own. A
-	// second ServiceAccount object named "stratum" is a duplicate resource, and one
-	// named "stratum-search" is a principal kernel has never heard of.
-	if !strings.Contains(ss, "serviceAccountName: stratum\n") {
-		t.Errorf("search pods must run as stratum's service account\n--- statefulset ---\n%s", ss)
-	}
-	if _, ok := charts.Files["templates/stratum-search/serviceaccount.yaml"]; ok {
-		t.Error("the search workload emitted a ServiceAccount of its own")
-	}
-	// But a config of its own: the writers' carries disk_persistence when the
-	// archive is on, and a search member has no volume to persist to.
-	for i := range 3 {
-		cm := chartFile(t, charts, fmt.Sprintf("templates/stratum-search/configmap-%d.yaml", i))
-		if !strings.Contains(cm, `index .Values "stratum-search" "config"`) {
-			t.Errorf("search configmap-%d must read stratum-search's config\n--- configmap ---\n%s", i, cm)
-		}
-		if !strings.Contains(ss, fmt.Sprintf(`checksum/config-%d: {{ index .Values "stratum-search" "config" | sha256sum | quote }}`, i)) {
-			t.Errorf("search statefulset checksum/config-%d must hash stratum-search's config\n--- statefulset ---\n%s", i, ss)
-		}
-	}
 	values := chartFile(t, charts, "values.yaml")
-	if !strings.Contains(values, "stratum-search:") {
-		t.Errorf("values.yaml has no stratum-search entry, so its image is unresolvable\n--- values.yaml ---\n%s", values)
+	for _, gone := range []string{"\nstratum:", "\nstratum-search:", "\nstratum-restore:"} {
+		if strings.Contains(values, gone) {
+			t.Errorf("values.yaml carries %q\n--- values.yaml ---\n%s", gone, values)
+		}
 	}
-	if !regexp.MustCompile(`\nstratum-search:\n  image: [^\n]+\n  config: ""\n`).MatchString(values) {
-		t.Errorf("values.yaml has no stratum-search config placeholder\n--- values.yaml ---\n%s", values)
-	}
-	if strings.Contains(values, "stratum-search:\n  image: {{ .Image }}") {
-		t.Errorf("values.yaml did not render the search image\n--- values.yaml ---\n%s", values)
-	}
-
 }
 
-// The default is zero search members, and zero renders NOTHING — not an empty
-// StatefulSet, not a dangling values key, not a seed address that resolves to no
-// pod.
-func TestNoSearchNodesRendersNoSearchWorkload(t *testing.T) {
+// In the one-namespace layout every tenant's Stratum is in that namespace,
+// told apart by its name.
+func TestEachTenantsStratumInTheOneNamespace(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
-		Namespace: "schematic",
-		Topology: &protoOperator.Topology{
-			KernelNodes:  1,
-			StratumNodes: 3,
-		},
+		Namespace: "workloads",
+		Tenants:   []string{"acme"},
+		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	})
-
-	for path := range charts.Files {
-		if strings.HasPrefix(path, "templates/stratum-search/") {
-			t.Errorf("a fleet with no search nodes rendered %s", path)
+	for _, name := range []string{"stratum-acme", "stratum-people"} {
+		ss := chartFile(t, charts, "templates/"+name+"/statefulset.yaml")
+		if !strings.Contains(ss, "name: "+name+"\n  namespace: {{ .Values.global.namespace }}\n") {
+			t.Errorf("%s not in the chart's namespace\n--- statefulset ---\n%s", name, ss)
 		}
 	}
-	ss := chartFile(t, charts, "templates/stratum/statefulset.yaml")
-	if strings.Contains(ss, "stratum-search") {
-		t.Errorf("the writers' seed list names search pods that do not exist\n--- statefulset ---\n%s", ss)
+}
+
+// topology.stratum_members sets every tenant's member count. It is
+// deployment-wide: nothing in operator.yaml names a tenant's count.
+func TestStratumMembersSetsEveryTenantsMemberCount(t *testing.T) {
+	cfg := stratumDeploymentConfig()
+	cfg.Topology.StratumMembers = 3
+	charts := generateTestChart(t, cfg)
+	for _, name := range []string{"stratum-acme", "stratum-beta", "stratum-people"} {
+		ss := chartFile(t, charts, "templates/"+name+"/statefulset.yaml")
+		if !strings.Contains(ss, "replicas: 3\n") {
+			t.Errorf("%s replicas != 3\n--- statefulset ---\n%s", name, ss)
+		}
+		for i := range 3 {
+			chartFile(t, charts, fmt.Sprintf("templates/%s/configmap-%d.yaml", name, i))
+		}
 	}
-	values := chartFile(t, charts, "values.yaml")
-	if strings.Contains(values, "stratum-search:") {
-		t.Errorf("values.yaml carries a stratum-search entry for a workload that is not deployed\n--- values.yaml ---\n%s", values)
+}
+
+// A tenant's members spread across availability zones: a topology spread on
+// topology.kubernetes.io/zone, ScheduleAnyway so a one-zone cluster still
+// schedules them. Nothing tells a pod its zone: STRATUM_ZONE is not rendered
+// (env comes from the uni-config, and a pod's zone is not in it; Jody,
+// 2026-11-03), so backups are not zone-aware yet. One member has nothing to
+// spread.
+func TestStratumSpreadsAcrossZones(t *testing.T) {
+	cfg := stratumDeploymentConfig()
+	cfg.Topology.StratumMembers = 3
+	ss := chartFile(t, generateTestChart(t, cfg), "templates/stratum-acme/statefulset.yaml")
+	want := `      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: stratum-acme
+`
+	if !strings.Contains(ss, want) {
+		t.Errorf("stratum-acme does not spread across zones\n--- statefulset ---\n%s", ss)
+	}
+	if strings.Contains(ss, "STRATUM_ZONE") {
+		t.Errorf("stratum-acme is told its zone by env\n--- statefulset ---\n%s", ss)
+	}
+
+	one := chartFile(t, generateTestChart(t, stratumDeploymentConfig()), "templates/stratum-acme/statefulset.yaml")
+	if strings.Contains(one, "topologySpreadConstraints") {
+		t.Errorf("a one-member stratum renders a zone spread\n--- statefulset ---\n%s", one)
+	}
+}
+
+// Each tenant's seed list names every member of its own Stratum, in full and
+// in ordinal order, at the member port: in the tenant's namespace in a
+// deployment, in the one namespace otherwise.
+func TestStratumSeedMembers(t *testing.T) {
+	cfg := stratumDeploymentConfig()
+	cfg.Topology.StratumMembers = 2
+	for tenant, want := range map[string][]string{
+		"acme": {
+			"stratum-acme-0.stratum-acme.tac-prod-a1b2c3d4.svc.cluster.local:5001",
+			"stratum-acme-1.stratum-acme.tac-prod-a1b2c3d4.svc.cluster.local:5001",
+		},
+		"people": {
+			"stratum-people-0.stratum-people.tac-prod-00000001.svc.cluster.local:5001",
+			"stratum-people-1.stratum-people.tac-prod-00000001.svc.cluster.local:5001",
+		},
+	} {
+		if got := StratumSeedMembers(cfg, tenant); !reflect.DeepEqual(got, want) {
+			t.Errorf("StratumSeedMembers(%s) = %v, want %v", tenant, got, want)
+		}
+	}
+	one := &protoOperator.Config{Namespace: "workloads", Tenants: []string{"acme"}}
+	if got, want := StratumSeedMembers(one, "acme"), []string{"stratum-acme-0.stratum-acme.workloads.svc.cluster.local:5001"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("one namespace: StratumSeedMembers(acme) = %v, want %v", got, want)
+	}
+	if got, want := StratumTenants(cfg), []string{"acme", "beta", "people"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("StratumTenants = %v, want %v", got, want)
+	}
+}
+
+// stratum_members is 1 to 64 (kernel carries at most 64 seed members a
+// tenant); generation refuses anything else rather than render a Stratum
+// kernel cannot seed.
+func TestStratumMembersOutOfRangeFailsGeneration(t *testing.T) {
+	for _, n := range []int32{-1, 65} {
+		cfg := stratumDeploymentConfig()
+		cfg.Topology.StratumMembers = n
+		if _, err := New("test", "1.2", nil, nil, nil).Generate(cfg, 1, false); err == nil || !strings.Contains(err.Error(), "stratum_members") {
+			t.Errorf("stratum_members %d: err = %v, want it refused", n, err)
+		}
 	}
 }
 
@@ -792,7 +785,6 @@ func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
-			StratumNodes:  3,
 			OpaNodes:      1,
 			GatewayNodes:  1,
 			EventbusNodes: 1,
@@ -821,7 +813,8 @@ func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
 // TestMultiReplicaServicesAskToSpreadAcrossNodes pins the anti-affinity that
 // makes replica count mean something.
 //
-// Three kernels or three stratums stacked on one node survive nothing, and
+// Three kernels or a tenant's three stratum members stacked on one node
+// survive nothing, and
 // their Hazelcast members would share exactly the fate they exist to be
 // independent of. The rule is PREFERRED, not required: with more replicas than
 // nodes a required rule leaves pods Pending forever, and redundancy that cannot
@@ -829,16 +822,17 @@ func TestEveryWorkloadToleratesTheArmTaint(t *testing.T) {
 func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
+		Tenants:   []string{"acme"},
 		Topology: &protoOperator.Topology{
-			KernelNodes:  3,
-			StratumNodes: 3,
-			OpaNodes:     1,
+			KernelNodes:    3,
+			OpaNodes:       1,
+			StratumMembers: 3,
 		},
 	})
 
 	for _, path := range []string{
 		"templates/kernel/statefulset.yaml",
-		"templates/stratum/statefulset.yaml",
+		"templates/stratum-acme/statefulset.yaml",
 	} {
 		body := chartFile(t, charts, path)
 		for _, want := range []string{
@@ -864,8 +858,9 @@ func TestMultiReplicaServicesAskToSpreadAcrossNodes(t *testing.T) {
 
 // A StatefulSet owns its volume through a volumeClaimTemplate, which is exactly
 // the case that was missing fsGroup: the Deployment path called
-// pvcFsGroupLines and the StatefulSet path did not, so kernel and stratum were
-// the only two services that could not write to their own disk.
+// pvcFsGroupLines and the StatefulSet path did not, so kernel and stratum (then
+// the shared one, with volumes) were the only two services that could not write
+// to their own disk. redo-restore is the other StatefulSet with a volume now.
 //
 // It failed silently for as long as it existed. Kernel's persistence layer logs
 // a WARN and returns -- "Failed to persist kernel disk snapshot to
@@ -876,15 +871,14 @@ func TestStatefulSetsCanWriteToTheirOwnVolume(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
 		Topology: &protoOperator.Topology{
-			KernelNodes:  3,
-			StratumNodes: 3,
-			OpaNodes:     1,
+			KernelNodes: 3,
+			OpaNodes:    1,
 		},
 	})
 
 	for _, path := range []string{
 		"templates/kernel/statefulset.yaml",
-		"templates/stratum/statefulset.yaml",
+		"templates/redo-restore/statefulset.yaml",
 	} {
 		body := chartFile(t, charts, path)
 		if !strings.Contains(body, "volumeClaimTemplates") {
@@ -922,7 +916,7 @@ func TestKernelStatefulSetStartsPodsOneAtATime(t *testing.T) {
 func TestKernelMountsTheConfigOverrideWithoutOwningIt(t *testing.T) {
 	charts := generateTestChart(t, &protoOperator.Config{
 		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 3, StratumNodes: 3},
+		Topology:  &protoOperator.Topology{KernelNodes: 3},
 	})
 
 	ss := chartFile(t, charts, "templates/kernel/statefulset.yaml")
@@ -944,7 +938,7 @@ func TestKernelMountsTheConfigOverrideWithoutOwningIt(t *testing.T) {
 			t.Errorf("%s renders ConfigMap kernel-config-override; the chart must only reference it", name)
 		}
 	}
-	if strings.Contains(chartFile(t, charts, "templates/stratum/statefulset.yaml"), "config-override") {
+	if strings.Contains(chartFile(t, charts, "templates/stratum-people/statefulset.yaml"), "config-override") {
 		t.Error("only kernel reads the override; stratum must not mount it")
 	}
 }
@@ -1541,7 +1535,6 @@ func TestLivenessDoesNotDependOnDependencies(t *testing.T) {
 		Topology: &protoOperator.Topology{
 			KernelNodes:   1,
 			EventbusNodes: 1,
-			StratumNodes:  1,
 			AppServices:   map[string]int32{"widgeter": 1},
 		},
 	})
@@ -1562,7 +1555,7 @@ func TestLivenessDoesNotDependOnDependencies(t *testing.T) {
 
 	for _, tc := range []struct{ path, liveness string }{
 		{"templates/widgeter/deployment.yaml", "schematic.livenessProbe"},
-		{"templates/stratum/statefulset.yaml", "schematic.livenessProbe"},
+		{"templates/stratum-people/statefulset.yaml", "schematic.livenessProbe"},
 		{"templates/kernel/statefulset.yaml", "schematic.livenessProbe"},
 		{"templates/eventbus/deployment.yaml", "schematic.grpcProbeEventbus"},
 	} {
@@ -1698,7 +1691,6 @@ func TestGenerateRendersNoLoadBalancer(t *testing.T) {
 				GatewayNodes:   1,
 				EventbusNodes:  1,
 				OpaNodes:       1,
-				StratumNodes:   1,
 				BlobstoreNodes: 2,
 			},
 			OptionalServices: &protoOperator.OptionalServices{Blobstore: true},
@@ -1726,7 +1718,6 @@ func TestGenerateRendersNoLetsencrypt(t *testing.T) {
 			GatewayNodes:  1,
 			EventbusNodes: 1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 		},
 	})
 

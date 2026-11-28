@@ -22,9 +22,9 @@ const keptClaimsMessage = "kept the volume claims of a StatefulSet the chart no 
 
 // reportKeptClaims names the PersistentVolumeClaims a StatefulSet's
 // volumeClaimTemplates made that no pod of it mounts any more: those of a
-// StatefulSet the chart no longer renders (a component scaled to 0:
-// stratum_nodes 0 removes stratum and redo) and those past its replicas (a
-// scale-down). The operator keeps them, on purpose (#54): a count of 0 is also
+// StatefulSet the chart no longer renders (a component scaled to 0, or the
+// shared stratum, whose writers had volumes, retired for per-tenant Stratum in
+// memory, #2) and those past its replicas (a scale-down). The operator keeps them, on purpose (#54): a count of 0 is also
 // what a missing topology field or a services filter gives, and deleting a
 // record store's volumes on that would lose its data for good. It never
 // deletes one; it logs a warning per StatefulSet with the claims and the

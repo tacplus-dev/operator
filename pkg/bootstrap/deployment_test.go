@@ -27,7 +27,6 @@ func deploymentFixtureConfig() *protoOperator.Config {
 			EventbusNodes: 1,
 			OauthNodes:    1,
 			OpaNodes:      1,
-			StratumNodes:  2,
 		},
 	}
 }

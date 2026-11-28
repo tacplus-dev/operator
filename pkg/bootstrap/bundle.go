@@ -78,8 +78,6 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 		{"eventbus", dc.EventbusConfig},
 		{"oauth", dc.OauthConfig},
 		{"opa", dc.OpaConfig},
-		{"stratum", dc.StratumConfig},
-		{"stratum-search", dc.StratumSearchConfig},
 		{redoInstanceName, dc.RedoConfig},
 		{"blobstore", dc.BlobstoreConfig},
 	} {
@@ -87,7 +85,12 @@ func BuildBundle(cfgDir string) (*Bundle, error) {
 			svcs[pair.name] = string(pair.data)
 		}
 	}
-	// The application's own services.
+	// Each tenant's Stratum, and the application's own services.
+	for name, data := range dc.StratumConfigs {
+		if len(data) > 0 {
+			svcs[name] = string(data)
+		}
+	}
 	for name, data := range dc.AppConfigs {
 		if len(data) > 0 {
 			svcs[name] = string(data)

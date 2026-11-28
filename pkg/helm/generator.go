@@ -179,6 +179,9 @@ func (g *Generator) Generate(cfg *protoOperator.Config, nodeCount int, nodePools
 	if err := deployment.Validate(cfg); err != nil {
 		return nil, err
 	}
+	if err := ValidateStratumMembers(cfg); err != nil {
+		return nil, err
+	}
 	// A deployment may not read the cluster's nodes, so it has no count to
 	// derive gateway_nodes from.
 	if cfg.GetDeployment() != "" && topo.GetGatewayNodes() == 0 {
@@ -338,20 +341,12 @@ func (g *Generator) WriteToDisk(charts *Charts, outputDir string) error {
 	return nil
 }
 
-// stratumSeedMembersEnv renders STRATUM_SEED_MEMBERS: the "host:port" address of
-// every stratum replica, from the StatefulSet's stable per-pod DNS.
-//
-// stratum's event store is a Hazelcast cluster and its members have to find each
-// other. The alternative it falls back to is multicast, which does not work in
-// Kubernetes: several replicas would each form their OWN cluster of size one, so
-// no partitions would be shared and every pod would believe it was a cold boot
-// with an empty store — replaying the entire event log, each of them.
-//
-// Peer wiring by env follows the former graphdb GRAPHDB_ZERO_ADDR shape rather than inventing a
-// second typed-config path for what is deployment topology the operator already
-// knows.
+// stratumServiceName is Stratum, rendered once per tenant: one StatefulSet,
+// stratum-<tenant>, in each tenant's namespace (StratumTenants).
+const stratumServiceName = "stratum"
+
 // The chart exposes Hazelcast on 5001 for every HasHazelcast service (kernel's
-// convention), so stratum must bind that rather than Hazelcast's 5701 default.
+// convention): a Stratum member's generated member port listens there.
 const stratumHazelcastPort = 5001
 
 // StratumMemberPort is where a stratum member's generated member port listens
@@ -363,17 +358,6 @@ const (
 	StratumMemberPort       = stratumHazelcastPort
 	StratumMemberTargetPort = 5701
 )
-
-// stratumWorkingSetPort is the second Hazelcast cluster in stratum's JVM: the
-// working-set maps ("stratum-ws"), kept separate from the event store because
-// they have their own lifecycle — idle-TTL eviction, caller-chosen map ids.
-//
-// Two clusters in one JVM cannot share a port, and the event store pins 5001
-// with auto-increment off (a predictable peer address is the whole point of the
-// seed list). So the working set gets its own pinned port, and it must be a
-// DIFFERENT constant rather than "5001 + 1": auto-increment is exactly the
-// mechanism that made the second instance land somewhere nobody could name.
-const stratumWorkingSetPort = 5701
 
 // grpcHealthProbePort is the plaintext grpc.health.v1 listener the kubelet's
 // gRPC probe speaks to (see the grpcProbe* helpers). It is NOT a Service port,
@@ -390,70 +374,66 @@ const redoServiceName = "redo"
 // so the two cannot disagree. It is redo's own default.
 const RedoDataDir = "/var/lib/redo"
 
-// stratumSearchName is the volume-less second workload: search members, joining
-// the same Hazelcast cluster as the writers with the member attribute
-// stratum.role=search. Pods are stratum-search-0..M and the headless Service is
-// "stratum-search", which is what puts them in the seed list below.
-const stratumSearchName = "stratum-search"
-
-// stratumMemberRoleEnv is the env var one stratum pod declares its role in. The
-// writers' StatefulSet says writer explicitly rather than leaning on the binary's
-// default: the two workloads run the same image, and a chart that names the role on
-// one of them and not the other is a chart where the durability-bearing half is the
-// one left to a default.
-func stratumMemberRoleEnv(role string) string {
-	return fmt.Sprintf("        - name: STRATUM_MEMBER_ROLE\n          value: %q\n", role)
+// StratumTenants are the tenants that get a Stratum of their own, in order:
+// every tenant cfg lists, once, but the reserved restore tenant, and then the
+// reserved people tenant when cfg does not list it. restore has none: the redo
+// service there keeps its own disk, and a Stratum in it would depend on itself
+// for durability (Jody, 2026-10-26). people always has one.
+func StratumTenants(cfg *protoOperator.Config) []string {
+	seen := map[string]bool{deployment.RestoreTenant: true}
+	var out []string
+	for _, t := range append(append([]string{}, cfg.GetTenants()...), deployment.PeopleTenant) {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
 }
 
-// stratumSeedMembersEnv renders the seed lists for both of stratum's Hazelcast
-// clusters, spanning BOTH workloads.
+// maxStratumMembers is the most members a tenant's Stratum may have: the
+// most seed members a bootstrap tenant carries (kernel's
+// BootstrapTenant.stratum_seed_members).
+const maxStratumMembers = 64
+
+// ValidateStratumMembers refuses a topology.stratum_members below 1 (0 is
+// unset, which is 1) or above maxStratumMembers.
+func ValidateStratumMembers(cfg *protoOperator.Config) error {
+	if n := cfg.GetTopology().GetStratumMembers(); n < 0 || n > maxStratumMembers {
+		return fmt.Errorf("topology.stratum_members %d: each tenant's Stratum has 1 to %d members", n, maxStratumMembers)
+	}
+	return nil
+}
+
+// StratumMembers is how many members each tenant's Stratum has:
+// topology.stratum_members, 1 when unset.
+func StratumMembers(cfg *protoOperator.Config) int32 {
+	if n := cfg.GetTopology().GetStratumMembers(); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// StratumSeedMembers is tenant's Stratum seed list: every member's member
+// port, "<pod>.<headless Service>.<namespace>.svc.cluster.local:5001", in
+// ordinal order, the same on every member (stratum's MemberNetwork requires
+// it, and finds itself in it by its pod name). Stratum reads it from its
+// tenant's StratumTenantConfig.seed_members (stratum#26), which kernel writes
+// from its bootstrap tenants' stratum_seed_members at every boot (kernel#34):
+// state the operator derives, not config.
 //
-// Every member has to be able to find every other one, so the list is the writers
-// plus the search members. Leaving the search members out would work by accident —
-// they would find the writers and join through them — right up to a cold start in
-// which no writer is up yet, where a search member would resolve nothing, decide it
-// was alone and form its own cluster of one. That is the same failure the seed list
-// was introduced for.
-func stratumSeedMembersEnv(ns string, writers, searchers int32) string {
-	return stratumSeedEnv("STRATUM_SEED_MEMBERS", ns, writers, searchers, stratumHazelcastPort) +
-		stratumSeedEnv("STRATUM_WS_SEED_MEMBERS", ns, writers, searchers, stratumWorkingSetPort)
-}
-
-func stratumSeedEnv(name, ns string, writers, searchers int32, port int) string {
-	members := stratumSeedList(ns, writers, searchers, port)
-	if len(members) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("        - name: %s\n          value: %q\n", name, strings.Join(members, ","))
-}
-
-// StratumSeedMembers is the seed list for the members the chart renders: the
-// same event-store seed list as STRATUM_SEED_MEMBERS. Stratum reads its typed
-// seeds from its tenant's StratumTenantConfig.seed_members (stratum#26), which
-// nothing delivers yet: #2 renders it per tenant, once kernel carries
-// TenantConfig.stratum from its bootstrap tenants (kernel#34). Empty when no
-// stratum writer is rendered. ns is the namespace stratum runs in.
-func StratumSeedMembers(ns string, writers, searchers int32) []string {
-	return stratumSeedList(ns, writers, searchers, stratumHazelcastPort)
-}
-
-func stratumSeedList(ns string, writers, searchers int32, port int) []string {
-	if writers <= 0 {
-		return nil
-	}
-	var members []string
-	// <pod>.<headless service>:<hazelcast port>. A StatefulSet-shaped
-	// service is named for the service itself — pods are stratum-0,
-	// stratum-1, ... and the headless Service is "stratum" — NOT the
-	// stratum0 form a Deployment uses. Getting this wrong produces seed
-	// addresses that never resolve, and Hazelcast simply never forms a
-	// cluster: no error, just members that each sit alone. Full service names
-	// (deployment.ServiceHost), as for every endpoint the operator writes.
-	for i := int32(0); i < writers; i++ {
-		members = append(members, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("stratum-%d.stratum", i), ns), port))
-	}
-	for i := int32(0); i < searchers; i++ {
-		members = append(members, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("%s-%d.%s", stratumSearchName, i, stratumSearchName), ns), port))
+// A StatefulSet's pods are <name>-0, <name>-1, ... and its headless Service is
+// <name>, here stratum-<tenant>: NOT the stratum0 form a Deployment uses.
+// Getting this wrong produces seeds that never resolve, and Hazelcast never
+// forms a cluster: no error, just members that each sit alone.
+func StratumSeedMembers(cfg *protoOperator.Config, tenant string) []string {
+	name := TenantInstanceName(stratumServiceName, tenant)
+	ns := deployment.TenantNamespaceOf(cfg, tenant)
+	n := StratumMembers(cfg)
+	members := make([]string, 0, n)
+	for i := int32(0); i < n; i++ {
+		members = append(members, fmt.Sprintf("%s:%d", deployment.ServiceHost(fmt.Sprintf("%s-%d.%s", name, i, name), ns), StratumMemberPort))
 	}
 	return members
 }
@@ -478,9 +458,8 @@ const (
 // its peer, so the list is deliberately complete rather than per-pod — which is
 // what lets one env value serve both pods and one ConfigMap serve the StatefulSet.
 //
-// Delivered by env for the same reason stratum's STRATUM_SEED_MEMBERS is: peer
-// wiring is deployment topology the operator already knows, and a second typed
-// config path for it would only let the two disagree.
+// Delivered by env: peer wiring is deployment topology the operator already
+// knows, and a second typed config path for it would only let the two disagree.
 func blobstorePeersEnv(ns string, replicas int32) string {
 	if replicas <= 0 {
 		return ""
@@ -549,12 +528,7 @@ type serviceSpec struct {
 	WebAppHostPath   string
 	HasServiceConfig bool
 	HasHazelcast     bool
-	// HasWorkingSetHazelcast declares a SECOND Hazelcast cluster in the same JVM,
-	// on stratumWorkingSetPort. Only stratum has one: its working-set maps are a
-	// separate cluster from the event store. Kernel has a single cluster and must
-	// keep rendering exactly one port block.
-	HasWorkingSetHazelcast bool
-	ListenPort             int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
+	ListenPort       int32 // gRPC listen port: 5000 for Java (kernel), 8443 for Rust/Tacplus
 	// NodeModes, if non-nil, sets NODE_MODE env var per replica.
 	// Index i maps to replica i; if shorter than Replicas, remaining default to "alpha".
 	NodeModes []string
@@ -648,18 +622,6 @@ type serviceSpec struct {
 	// kernel. A whole-directory mount, not subPath, so the kubelet updates the
 	// file in place.
 	ConfigOverrideMount bool
-	// SharesServiceIdentityWith names the service this workload is a SECOND WORKLOAD
-	// OF, rather than a service of its own. Set on stratum-search, and on nothing
-	// else.
-	//
-	// A search member is stratum: same image, same identity to kernel. So it reuses
-	// that service's ServiceAccount (and therefore the identity kernel resolves by
-	// TokenReview), and this workload emits no ServiceAccount or RBAC objects of its
-	// own — a second object with the same name is a duplicate resource helm
-	// refuses, and a service account of its own would be a principal kernel has
-	// never heard of. Its config is its own (values key = its name): the writers'
-	// can carry disk_persistence, and a search member has no volume.
-	SharesServiceIdentityWith string
 	// TenantInstance marks one tenant's instance of a tenant-owned service
 	// ("<svc>-<tenant>"), pinned or not. It decides the instance's pool.
 	TenantInstance bool
@@ -677,6 +639,12 @@ type serviceSpec struct {
 	// NodePool, if non-empty, is the pool (CorePool or TenantPool) the workload
 	// is placed on. Generate sets it, and only when the cluster has pools.
 	NodePool string
+	// ZoneSpread asks the scheduler to spread the workload's pods across
+	// availability zones (zoneSpreadLines). Set on each tenant's Stratum.
+	ZoneSpread bool
+	// LongStartup gives the workload schematic.startupProbeStratum's longer
+	// startup budget instead of the shared one. Set on each tenant's Stratum.
+	LongStartup bool
 	// Resource limits/requests. Every service should have these set —
 	// without them, runtimes (JVM, Go, Rust async runtimes) make assumptions
 	// based on host RAM that don't hold inside a container, and you end up
@@ -767,6 +735,28 @@ func spreadAcrossNodesLines(svc serviceSpec) string {
               labelSelector:
                 matchLabels:
                   app: %s
+`, svc.Name)
+}
+
+// zoneSpreadLines asks the scheduler to spread svc's pods across availability
+// zones, so a zone's loss takes at most its share of a tenant's Stratum.
+//
+// ScheduleAnyway, not DoNotSchedule: a one-zone cluster (the tacplus cluster
+// is, today) or a zone without room must still schedule every member. The
+// zone comes from the nodes' topology.kubernetes.io/zone label, which the
+// scheduler reads; the pod is told nothing, and the chart needs no rights to
+// read nodes.
+func zoneSpreadLines(svc serviceSpec) string {
+	if !svc.ZoneSpread || svc.Replicas < 2 {
+		return ""
+	}
+	return fmt.Sprintf(`      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: %s
 `, svc.Name)
 }
 
@@ -1027,11 +1017,7 @@ const kernelTokenVolumeName = "kernel-token"
 
 func withKernelServiceAuth(svc serviceSpec) serviceSpec {
 	if svc.ServiceAccountName == "" {
-		if svc.SharesServiceIdentityWith != "" {
-			svc.ServiceAccountName = svc.SharesServiceIdentityWith
-		} else {
-			svc.ServiceAccountName = svc.Name
-		}
+		svc.ServiceAccountName = svc.Name
 	}
 	if svc.AutomountServiceAccountToken == nil {
 		svc.AutomountServiceAccountToken = falsePtr()
@@ -1068,18 +1054,17 @@ func effectiveTopology(cfg *protoOperator.Config, nodeCount int) *protoOperator.
 
 func cloneTopology(t *protoOperator.Topology) *protoOperator.Topology {
 	return &protoOperator.Topology{
-		KernelNodes:        t.KernelNodes,
-		EventbusNodes:      t.EventbusNodes,
-		GatewayNodes:       t.GatewayNodes,
-		OauthNodes:         t.OauthNodes,
-		OpaNodes:           t.OpaNodes,
-		StratumNodes:       t.StratumNodes,
-		StratumSearchNodes: t.StratumSearchNodes,
-		EchoNodes:          t.EchoNodes,
-		MessagingNodes:     t.MessagingNodes,
-		MailboxNodes:       t.MailboxNodes,
-		PersonalauthNodes:  t.PersonalauthNodes,
-		BlobstoreNodes:     t.BlobstoreNodes,
+		KernelNodes:       t.KernelNodes,
+		EventbusNodes:     t.EventbusNodes,
+		GatewayNodes:      t.GatewayNodes,
+		OauthNodes:        t.OauthNodes,
+		OpaNodes:          t.OpaNodes,
+		StratumMembers:    t.StratumMembers,
+		EchoNodes:         t.EchoNodes,
+		MessagingNodes:    t.MessagingNodes,
+		MailboxNodes:      t.MailboxNodes,
+		PersonalauthNodes: t.PersonalauthNodes,
+		BlobstoreNodes:    t.BlobstoreNodes,
 		// Carry the app's services. A field-by-field clone silently drops
 		// anything added later — which is the failure mode a fixed-field message
 		// invites, and it dropped app_services on the first attempt. It dropped
@@ -1193,54 +1178,38 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "100m"}),
 		withKernelServiceAuth(serviceSpec{Name: "opa", Replicas: topo.OpaNodes, Image: g.imageRef(cfg, "opa"), HasGRPC: true, ListenPort: 8443,
 			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m"}),
-		// stratum is a StatefulSet with a headless Service, like kernel, because
-		// its event store is a Hazelcast cluster: the members need stable
-		// per-pod DNS to find each other. As a Deployment behind a plain
-		// ClusterIP they could not — the pods had no stable identity and no
-		// discoverable peer addresses — so several replicas would each form
-		// their OWN cluster of size one. No partition sharing, and every pod
-		// believing it was a cold boot, replaying the whole event log.
-		withKernelServiceAuth(serviceSpec{Name: "stratum", Replicas: topo.StratumNodes, Image: g.imageRef(cfg, "stratum"), HasGRPC: true, HasPVC: true, Storage: "5Gi", HasHazelcast: true, HasWorkingSetHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
-			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
-				stratumMemberRoleEnv("writer"),
-			// Measured 2026-09-19 on the live fleet: ~10m steady per replica; the
-			// record store is I/O-bound, not CPU-bound. Same reasoning as eventbus.
-			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}),
 	}
 
-	// stratum's SEARCH members: the same image and the writers' config without
-	// disk_persistence, joining the same Hazelcast cluster with the member attribute
-	// stratum.role=search, and with NO volume.
+	// Stratum, once per tenant (StratumTenants): each tenant's own Hazelcast
+	// cluster, in memory, in the tenant's namespace, with the tenant's identity
+	// (spiffe://<td>/tenants/<tid>/services/stratum, its delegate /tenants/<t>).
+	// Durability is the redo service below, not a volume: no PVC, no writers or
+	// search members (tacplus-dev/roadmap decisions/stratum-per-tenant-2026-10-25.md).
 	//
-	// A search member holds partitions and answers the parallel scatter-gather a
-	// predicate query is, and persists nothing: no redo log, no record index, no
-	// checkpoint. It is never counted for min_durable_copies and never a restore
-	// contributor, so this count is free to move with query load and says nothing
-	// about durability — stratum_nodes is the number that does.
+	// A StatefulSet with a headless Service, like kernel, because the members
+	// find each other at stable per-pod DNS (StratumSeedMembers). As a
+	// Deployment behind a plain ClusterIP they could not, and several replicas
+	// would each form their OWN cluster of size one. Their member port (5001)
+	// admits only a member of the same tenant's Stratum (stratum#17): no
+	// NetworkPolicy, as for every authenticated port (#24).
 	//
-	// A StatefulSet rather than a Deployment, and volume-less: the members need the
-	// stable per-pod DNS the seed list is written from (stratum-search-0.stratum-search),
-	// which a Deployment's pods do not have. Everything a StatefulSet usually brings a
-	// volume for is exactly what this workload does not do.
-	if topo.StratumNodes > 0 && topo.GetStratumSearchNodes() > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: stratumSearchName,
-			SharesServiceIdentityWith: "stratum",
-			Replicas:                  topo.GetStratumSearchNodes(),
-			Image:                     g.imageRef(cfg, "stratum"),
-			HasGRPC:                   true, ListenPort: 8443, IsStatefulSet: true,
-			HasHazelcast: true, HasWorkingSetHazelcast: true,
-			ExtraEnvVars: stratumSeedMembersEnv(platformNS, topo.StratumNodes, topo.GetStratumSearchNodes()) +
-				stratumMemberRoleEnv("search"),
-			// The same memory as a writer and none of its disk. A search member holds
-			// its share of the partitions and never evicts them — the idle clock is
-			// wired to the disk leg it does not have — so memory is the whole of what
-			// it is sized for, and it is sized like a writer because it holds the same
-			// kind of share of the same partitions.
+	// Spread across zones (ZoneSpread). Zone-aware backups (STRATUM_ZONE) are
+	// not rendered: a pod's zone is not in the uni-config, and env comes from it
+	// (Jody, 2026-11-03, on #2).
+	members := StratumMembers(cfg)
+	for _, tenant := range StratumTenants(cfg) {
+		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+			Name: TenantInstanceName(stratumServiceName, tenant), Replicas: members, Image: g.imageRef(cfg, stratumServiceName),
+			TenantInstance: true, Tenant: tenant, Namespace: tenantNamespace(tenant),
+			HasGRPC: true, HasHazelcast: true, ListenPort: 8443, IsStatefulSet: true,
+			ZoneSpread: true, LongStartup: true,
+			// Measured 2026-09-19 on the live fleet: ~10m steady per replica.
 			MemRequest: "1Gi", MemLimit: "2Gi", CpuRequest: "50m", JavaHeap: "1g", JavaHeapMin: "128m"}))
 	}
 
 	// redo: Stratum's durability (decisions/stratum-per-tenant-2026-10-25.md in
-	// tacplus-dev/roadmap), so it is rendered whenever Stratum is. Its proto
+	// tacplus-dev/roadmap), so it is rendered whenever Stratum is: always, as
+	// the people tenant always has a Stratum. Its proto
 	// pins it to the reserved restore tenant ((spec.service).pinned_tenant):
 	// one instance, redo-restore, in that tenant's namespace, never replicated
 	// and never in the platform namespace (Jody, 2026-10-26). restore has no
@@ -1255,16 +1224,14 @@ func (g *Generator) enabledServices(cfg *protoOperator.Config, topo *protoOperat
 	// Storage 10Gi is the smallest regional balanced disk; the logs are
 	// compacted into each tenant's snapshot (redo.Config.compact_after), so
 	// they grow with the tenants' data, not with time.
-	if topo.StratumNodes > 0 {
-		svcs = append(svcs, withKernelServiceAuth(serviceSpec{
-			Name: TenantInstanceName(redoServiceName, deployment.RestoreTenant), Replicas: 1, Image: g.imageRef(cfg, redoServiceName),
-			TenantInstance: true, Tenant: deployment.RestoreTenant, Namespace: tenantNamespace(deployment.RestoreTenant),
-			HasGRPC: true, ListenPort: 8443, IsStatefulSet: true,
-			HasPVC: true, Storage: "10Gi", StorageClass: cfg.GetRedoStorageClass(), DataMountPath: RedoDataDir,
-			// Measured nowhere yet: sized like the other small Go services.
-			MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB",
-		}))
-	}
+	svcs = append(svcs, withKernelServiceAuth(serviceSpec{
+		Name: TenantInstanceName(redoServiceName, deployment.RestoreTenant), Replicas: 1, Image: g.imageRef(cfg, redoServiceName),
+		TenantInstance: true, Tenant: deployment.RestoreTenant, Namespace: tenantNamespace(deployment.RestoreTenant),
+		HasGRPC: true, ListenPort: 8443, IsStatefulSet: true,
+		HasPVC: true, Storage: "10Gi", StorageClass: cfg.GetRedoStorageClass(), DataMountPath: RedoDataDir,
+		// Measured nowhere yet: sized like the other small Go services.
+		MemRequest: "128Mi", MemLimit: "512Mi", CpuRequest: "50m", GoMemLimit: "400MiB",
+	}))
 
 	// OAuth (OAuth2/OIDC broker) — always enabled.
 	svcs = append(svcs, withKernelServiceAuth(serviceSpec{Name: "oauth", Replicas: topo.OauthNodes, Image: g.imageRef(cfg, "oauth"), HasGRPC: true, ListenPort: 8443,
@@ -1461,10 +1428,9 @@ func (g *Generator) ExpectedDeploymentNames(cfg *protoOperator.Config, nodeCount
 // this chart renders with a kernel identity for cfg's topology — the specs
 // withKernelServiceAuth stamps a projected kernel token onto.
 //
-// A workload that borrows another service's identity
-// (SharesServiceIdentityWith, which stratum's search members do) reports the
-// identity it borrows, not its own workload name: the identity is what kernel
-// authenticates and what the operator has to know about.
+// A tenant's instance (stratum-<tenant>, redo-restore) reports its service's
+// identity, not its workload name: the identity is what kernel authenticates
+// and what the operator has to know about.
 //
 // It exists for the bootstrap package's coverage test. A new platform service
 // needs a serviceSpec here AND an entry in the operator's kernel-authenticated
@@ -1480,15 +1446,9 @@ func (g *Generator) KernelAuthServiceNames(cfg *protoOperator.Config, nodeCount 
 		if !hasKernelToken(s) {
 			continue
 		}
-		name := s.Name
-		if s.SharesServiceIdentityWith != "" {
-			name = s.SharesServiceIdentityWith
-		}
-		// A tenant's instance (redo-restore) is its service's identity, with
-		// the tenant on the delegate, not in the name.
-		if s.TenantInstance {
-			name = strings.TrimSuffix(name, "-"+s.Tenant)
-		}
+		// A tenant's instance is its service's identity, with the tenant on the
+		// delegate, not in the name.
+		name := s.service()
 		if seen[name] {
 			continue
 		}
@@ -1497,6 +1457,15 @@ func (g *Generator) KernelAuthServiceNames(cfg *protoOperator.Config, nodeCount 
 	}
 	sort.Strings(out)
 	return out
+}
+
+// service is the service svc is a workload of: its name, less the tenant for
+// a tenant's instance (stratum-acme is stratum).
+func (svc serviceSpec) service() string {
+	if svc.TenantInstance {
+		return strings.TrimSuffix(svc.Name, "-"+svc.Tenant)
+	}
+	return svc.Name
 }
 
 func hasKernelToken(svc serviceSpec) bool {
@@ -1881,7 +1850,7 @@ func (g *Generator) addPigeonsRBAC(charts *Charts, cfg *protoOperator.Config, sv
 	if cfg.GetDeployment() == "" {
 		return fmt.Errorf("pigeons run in tenant namespaces, which only a deployment has: set deployment in operator.yaml")
 	}
-	if svc.ServiceAccountName == "" || svc.SharesServiceIdentityWith != "" {
+	if svc.ServiceAccountName == "" {
 		return nil
 	}
 	owner := ""
@@ -2221,10 +2190,7 @@ func (g *Generator) addService(charts *Charts, cfg *protoOperator.Config, svc se
 		svc.AutomountServiceAccountToken = falsePtr()
 	}
 
-	// A second workload of another service emits no ServiceAccount and no RBAC of its
-	// own: it USES that service's, so a second object of the same name here would be
-	// a duplicate resource helm refuses to apply.
-	if svc.ServiceAccountName != "" && svc.SharesServiceIdentityWith == "" {
+	if svc.ServiceAccountName != "" {
 		charts.Files[fmt.Sprintf("templates/%s/serviceaccount.yaml", svc.Name)] = serviceAccountYAML(svc.ServiceAccountName, ns)
 	}
 	// Kernel's TokenReview right was a ClusterRole and ClusterRoleBinding
@@ -2286,12 +2252,6 @@ spec:
     targetPort: %d
 `, stratumHazelcastPort, stratumHazelcastPort)
 		}
-		if svc.HasWorkingSetHazelcast {
-			hazelcastPort += fmt.Sprintf(`  - name: hazelcast-ws
-    port: %d
-    targetPort: %d
-`, stratumWorkingSetPort, stratumWorkingSetPort)
-		}
 		extraPort := ""
 		if svc.ExtraPort != 0 {
 			extraPort = fmt.Sprintf(`  - name: %s
@@ -2345,12 +2305,6 @@ spec:
     targetPort: %d
 `, stratumHazelcastPort, stratumHazelcastPort)
 		}
-		if svc.HasWorkingSetHazelcast {
-			hazelcastHeadless += fmt.Sprintf(`  - name: hazelcast-ws
-    port: %d
-    targetPort: %d
-`, stratumWorkingSetPort, stratumWorkingSetPort)
-		}
 		// A StatefulSet's headless Service is what makes `<pod>.<service>:<port>`
 		// resolve, so a port a PEER dials has to be here and not only on the
 		// per-replica ClusterIP Service. blobstore's mirror addresses its peer
@@ -2402,17 +2356,12 @@ spec:
 		probeHelper = "schematic.grpcProbe8443"
 		startupProbeHelper = "schematic.startupProbe8443"
 	}
-	// stratum's cold start now includes warm Lucene index open + redo-log replay,
+	// stratum's cold start includes the replay of its tenant's log from redo,
 	// which the shared 300s startup budget is too tight for — stratum-2 was
 	// SIGTERM'd twice mid-replay on a live rolling restart. Give stratum alone a
-	// longer budget; the shared helper still applies to every other service.
-	// Both stratum workloads. A search member opens no Lucene index and replays no
-	// redo log, but it does wait at the same cluster-formation and hot-restore
-	// barriers the writers do — it is handed partitions the moment it joins, so it
-	// must not answer a query before the writers have recovered. The shared 300s
-	// budget is too tight for that wait for the same reason it is too tight for a
-	// writer's.
-	if svc.Name == "stratum" || svc.Name == stratumSearchName {
+	// longer budget (LongStartup); the shared helper still applies to every
+	// other service.
+	if svc.LongStartup {
 		startupProbeHelper = "schematic.startupProbeStratum"
 	}
 	// eventbus needs a far longer liveness budget than the shared 30s: its
@@ -2495,6 +2444,7 @@ spec:
 		ssBuf.WriteString(archTolerationLines())
 		ssBuf.WriteString(nodePoolLines(svc))
 		ssBuf.WriteString(spreadAcrossNodesLines(svc))
+		ssBuf.WriteString(zoneSpreadLines(svc))
 		ssBuf.WriteString(fmt.Sprintf(`      containers:
       - name: %s
         image: {{ %s }}
@@ -2527,11 +2477,6 @@ spec:
 			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
           name: hazelcast
 `, stratumHazelcastPort))
-		}
-		if svc.HasWorkingSetHazelcast {
-			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d
-          name: hazelcast-ws
-`, stratumWorkingSetPort))
 		}
 		for _, np := range svc.NamedPorts {
 			ssBuf.WriteString(fmt.Sprintf(`        - containerPort: %d

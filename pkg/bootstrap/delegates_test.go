@@ -60,7 +60,6 @@ func TestEnsureServiceDelegatesCreatesPerService(t *testing.T) {
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -142,7 +141,6 @@ func TestEnsureServiceDelegatesIdempotent(t *testing.T) {
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -188,7 +186,6 @@ func TestEnsureServiceDelegatesResyncsStaleNamespace(t *testing.T) {
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -242,7 +239,6 @@ func TestEnsureServiceDelegatesPreservesUserDelegates(t *testing.T) {
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -297,7 +293,6 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 			EventbusNodes:  1,
 			GatewayNodes:   1,
 			OpaNodes:       1,
-			StratumNodes:   1,
 			OauthNodes:     1,
 			EchoNodes:      1,
 			MessagingNodes: 1,
@@ -340,9 +335,11 @@ func TestEnsureServiceDelegatesOptionalServices(t *testing.T) {
 // graph names it.
 func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.T) {
 	dir := t.TempDir()
-	// Pre-existing stratum delegate authorizing oauth but not itself.
+	// Pre-existing stratum delegate, the people tenant's (it always has a
+	// Stratum), authorizing oauth but not itself.
 	existing := SourceDelegate{
 		Name:               "stratum",
+		TenantNamespace:    "/tenants/people",
 		AuthorizedServices: []string{"oauth"},
 	}
 	setupKernelYAML(t, dir, []SourceDelegate{existing})
@@ -353,7 +350,6 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -365,8 +361,8 @@ func TestEnsureServiceDelegatesExistingDelegateGetsAuthorizedService(t *testing.
 	kernelPath := filepath.Join(dir, "services", "kernel.yaml")
 	delegates := loadDelegates(t, kernelPath)
 	for _, d := range delegates {
-		if d.Name == "stratum" {
-			// Must have both oauth (pre-existing) and stratum (auto-added).
+		if d.Name == "stratum" && d.TenantNamespace == "/tenants/people" {
+			// Must have stratum (auto-added) and not oauth (pre-existing).
 			has := map[string]bool{}
 			for _, s := range d.AuthorizedServices {
 				has[s] = true
@@ -611,7 +607,6 @@ func TestEnsureServiceDelegatesRemovesUnjustifiedAuthorizedService(t *testing.T)
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}
@@ -687,7 +682,6 @@ func TestEnsureServiceDelegatesReorderedListIsNotAChange(t *testing.T) {
 			EventbusNodes: 1,
 			GatewayNodes:  1,
 			OpaNodes:      1,
-			StratumNodes:  1,
 			OauthNodes:    1,
 		},
 	}

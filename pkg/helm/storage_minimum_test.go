@@ -12,11 +12,12 @@ import (
 // smaller than 4Gi: a claim that asks for less is not provisioned, and its pod
 // waits for good. On seatrials (2026-11-26) kernel's and eventbus's 2Gi claims
 // never bound while stratum's 5Gi did. No service's volume may ask for less.
+// (Stratum has none now: each tenant's is in memory, #2.)
 func TestNoVolumeBelowHyperdiskMinimum(t *testing.T) {
 	minimum := resource.MustParse("4Gi")
 	g := New("test", "1.2", nil, nil, nil)
 	cfg := &protoOperator.Config{
-		Topology: &protoOperator.Topology{KernelNodes: 1, EventbusNodes: 1, StratumNodes: 3, OauthNodes: 1},
+		Topology: &protoOperator.Topology{KernelNodes: 1, EventbusNodes: 1, OauthNodes: 1},
 	}
 	volumes := 0
 	for _, svc := range g.enabledServices(cfg, effectiveTopology(cfg, 1)) {
@@ -34,6 +35,6 @@ func TestNoVolumeBelowHyperdiskMinimum(t *testing.T) {
 		}
 	}
 	if volumes < 3 {
-		t.Fatalf("expected kernel, eventbus and stratum to have volumes; found %d services with one", volumes)
+		t.Fatalf("expected kernel, eventbus and redo to have volumes; found %d services with one", volumes)
 	}
 }

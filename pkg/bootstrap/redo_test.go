@@ -12,7 +12,7 @@ import (
 // redo is a tenant service of the reserved restore tenant (Jody, 2026-10-26):
 // one instance, redo-restore, whose kernel delegate is restore's and matches
 // the service account in restore's namespace. It is deployed with Stratum,
-// whose durability it is.
+// whose durability it is: always, as the people tenant always has a Stratum.
 func TestEnsureServiceDelegatesGivesRedoTheRestoreTenant(t *testing.T) {
 	withRegistry(t, registryPinned(map[string]string{"redo": "restore"}, []string{"docmanager"}))
 	dir := t.TempDir()
@@ -44,26 +44,11 @@ func TestEnsureServiceDelegatesGivesRedoTheRestoreTenant(t *testing.T) {
 	}
 }
 
-func TestNoRedoDelegateWithoutStratum(t *testing.T) {
-	withRegistry(t, registryPinned(map[string]string{"redo": "restore"}, nil))
-	cfg := tenantTestConfig()
-	cfg.Topology.StratumNodes = 0
-	instances, err := DeployedServiceInstances(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, inst := range instances {
-		if inst.Service == "redo" {
-			t.Errorf("redo instance %+v deployed with no Stratum", inst)
-		}
-	}
-}
-
 // The holder carries redo's Config with data_dir where the chart mounts the
 // volume, and the chart gets redo-restore's bootstrap config.
 func TestDeployConfigsCarryRedo(t *testing.T) {
 	dir := t.TempDir()
-	cfg := stratumArchiveTestConfig(t)
+	cfg := stratumTestConfig(t)
 	if err := SaveSettings(dir, cfg); err != nil {
 		t.Fatal(err)
 	}

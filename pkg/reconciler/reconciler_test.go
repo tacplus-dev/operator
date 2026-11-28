@@ -1121,12 +1121,12 @@ func TestReconcileImmutableStatefulSetFieldsRecreatesTheLiveKernel(t *testing.T)
 }
 
 // generatedTestChart loads the chart the generator actually emits for a
-// one-kernel, one-stratum topology.
+// one-kernel topology (and the people tenant's one-member stratum).
 func generatedTestChart(t *testing.T) *helmchart.Chart {
 	t.Helper()
 	charts, err := helm.New("test", "1.2", nil, nil, nil).Generate(&protoOperator.Config{
 		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 1},
+		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	}, 1, false)
 	if err != nil {
 		t.Fatalf("generating chart: %v", err)

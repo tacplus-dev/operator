@@ -29,7 +29,6 @@ option (spec.service) = {name: "operator"};
 
 import "sys/spec.proto";
 import "sys/x509.proto";
-import "sys/diskstore.proto";
 import "common/credentials.proto";
 import "services/oauth.proto";
 
@@ -113,29 +112,25 @@ message Topology {
   reserved 11;
   reserved "argus_nodes";
 
-  // stratum_nodes is the number of WRITER members: the StatefulSet with volumes.
-  // A writer holds partitions like any member AND persists every write — its redo
-  // log, its record index, its share of the daily checkpoint — so this is the
-  // count that decides durability. It is counted for min_durable_copies and for
-  // the hot-restore barrier, and it is meant to be fairly static (2 or 3).
-  int32 stratum_nodes    = 12 [(spec.default_int) = 3];
+  // 12 held stratum_nodes (the writers of one shared Stratum cluster, with
+  // volumes) and 22 held stratum_search_nodes (its volume-less search members).
+  // Stratum is per tenant and in memory now, its durability the redo service
+  // (tacplus-dev/roadmap decisions/stratum-per-tenant-2026-10-25.md, #2): no
+  // writers, no search members, no volumes. Each tenant's member count is
+  // stratum_members. An operator.yaml that still sets either is refused at load.
+  reserved 12, 22;
+  reserved "stratum_nodes", "stratum_search_nodes";
 
-  // stratum_search_nodes is the number of SEARCH members: a second, volume-less
-  // workload joining the same Hazelcast cluster with the member attribute
-  // stratum.role=search.
+  // stratum_members is how many members each tenant's Stratum has: one
+  // StatefulSet per tenant (every tenant in Config.tenants but the reserved
+  // restore, plus the reserved people), in the tenant's namespace, its members
+  // spread across zones. Default and minimum 1; below 1 is refused.
   //
-  // A search member holds partitions (primaries and backups) and answers the
-  // parallel scatter-gather a predicate query is, and does nothing else: no
-  // volume, no redo log, no record index, no checkpoint. It is never a durable
-  // copy and never a restore contributor, so a search member that leaves loses
-  // nothing durable and scaling this number up or down changes query throughput
-  // and nothing about durability.
-  //
-  // Defaults to 0: query throughput is a thing a deployment asks for. Raising
-  // this is NOT a way to raise durability — min_durable_copies counts writers
-  // (stratum_nodes) only, and a cluster with fewer writers than the floor refuses
-  // writes however many search members are running.
-  int32 stratum_search_nodes = 22;
+  // Deployment-wide: it names no tenant, because a tenant's own configuration
+  // is not the deployment's (Jody, 2026-11-03, on #2). A count per tenant
+  // belongs to the tenant's own config once that exists; until then every
+  // tenant's Stratum has this many members.
+  int32 stratum_members = 24 [(spec.default_int) = 1];
 
   // 13 held saml_nodes. SAML went to the boneyard 2026-10-02 (D29 amendment 2)
   // — removed from the product, proto deleted — so the topology cannot ask for
@@ -457,11 +452,12 @@ message Config {
   // scripts/promote.sh), not operator.yaml.
   map<string, string> image_digests = 25 [(spec.assert_max_size) = 256];
 
-  // stratum_disk_persistence is rendered verbatim as disk_persistence in the
-  // bootstrap config of stratum's writers (stratum-0..N). The search members
-  // persist nothing and have no volume, so their bootstrap never carries it.
-  // Unset: no stratum bootstrap carries disk_persistence.
-  diskstore.DiskPersistenceConfig stratum_disk_persistence = 26;
+  // 26 held stratum_disk_persistence, the disk_persistence of the old shared
+  // Stratum's writers. Stratum keeps nothing on disk now: each tenant's is in
+  // memory and the redo service is its durability (#2). An operator.yaml that
+  // still sets it is refused at load.
+  reserved 26;
+  reserved "stratum_disk_persistence";
 
   // deployment names this deployment when several share one Kubernetes
   // cluster (decisions/deployments-per-cluster-2026-10-26.md, #3): at most 16

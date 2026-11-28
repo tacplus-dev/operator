@@ -11,18 +11,15 @@ import (
 
 // stratum's seed_members left its deployment-wide Config for the tenant-scope
 // StratumTenantConfig (stratum#26), delivered through TenantConfig.stratum
-// (kernel#34, then #2). What is left in the holder has no required field, so
-// its entry is defaulted like every other service's, whether or not the fleet
-// renders stratum: it is no longer dropped for want of members to name.
+// from kernel's bootstrap tenants (kernel#34, #2). What is left in the holder has no required field, so
+// its entry is defaulted like every other service's: it is no longer dropped
+// for want of members to name.
 func TestKernelBootstrapCarriesStratumHolderDefaults(t *testing.T) {
-	for name, stratumNodes := range map[string]int32{"stratum rendered": 3, "no stratum": 0} {
+	for name, members := range map[string]int32{"one member a tenant": 0, "three members a tenant": 3} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			cfg := stratumArchiveTestConfig(t)
-			cfg.Topology.StratumNodes = stratumNodes
-			if stratumNodes == 0 {
-				cfg.Topology.StratumSearchNodes = 0
-			}
+			cfg := stratumTestConfig(t)
+			cfg.Topology.StratumMembers = members
 			if err := SaveSettings(dir, cfg); err != nil {
 				t.Fatal(err)
 			}

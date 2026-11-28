@@ -87,7 +87,6 @@ func deploymentConfig(name string) *protoOperator.Config {
 			GatewayNodes:   2,
 			OauthNodes:     1,
 			OpaNodes:       1,
-			StratumNodes:   2,
 			BlobstoreNodes: 2,
 			AppServices:    map[string]int32{"docmanager": 1, "widgeter": 1},
 		},
@@ -182,15 +181,12 @@ func TestInvalidDeploymentFailsGeneration(t *testing.T) {
 // resolves a short name in its own namespace, never in tac-<deployment>.
 func TestPeerListsUseFullServiceNames(t *testing.T) {
 	charts := generateDeployment(t, deploymentConfig("prod"))
-	stratum := chartFile(t, charts, "templates/stratum/statefulset.yaml")
-	if !strings.Contains(stratum, "stratum-0.stratum.tac-prod.svc.cluster.local:5001,stratum-1.stratum.tac-prod.svc.cluster.local:5001") {
-		t.Errorf("STRATUM_SEED_MEMBERS does not name full service names:\n%s", stratum)
-	}
 	blob := chartFile(t, charts, "templates/blobstore/statefulset.yaml")
 	if !strings.Contains(blob, "blobstore-0.blobstore.tac-prod.svc.cluster.local:8081") {
 		t.Errorf("BLOBSTORE_PEERS does not name full service names:\n%s", blob)
 	}
-	if got := StratumSeedMembers("tac-prod", 1, 0); len(got) != 1 || got[0] != "stratum-0.stratum.tac-prod.svc.cluster.local:5001" {
+	// A tenant's Stratum seeds are state, not env, and name full names too.
+	if got := StratumSeedMembers(deploymentConfig("prod"), "acme"); len(got) != 1 || got[0] != "stratum-acme-0.stratum-acme.tac-prod-a1b2c3d4.svc.cluster.local:5001" {
 		t.Errorf("StratumSeedMembers = %v", got)
 	}
 }
@@ -276,7 +272,8 @@ func TestChartsRenderNoNetworkPolicyButKernelRaft(t *testing.T) {
 		"deployment": {generateDeployment(t, deploymentConfig("prod")), "tac-prod"},
 		"one namespace": {generateTestChart(t, &protoOperator.Config{
 			Namespace: "schematic",
-			Topology:  &protoOperator.Topology{KernelNodes: 3, GatewayNodes: 1, StratumNodes: 3, StratumSearchNodes: 1},
+			Tenants:   []string{"acme"},
+			Topology:  &protoOperator.Topology{KernelNodes: 3, GatewayNodes: 1, StratumMembers: 3},
 		}), "schematic"},
 	} {
 		var raft bool

@@ -14,7 +14,8 @@ import (
 )
 
 // ApplyTopologyPreset sets topology fields from a named preset.
-// Presets: "small" (default), "medium", "large".
+// Presets: "small" (default), "medium", "large". stratum_members is per
+// tenant, so it grows slower than the shared services' counts.
 func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 	if cfg.Topology == nil {
 		cfg.Topology = &protoOperator.Topology{}
@@ -26,19 +27,19 @@ func ApplyTopologyPreset(cfg *protoOperator.Config, preset string) {
 		t.EventbusNodes = 5
 		t.OauthNodes = 5
 		t.OpaNodes = 5
-		t.StratumNodes = 5
+		t.StratumMembers = 3
 	case "medium":
 		t.KernelNodes = 5
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
-		t.StratumNodes = 3
+		t.StratumMembers = 2
 	default: // small — matches proto field annotation defaults
 		t.KernelNodes = 3
 		t.EventbusNodes = 3
 		t.OauthNodes = 3
 		t.OpaNodes = 3
-		t.StratumNodes = 3
+		t.StratumMembers = 1
 	}
 }
 

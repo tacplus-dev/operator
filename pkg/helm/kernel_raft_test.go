@@ -141,8 +141,13 @@ func TestKernelRaftPortAdmitsOnlyKernelPodsInADeployment(t *testing.T) {
 	}
 
 	// The policy is kernel's alone: no other pod is isolated by the network.
-	if !admitted(t, objs, "tac-prod", map[string]string{"app": "stratum"}, platformPod("tac-dev", "gateway0"), 8443) {
-		t.Error("the network isolates stratum; its token is its door")
+	if !admitted(t, objs, "tac-prod-a1b2c3d4", map[string]string{"app": "stratum-acme"}, platformPod("tac-dev", "gateway0"), 8443) {
+		t.Error("the network isolates stratum-acme; its token is its door")
+	}
+	// A tenant's Stratum member port authenticates its members (stratum#17), so
+	// it is no exception: no policy isolates it either.
+	if !admitted(t, objs, "tac-prod-a1b2c3d4", map[string]string{"app": "stratum-acme"}, tenantPod("prod", "tac-prod-b1c2d3e4"), 5001) {
+		t.Error("the network isolates stratum-acme's member port; the member port's own admission is its door")
 	}
 }
 

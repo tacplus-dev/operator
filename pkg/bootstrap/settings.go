@@ -34,6 +34,9 @@ func LoadConfig(cfgDir string) (*protoOperator.Config, error) {
 		if err := refuseRetiredExternalIP(data); err != nil {
 			return nil, fmt.Errorf("%s: %w", OperatorSettingsFile, err)
 		}
+		if err := refuseRetiredStratumTopology(data); err != nil {
+			return nil, fmt.Errorf("%s: %w", OperatorSettingsFile, err)
+		}
 		part, err := protoOperator.ConfigFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", OperatorSettingsFile, err)
@@ -175,6 +178,37 @@ func refuseRetiredExternalIP(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// refuseRetiredStratumTopology reports an operator.yaml that still sets the
+// shared Stratum's topology.stratum_nodes, topology.stratum_search_nodes or
+// stratum_disk_persistence, in either spelling ConfigFromBytes accepts. The
+// fields are reserved now: Stratum is per tenant and in memory, the redo
+// service its durability (tacplus-dev/roadmap
+// decisions/stratum-per-tenant-2026-10-25.md, #2), and each tenant's member
+// count is topology.stratum_members. Without this the keys would be dropped and
+// a deployment that asked for three writers would start one member per tenant.
+func refuseRetiredStratumTopology(data []byte) error {
+	var settings map[string]any
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
+	topology, _ := settings["topology"].(map[string]any)
+	retired := func(m map[string]any, key, camel string) error {
+		_, snake := m[key]
+		_, lower := m[camel]
+		if !snake && !lower {
+			return nil
+		}
+		return fmt.Errorf("%s is retired: Stratum is per tenant and in memory, the redo service its durability (tacplus-dev/roadmap decisions/stratum-per-tenant-2026-10-25.md); remove %s, and set topology.stratum_members for each tenant's member count (default 1)", key, key)
+	}
+	if err := retired(topology, "stratum_nodes", "stratumNodes"); err != nil {
+		return err
+	}
+	if err := retired(topology, "stratum_search_nodes", "stratumSearchNodes"); err != nil {
+		return err
+	}
+	return retired(settings, "stratum_disk_persistence", "stratumDiskPersistence")
 }
 
 // retiredPKIKeys are crypto.yaml keys under pki whose fields are reserved now

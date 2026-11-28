@@ -59,11 +59,10 @@ func writeConfigOutput(cfgDir string, dc *DeployConfigs) error {
 	if len(dc.PersonalauthConfig) > 0 && t.PersonalauthNodes > 0 && dc.Cfg.GetOptionalServices().GetPersonalauth() {
 		serviceFiles["personalauth"] = dc.PersonalauthConfig
 	}
-	if len(dc.StratumConfig) > 0 && t.StratumNodes > 0 {
-		serviceFiles["stratum"] = dc.StratumConfig
-	}
-	if len(dc.StratumSearchConfig) > 0 && t.GetStratumSearchNodes() > 0 {
-		serviceFiles["stratum-search"] = dc.StratumSearchConfig
+	for name, data := range dc.StratumConfigs {
+		if len(data) > 0 {
+			serviceFiles[name] = data
+		}
 	}
 	if len(dc.RedoConfig) > 0 {
 		serviceFiles[redoInstanceName] = dc.RedoConfig

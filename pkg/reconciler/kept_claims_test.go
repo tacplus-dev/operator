@@ -40,26 +40,31 @@ func keptClaimsTestChart(t *testing.T, cfg *protoOperator.Config) *helmchart.Cha
 	return ch
 }
 
-// TestScalingStratumToZeroKeepsItsClaims is #54: stratum_nodes 3 → 0 removes
-// stratum's StatefulSet (and redo's, which is rendered with it), and their
-// PersistentVolumeClaims stay, on purpose. The operator deletes none of them
-// and says so: one warning per StatefulSet naming its kept claims and the
-// command that removes them. Kernel, still running, is not named.
-func TestScalingStratumToZeroKeepsItsClaims(t *testing.T) {
+// TestTheSharedStratumsClaimsAreKept is #54 on #2's upgrade: Stratum is per
+// tenant and in memory now, so the chart no longer renders the shared stratum
+// StatefulSet whose writers had volumes, and their PersistentVolumeClaims stay,
+// on purpose. The operator deletes none of them and says so: one warning
+// naming the kept claims and the command that removes them. What the chart
+// still runs with a volume (kernel, redo-restore) is not named.
+func TestTheSharedStratumsClaimsAreKept(t *testing.T) {
 	ctx := context.Background()
 	cfg := &protoOperator.Config{
 		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 3},
+		Tenants:   []string{"acme"},
+		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	}
 
-	// The cluster as the chart at stratum_nodes 3 left it: its StatefulSets and
-	// the claims their volumeClaimTemplates made.
-	before, err := renderStatefulSets(keptClaimsTestChart(t, cfg), "schematic", map[string]interface{}{})
+	// The cluster: the StatefulSets this chart renders, the claims their
+	// volumeClaimTemplates made, and the old shared stratum's three claims.
+	rendered, err := renderStatefulSets(keptClaimsTestChart(t, cfg), "schematic", map[string]interface{}{})
 	if err != nil {
-		t.Fatalf("rendering the chart at stratum_nodes 3: %v", err)
+		t.Fatalf("rendering the chart: %v", err)
+	}
+	if rendered["stratum"] != nil || rendered["stratum-acme"] == nil || rendered["redo-restore"] == nil {
+		t.Fatalf("guard: want stratum-acme and redo-restore and no shared stratum, got %v", rendered)
 	}
 	var claims []client.Object
-	for _, st := range before {
+	for _, st := range rendered {
 		for _, tmpl := range st.Spec.VolumeClaimTemplates {
 			for i := range int(*st.Spec.Replicas) {
 				claims = append(claims, &corev1.PersistentVolumeClaim{
@@ -70,27 +75,22 @@ func TestScalingStratumToZeroKeepsItsClaims(t *testing.T) {
 					},
 					Spec: corev1.PersistentVolumeClaimSpec{
 						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-						Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("5Gi")}},
+						Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("4Gi")}},
 					},
 				})
 			}
 		}
 	}
-	if len(claims) != 1+3+1 {
-		t.Fatalf("expected kernel's, three stratum's and redo's claims at stratum_nodes 3, got %d", len(claims))
+	if len(claims) != 1+1 {
+		t.Fatalf("expected kernel's and redo's claims, got %d", len(claims))
 	}
-
-	// stratum_nodes 0: Helm leaves the StatefulSets the chart still renders.
-	cfg.Topology.StratumNodes = 0
-	after, err := renderStatefulSets(keptClaimsTestChart(t, cfg), "schematic", map[string]interface{}{})
-	if err != nil {
-		t.Fatalf("rendering the chart at stratum_nodes 0: %v", err)
-	}
-	if after["stratum"] != nil || after["redo-restore"] != nil {
-		t.Fatalf("stratum_nodes 0 still renders stratum or redo: %v", after)
+	for i := range 3 {
+		claims = append(claims, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("data-stratum-%d", i), Namespace: "schematic", Labels: map[string]string{"app": "stratum"},
+		}})
 	}
 	objs := slices.Clone(claims)
-	for _, st := range after {
+	for _, st := range rendered {
 		st.Namespace = "schematic"
 		objs = append(objs, st)
 	}
@@ -127,8 +127,7 @@ func TestScalingStratumToZeroKeepsItsClaims(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"stratum":      {"data-stratum-0", "data-stratum-1", "data-stratum-2"},
-		"redo-restore": {"data-redo-restore-0"},
+		"stratum": {"data-stratum-0", "data-stratum-1", "data-stratum-2"},
 	}
 	if len(kept) != len(want) {
 		t.Fatalf("kept claims reported = %v, want %v", kept, want)
@@ -146,24 +145,24 @@ func TestScalingStratumToZeroKeepsItsClaims(t *testing.T) {
 	}
 }
 
-// TestScalingStratumDownKeepsTheClaimsPastItsReplicas: 3 → 1 keeps the two
+// TestScalingKernelDownKeepsTheClaimsPastItsReplicas: 3 → 1 keeps the two
 // claims the StatefulSet no longer mounts, the way Kubernetes' default
 // retention does, and the operator names them as well.
-func TestScalingStratumDownKeepsTheClaimsPastItsReplicas(t *testing.T) {
+func TestScalingKernelDownKeepsTheClaimsPastItsReplicas(t *testing.T) {
 	ctx := context.Background()
 	cfg := &protoOperator.Config{
 		Namespace: "schematic",
-		Topology:  &protoOperator.Topology{KernelNodes: 1, StratumNodes: 1},
+		Topology:  &protoOperator.Topology{KernelNodes: 1},
 	}
 	rendered, err := renderStatefulSets(keptClaimsTestChart(t, cfg), "schematic", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("rendering the chart: %v", err)
 	}
-	rendered["stratum"].Namespace = "schematic"
-	objs := []client.Object{rendered["stratum"]}
+	rendered["kernel"].Namespace = "schematic"
+	objs := []client.Object{rendered["kernel"]}
 	for i := range 3 {
 		objs = append(objs, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("data-stratum-%d", i), Namespace: "schematic", Labels: map[string]string{"app": "stratum"},
+			Name: fmt.Sprintf("data-kernel-%d", i), Namespace: "schematic", Labels: map[string]string{"app": "kernel"},
 		}})
 	}
 	cl := fake.NewClientBuilder().WithScheme(immutableTestScheme(t)).WithObjects(objs...).Build()
@@ -180,7 +179,7 @@ func TestScalingStratumDownKeepsTheClaimsPastItsReplicas(t *testing.T) {
 	for _, c := range entries[0].ContextMap()["claims"].([]interface{}) {
 		got = append(got, c.(string))
 	}
-	if !slices.Equal(got, []string{"data-stratum-1", "data-stratum-2"}) {
-		t.Errorf("kept claims = %v, want data-stratum-1 and data-stratum-2", got)
+	if !slices.Equal(got, []string{"data-kernel-1", "data-kernel-2"}) {
+		t.Errorf("kept claims = %v, want data-kernel-1 and data-kernel-2", got)
 	}
 }
