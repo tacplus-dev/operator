@@ -38,3 +38,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-28 looper release v0.2.1 (https://github.com/tacplus-dev/operator/releases/tag/v0.2.1)
 - 2026-11-28 looper issue Stratum's PVCs stay when stratum_nodes goes to 0: say who removes them (#54)
 - 2026-11-28 looper issue Render per-tenant Stratum and the redo service (#2)
+- 2026-11-28 looper issue Render redo as one /system instance in the platform namespace, not in the restore tenant (#57)
