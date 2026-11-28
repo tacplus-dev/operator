@@ -41,3 +41,16 @@ imagePullSecrets:
 - name: {{ .Values.operator.imagePullSecret }}
 {{- end }}
 {{- end }}
+
+{{/*
+Every container's securityContext (#39): no privilege escalation, no
+capability and a read-only root filesystem. What a container writes is a
+volume (/config, /tmp).
+*/}}
+{{- define "schematic-operator.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop:
+  - ALL
+{{- end }}
