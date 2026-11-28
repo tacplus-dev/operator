@@ -153,7 +153,9 @@ func TestDelegatesMatchTheNamespaceEachInstanceRunsIn(t *testing.T) {
 	}
 }
 
-// Kernel keeps the tid the operator rendered the tenant's namespace with.
+// Kernel keeps the tid the operator rendered the tenant's namespace with. The
+// reserved people tenant is listed too, for its Stratum seeds alone, with no
+// tid (TestBootstrapTenantsCarryEachTenantsStratumSeeds).
 func TestKernelBootstrapListsTenantsWithTheirTids(t *testing.T) {
 	dc, err := BuildDeployConfigs(writeDeploymentFixture(t, deploymentFixtureConfig()))
 	if err != nil {
@@ -164,8 +166,9 @@ func TestKernelBootstrapListsTenantsWithTheirTids(t *testing.T) {
 		t.Fatal(err)
 	}
 	tenants := kernel.GetTenants()
-	if len(tenants) != 1 || tenants[0].GetName() != "acme" || tenants[0].GetTid() != "a1b2c3d4" {
-		t.Errorf("kernel tenants = %v, want acme with tid a1b2c3d4", tenants)
+	if len(tenants) != 2 || tenants[0].GetName() != "acme" || tenants[0].GetTid() != "a1b2c3d4" ||
+		tenants[1].GetName() != "people" || tenants[1].GetTid() != "" {
+		t.Errorf("kernel tenants = %v, want acme with tid a1b2c3d4, then people with none", tenants)
 	}
 }
 

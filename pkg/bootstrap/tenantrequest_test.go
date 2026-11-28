@@ -256,9 +256,10 @@ func TestApproveTenantRefusesAndChangesNothing(t *testing.T) {
 }
 
 // TestApproveTenantWritesExactlyTheNewTenantsDelegates: approval adds one
-// kernel delegate per tenant-owned service for the new tenant — the same
-// delegate generate would write for it — and changes nothing else in
-// kernel.yaml: acme's stale delegate and the hand-added one stay as they were.
+// kernel delegate per tenant-owned service for the new tenant — its dog and
+// its Stratum, the same delegates generate would write for it — and changes
+// nothing else in kernel.yaml: acme's stale delegate and the hand-added one
+// stay as they were.
 func TestApproveTenantWritesExactlyTheNewTenantsDelegates(t *testing.T) {
 	dir := approveTestDir(t, false)
 	writeTestFile(t, TenantRequestPath(dir, "beta"), "providers: []\n")
@@ -270,8 +271,8 @@ func TestApproveTenantWritesExactlyTheNewTenantsDelegates(t *testing.T) {
 
 	got := loadDelegates(t, kernelPath)
 	before := approveTestDelegates()
-	if len(got) != len(before)+1 {
-		t.Fatalf("kernel.yaml delegates after approval = %+v, want the %d existing plus one for dog-beta", got, len(before))
+	if len(got) != len(before)+2 {
+		t.Fatalf("kernel.yaml delegates after approval = %+v, want the %d existing plus dog-beta's and stratum-beta's", got, len(before))
 	}
 	if !reflect.DeepEqual(got[:len(before)], before) {
 		t.Errorf("approval changed existing delegates:\n got %+v\nwant %+v", got[:len(before)], before)
@@ -287,17 +288,19 @@ func TestApproveTenantWritesExactlyTheNewTenantsDelegates(t *testing.T) {
 	if err := EnsureServiceDelegates(oracleDir, cfg); err != nil {
 		t.Fatal(err)
 	}
-	var want *SourceDelegate
-	for _, d := range loadDelegates(t, oraclePath) {
-		if d.Name == "dog" && d.TenantNamespace == "/tenants/beta" {
-			want = &d
+	for i, name := range []string{"dog", "stratum"} {
+		var want *SourceDelegate
+		for _, d := range loadDelegates(t, oraclePath) {
+			if d.Name == name && d.TenantNamespace == "/tenants/beta" {
+				want = &d
+			}
 		}
-	}
-	if want == nil {
-		t.Fatal("guard: generate writes no dog delegate for /tenants/beta")
-	}
-	if added := got[len(before)]; !reflect.DeepEqual(added, *want) {
-		t.Errorf("approval added %+v, want generate's delegate %+v", added, *want)
+		if want == nil {
+			t.Fatalf("guard: generate writes no %s delegate for /tenants/beta", name)
+		}
+		if added := got[len(before)+i]; !reflect.DeepEqual(added, *want) {
+			t.Errorf("approval added %+v, want generate's %s delegate %+v", added, name, *want)
+		}
 	}
 }
 

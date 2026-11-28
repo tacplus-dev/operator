@@ -180,7 +180,10 @@ func TestEnsureServiceDelegatesOnePerTenantForTenantOwnedService(t *testing.T) {
 
 // TestEnsureServiceDelegatesLeavesSharedServicesAlone is criterion 3: a service
 // registry.json does NOT mark tenant_owned keeps exactly the single shared
-// delegate it gets today, even in a cluster that lists tenants.
+// delegate it gets today, even in a cluster that lists tenants. Stratum and
+// redo are the platform's tenant instances
+// (TestEnsureServiceDelegatesGivesEachTenantItsStratum,
+// TestEnsureServiceDelegatesGivesRedoTheRestoreTenant).
 func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 	withRegistry(t, registryMarking([]string{"docmanager"}, []string{"tasks"}))
 	dir := t.TempDir()
@@ -194,7 +197,7 @@ func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 	counts := map[string]int{}
 	for _, d := range loadDelegates(t, kernelPath) {
 		counts[d.Name]++
-		if d.Name == "docmanager" || d.Name == redoServiceName {
+		if d.Name == "docmanager" || d.Name == redoServiceName || d.Name == stratumServiceName {
 			continue
 		}
 		if d.TenantNamespace != "" {
@@ -208,7 +211,7 @@ func TestEnsureServiceDelegatesLeavesSharedServicesAlone(t *testing.T) {
 
 	var multi []string
 	for name, n := range counts {
-		if name != "docmanager" && n != 1 {
+		if name != "docmanager" && name != stratumServiceName && n != 1 {
 			multi = append(multi, fmt.Sprintf("%s=%d", name, n))
 		}
 	}
