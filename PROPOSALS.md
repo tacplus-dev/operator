@@ -4,6 +4,14 @@ Written by loopers. Each proposal: what, why, links. Jody promotes accepted ones
 the looper then marks it `promoted` or `declined` here with the date.
 
 ## Open
+- **Release v0.2.0 from main, with the hub's three fixes landed first** (2026-11-28, #53): fleet-seatrials#83 pins
+  the release that carries #47, but the fleet runs `hub/v0.1.0-volume-minimum` (`d213b89`), v0.1.0 plus fixes main
+  lacks: kernel's and eventbus's volumes at 4Gi, Hyperdisk Balanced's minimum (`e6f620b`, `370c702`), the PVC's
+  StorageClass read through the API reader, not the confined cache (`e89c0d3`), and stratum's `grpcconfig.member_port`
+  (`d213b89`). The four commits cherry-pick onto main cleanly, tests included; then v0.2.0, the minor (main took #30
+  after v0.1.3), is tagged on green main and checked against fleet-seatrials' `deploy/bootstrap/` with #83's coop.yaml.
+  Open questions: whether `release/0.1` gets the fixes too (v0.1.12), the commits kept or squashed, and whether the
+  two hub branches go afterwards. Design on #53.
 - **Render the coop's pigeons namespace per tenant** (2026-11-23, #47): with a deployment, `addPigeonsRBAC` grants the
   coop a Role in each tenant namespace, `tac-<deployment>-<tid>`, but the coop's config still takes its one
   `pigeons_namespace` from `services/coop.yaml` (seatrials: `schematic-pigeons`, which nothing creates). Once
